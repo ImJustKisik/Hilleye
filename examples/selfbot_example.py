@@ -124,6 +124,7 @@ class WhitelistManager:
         """Returns True if author_id is the account owner or is in the whitelist."""
         if owner_id is not None and int(author_id) == int(owner_id):
             return True
+        self.load()
         return int(author_id) in self.allowed_ids
 
 
@@ -143,8 +144,39 @@ def extract_discord_user_id(raw: str) -> Optional[int]:
     return int(match.group(1))
 
 
+class HilleyeBot(commands.Bot):
+    async def get_context(self, message: discord.Message, *, cls=commands.Context) -> commands.Context:
+        """
+        Custom get_context ensuring that commands sent by whitelisted users
+        are properly parsed and valid, even when running in selfbot mode.
+        """
+        ctx = await super().get_context(message, cls=cls)
+        if not ctx.valid and message.content:
+            prefixes = (
+                self.command_prefix
+                if isinstance(self.command_prefix, (tuple, list))
+                else (self.command_prefix,)
+            )
+            matched_prefix = None
+            for p in prefixes:
+                if message.content.startswith(p):
+                    matched_prefix = p
+                    break
+            if matched_prefix is not None:
+                view = commands.view.StringView(message.content)
+                view.skip_string(matched_prefix)
+                invoker = view.get_word()
+                cmd = self.all_commands.get(invoker)
+                if cmd is not None:
+                    ctx.prefix = matched_prefix
+                    ctx.command = cmd
+                    ctx.invoker = invoker
+                    ctx.view = view
+        return ctx
+
+
 whitelist = WhitelistManager()
-bot = commands.Bot(command_prefix=",", self_bot=True, help_command=None)
+bot = HilleyeBot(command_prefix=",", self_bot=False, help_command=None)
 
 
 def is_owner(ctx: commands.Context) -> bool:
@@ -176,6 +208,7 @@ async def on_message(message: discord.Message) -> None:
 
     ctx = await bot.get_context(message)
     if ctx.valid:
+        print(f"[*] Command '{message.content}' from {message.author} (ID: {message.author.id})")
         await bot.invoke(ctx)
 
 
