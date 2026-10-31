@@ -1,122 +1,172 @@
 {% extends "base.html" %}
 
 {% block content %}
-<!-- Search Card -->
-<div class="search-card">
-  <div class="search-title-row">
-    <div class="search-label">Player Dossier Search</div>
-    <div class="search-hint">Enter any BYOND ckey to query active records</div>
-  </div>
-
-  <form class="search-form-row"
-        hx-post="/search"
-        hx-target="#dossier-container"
-        hx-swap="innerHTML"
-        hx-indicator="#search-indicator"
-        action="/search"
-        method="post">
-    <div class="input-container">
-      <svg class="input-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <circle cx="11" cy="11" r="8"></circle>
-        <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
-      </svg>
-      <input type="text"
-             name="ckey"
-             class="search-input"
-             placeholder="Search by player ckey (e.g. honkmaster)..."
-             value="{{ target_ckey or (dossier.ckey if dossier else '') }}"
-             autocomplete="off"
-             autofocus>
-    </div>
-    <button type="submit" class="search-btn">
-      <span class="htmx-indicator" id="search-indicator">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="animation: spin 1s linear infinite;">
-          <circle cx="12" cy="12" r="10" stroke-opacity="0.25"></circle>
-          <path d="M12 2a10 10 0 0 1 10 10" stroke-linecap="round"></path>
-        </svg>
-      </span>
-      <span>Search</span>
-    </button>
-  </form>
-</div>
-
-<!-- Dynamic Dossier Container -->
-<div id="dossier-container">
-  {% if dossier %}
-    {% include "partials/player_dossier.html" %}
-  {% elif not_found %}
-    {% include "partials/not_found.html" %}
-  {% else %}
-    <div class="empty-card" style="padding: 40px 24px; border-style: dashed;">
-      <div style="font-size: 0.95rem; font-weight: 600; color: var(--text-main); margin-bottom: 4px;">
-        Ready to Query
+<div class="workbench-grid">
+  <!-- Primary Column: Query Console & Player Dossier -->
+  <section class="primary-pane" aria-label="Player Dossier Lookup">
+    <!-- Command Query Module -->
+    <div class="module-frame query-module">
+      <div class="module-bar">
+        <div class="module-title-group">
+          <span class="module-index">01</span>
+          <h1 class="module-title">Player Dossier Query</h1>
+        </div>
+        <span class="module-spec">KEY NORMALIZATION: [a-z0-9]</span>
       </div>
-      <div style="font-size: 0.85rem; color: var(--text-dim); max-width: 440px;">
-        Enter a BYOND ckey above to inspect player online state, total hours, and per-server incursion history.
+
+      <form class="query-form"
+            hx-post="/search"
+            hx-target="#dossier-container"
+            hx-swap="innerHTML"
+            hx-indicator="#search-indicator"
+            action="/search"
+            method="post">
+        <label for="ckey-input" class="sr-only">BYOND Player Ckey</label>
+        <div class="command-input-wrap">
+          <span class="command-prefix" aria-hidden="true">CKEY //</span>
+          <input type="text"
+                 id="ckey-input"
+                 name="ckey"
+                 class="command-input"
+                 placeholder="enter target ckey (e.g. honkmaster)..."
+                 value="{{ target_ckey or (dossier.ckey if dossier else '') }}"
+                 autocomplete="off"
+                 spellcheck="false"
+                 autofocus>
+        </div>
+        <button type="submit" class="command-submit">
+          <span class="htmx-indicator" id="search-indicator" aria-hidden="true">
+            <svg class="spinner-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <circle cx="12" cy="12" r="9" stroke-opacity="0.25"></circle>
+              <path d="M12 3a9 9 0 0 1 9 9" stroke-linecap="square"></path>
+            </svg>
+          </span>
+          <span>QUERY RECORD</span>
+        </button>
+      </form>
+    </div>
+
+    <!-- Dossier Output Viewport -->
+    <div id="dossier-container" aria-live="polite">
+      {% if dossier %}
+        {% include "partials/player_dossier.html" %}
+      {% elif not_found %}
+        {% include "partials/not_found.html" %}
+      {% else %}
+        <div class="module-frame standby-console">
+          <div class="standby-grid">
+            <div class="standby-main">
+              <div class="standby-kicker">TELEMETRY TERMINAL // STANDBY</div>
+              <h2 class="standby-heading">Ready to Query Player Record</h2>
+              <p class="standby-copy">
+                Enter any Space Station 13 BYOND <code>ckey</code> above to inspect live station presence, cumulative playtime hours, per-server distribution, and chronological incursion logs.
+              </p>
+            </div>
+            <dl class="standby-specs">
+              <div class="spec-row">
+                <dt>PROTOCOL</dt>
+                <dd>BYOND Topic <code>\x00\x83</code></dd>
+              </div>
+              <div class="spec-row">
+                <dt>SCAN INTERVAL</dt>
+                <dd>120 seconds</dd>
+              </div>
+              <div class="spec-row">
+                <dt>SESSION GRACE</dt>
+                <dd>300s reconnect window</dd>
+              </div>
+              <div class="spec-row">
+                <dt>DIRECT ROUTE</dt>
+                <dd><code>/player/{ckey}</code></dd>
+              </div>
+            </dl>
+          </div>
+        </div>
+      {% endif %}
+    </div>
+  </section>
+
+  <!-- Secondary Sidebar: Live Monitored Sector Directory -->
+  {% if servers %}
+  <aside class="secondary-pane" aria-label="Monitored Servers Directory">
+    <div class="module-frame directory-module">
+      <div class="module-bar directory-header">
+        <div class="module-title-group">
+          <span class="module-index">02</span>
+          <h2 class="module-title">Monitored Sectors</h2>
+        </div>
+        <div class="directory-controls">
+          <span class="sector-count-readout">{{ servers|length }} ONLINE</span>
+          <button type="button"
+                  class="mobile-directory-toggle"
+                  id="servers-toggle-btn"
+                  aria-expanded="false"
+                  aria-controls="servers-directory-body"
+                  onclick="toggleServersDirectory()">
+            <span id="servers-toggle-label">Show list</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="directory-body" id="servers-directory-body">
+        <div class="directory-filter-bar">
+          <label for="server-filter-input" class="sr-only">Filter monitored servers</label>
+          <input type="text"
+                 id="server-filter-input"
+                 class="directory-filter-input"
+                 placeholder="Filter {{ servers|length }} active sectors by name or ID..."
+                  autocomplete="off"
+                 spellcheck="false"
+                 oninput="filterServers(this.value)">
+          <span class="filter-counter" id="server-visible-count">{{ servers|length }}</span>
+        </div>
+
+        <div class="sector-list" id="servers-grid-container" role="list">
+          {% for s in servers %}
+          <div class="sector-row" role="listitem" data-search="{{ (s.title or '')|lower }} {{ (s.identifier or '')|lower }}">
+            <span class="signal-led online" aria-hidden="true"></span>
+            <div class="sector-info">
+              <div class="sector-title" title="{{ s.title or s.identifier }}">{{ s.title or s.identifier }}</div>
+              <div class="sector-endpoint">{{ s.identifier }}</div>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
       </div>
     </div>
+  </aside>
   {% endif %}
 </div>
 
-<!-- Monitored Servers (Compact Collapsible) -->
 {% if servers %}
-<div class="servers-section">
-  <div class="servers-toggle" onclick="toggleServersList()">
-    <div style="display: flex; align-items: center; gap: 8px;">
-      <h3>Monitored Servers</h3>
-      <span class="servers-count-tag">{{ servers|length }} online</span>
-    </div>
-    <span id="servers-toggle-icon" style="color: var(--text-dim); font-size: 0.8rem; cursor: pointer;">
-      ▼ Show list
-    </span>
-  </div>
-
-  <div id="servers-wrapper" style="display: none; margin-top: 14px;">
-    <input type="text"
-           id="server-filter-input"
-           class="search-input"
-           style="padding: 8px 12px; font-size: 0.85rem; margin-bottom: 12px;"
-           placeholder="Filter servers by name..."
-           oninput="filterServers(this.value)">
-
-    <div class="servers-grid" id="servers-grid-container">
-      {% for s in servers %}
-      <div class="server-badge-card" title="{{ s.title or s.identifier }}">
-        <span class="status-dot"></span>
-        <span class="server-badge-title">{{ s.title or s.identifier }}</span>
-      </div>
-      {% endfor %}
-    </div>
-  </div>
-</div>
-
 <script>
-  function toggleServersList() {
-    const wrap = document.getElementById('servers-wrapper');
-    const icon = document.getElementById('servers-toggle-icon');
-    if (wrap.style.display === 'none') {
-      wrap.style.display = 'block';
-      icon.textContent = '▲ Hide list';
-    } else {
-      wrap.style.display = 'none';
-      icon.textContent = '▼ Show list';
+  function toggleServersDirectory() {
+    const body = document.getElementById('servers-directory-body');
+    const btn = document.getElementById('servers-toggle-btn');
+    const label = document.getElementById('servers-toggle-label');
+    if (!body || !btn) return;
+    const isExpanded = body.classList.toggle('is-open');
+    btn.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
+    if (label) {
+      label.textContent = isExpanded ? 'Hide list' : 'Show list';
     }
   }
 
   function filterServers(query) {
-    const q = query.toLowerCase();
-    const cards = document.querySelectorAll('.server-badge-card');
-    cards.forEach(card => {
-      const text = card.textContent.toLowerCase();
-      card.style.display = text.includes(q) ? 'flex' : 'none';
+    const q = (query || '').trim().toLowerCase();
+    const rows = document.querySelectorAll('#servers-grid-container .sector-row');
+    let visible = 0;
+    rows.forEach(row => {
+      const hay = row.getAttribute('data-search') || row.textContent.toLowerCase();
+      const match = !q || hay.includes(q);
+      row.style.display = match ? 'flex' : 'none';
+      if (match) visible++;
     });
+    const counter = document.getElementById('server-visible-count');
+    if (counter) {
+      counter.textContent = visible;
+    }
   }
 </script>
-<style>
-  @keyframes spin {
-    from { transform: rotate(0deg); }
-    to { transform: rotate(360deg); }
-  }
-</style>
 {% endif %}
 {% endblock %}

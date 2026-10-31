@@ -1,46 +1,26 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
-  <defs>
-    <linearGradient id="shieldGrad" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#1e293b"/>
-      <stop offset="100%" stop-color="#0b101b"/>
-    </linearGradient>
-    <linearGradient id="eyeGrad" x1="8" y1="32" x2="56" y2="32" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#fb7185"/>
-      <stop offset="50%" stop-color="#e11d48"/>
-      <stop offset="100%" stop-color="#9f1239"/>
-    </linearGradient>
-    <radialGradient id="irisGrad" cx="32" cy="32" r="12" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#fda4af"/>
-      <stop offset="40%" stop-color="#e11d48"/>
-      <stop offset="85%" stop-color="#881337"/>
-      <stop offset="100%" stop-color="#4c0519"/>
-    </radialGradient>
-    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
-      <feGaussianBlur stdDeviation="2.5" result="blur"/>
-      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
-    </filter>
-  </defs>
+  <!-- Precision Hardware Telemetry Frame -->
+  <rect x="2" y="2" width="60" height="60" rx="2" fill="#0e1116" stroke="#2c3342" stroke-width="2"/>
+  <rect x="6" y="6" width="52" height="52" fill="#080a0d" stroke="#1e232d" stroke-width="1"/>
 
-  <!-- Background Shield -->
-  <rect x="2" y="2" width="60" height="60" rx="14" fill="url(#shieldGrad)" stroke="#334155" stroke-width="1.5"/>
+  <!-- Corner Calibration Marks -->
+  <path d="M10 16V10H16" stroke="#8592a6" stroke-width="1.5"/>
+  <path d="M54 16V10H48" stroke="#8592a6" stroke-width="1.5"/>
+  <path d="M10 48V54H16" stroke="#8592a6" stroke-width="1.5"/>
+  <path d="M54 48V54H48" stroke="#8592a6" stroke-width="1.5"/>
 
-  <!-- Orbital Ring / Grid Lines -->
-  <circle cx="32" cy="32" r="22" stroke="#334155" stroke-width="1" stroke-dasharray="3 3" opacity="0.6"/>
-  <line x1="32" y1="6" x2="32" y2="12" stroke="#e11d48" stroke-width="1.5" stroke-linecap="round"/>
-  <line x1="32" y1="52" x2="32" y2="58" stroke="#e11d48" stroke-width="1.5" stroke-linecap="round"/>
-  <line x1="6" y1="32" x2="12" y2="32" stroke="#e11d48" stroke-width="1.5" stroke-linecap="round"/>
-  <line x1="52" y1="32" x2="58" y2="32" stroke="#e11d48" stroke-width="1.5" stroke-linecap="round"/>
+  <!-- Axis Crosshairs -->
+  <line x1="32" y1="8" x2="32" y2="14" stroke="#525d70" stroke-width="1.5"/>
+  <line x1="32" y1="50" x2="32" y2="56" stroke="#525d70" stroke-width="1.5"/>
+  <line x1="8" y1="32" x2="14" y2="32" stroke="#525d70" stroke-width="1.5"/>
+  <line x1="50" y1="32" x2="56" y2="32" stroke="#525d70" stroke-width="1.5"/>
 
-  <!-- Outer Eye Shape -->
-  <path d="M10 32C17 21 47 21 54 32C47 43 17 43 10 32Z" stroke="url(#eyeGrad)" stroke-width="2.5" stroke-linejoin="round" filter="url(#glow)"/>
+  <!-- Geometric Aperture / Telemetry Eye -->
+  <polygon points="12,32 24,20 40,20 52,32 40,44 24,44" fill="#13171f" stroke="#d92638" stroke-width="2"/>
 
-  <!-- Iris -->
-  <circle cx="32" cy="32" r="9.5" fill="url(#irisGrad)" stroke="#ffffff" stroke-width="0.75" stroke-opacity="0.5"/>
+  <!-- Inner Reticle Ring -->
+  <circle cx="32" cy="32" r="7" fill="#080a0d" stroke="#edeff2" stroke-width="1.5"/>
 
-  <!-- Pupil -->
-  <circle cx="32" cy="32" r="4.5" fill="#050811"/>
-
-  <!-- Specular Reflection Glint -->
-  <circle cx="30" cy="30" r="1.5" fill="#ffffff" opacity="0.9"/>
-  <circle cx="34.5" cy="33.5" r="0.75" fill="#ffffff" opacity="0.6"/>
+  <!-- Active Signal Lock Core -->
+  <rect x="29.5" y="29.5" width="5" height="5" fill="#d92638"/>
 </svg>

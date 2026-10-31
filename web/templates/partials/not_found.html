@@ -1,17 +1,19 @@
-<div class="empty-card">
-  <div class="empty-icon">
-    <!-- Clean radar / empty search icon -->
-    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-      <circle cx="11" cy="11" r="8"></circle>
-      <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
-      <line x1="8" y1="11" x2="14" y2="11"></line>
-    </svg>
+<div class="module-frame not-found-module" role="status">
+  <div class="module-bar">
+    <div class="module-title-group">
+      <span class="module-index alert">ERR // 404</span>
+      <span class="module-title">Query Diagnostic</span>
+    </div>
+    <span class="module-spec">ARCHIVE MISS</span>
   </div>
-  <div class="empty-title">NO RECORD FOUND &mdash; {{ ckey or raw_query }}</div>
-  <p class="empty-desc">
-    Target not detected on any monitored server frequencies.
-  </p>
-  <div style="font-size: 0.8rem; color: var(--text-dim); max-width: 440px; margin-top: 4px;">
-    The ckey may be spelled differently or this player has not participated in active rounds since tracking began.
+
+  <div class="not-found-body">
+    <div class="not-found-code">NO RECORD FOUND &mdash; <span class="queried-key">{{ ckey or raw_query or 'EMPTY_QUERY' }}</span></div>
+    <p class="not-found-desc">
+      Target not detected on any monitored server frequencies.
+    </p>
+    <div class="not-found-meta">
+      BYOND keys are normalized to lowercase alphanumeric characters (<code>[a-z0-9]</code>). Verify key spelling or confirm that the player has connected to a tracked Space Station 13 server since telemetry collection began.
+    </div>
   </div>
 </div>

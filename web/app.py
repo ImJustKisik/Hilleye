@@ -146,10 +146,12 @@ async def dashboard_page(request: Request):
     Renders main tactical search console and monitored sector overview.
     """
     servers = await core_db.get_active_servers()
+    tracker = get_tracker()
+    tracker_stats = tracker.get_stats() if tracker else {}
     return templates.TemplateResponse(
         request=request,
         name="index.html",
-        context={"request": request, "servers": servers},
+        context={"request": request, "servers": servers, "tracker_stats": tracker_stats},
     )
 
 
@@ -161,6 +163,8 @@ async def player_page(request: Request, ckey: str):
     norm_ckey = normalize_ckey(ckey.strip()) if ckey else ""
     dossier = await core_db.get_player_dossier(norm_ckey) if norm_ckey else None
     servers = await core_db.get_active_servers()
+    tracker = get_tracker()
+    tracker_stats = tracker.get_stats() if tracker else {}
 
     return templates.TemplateResponse(
         request=request,
@@ -171,5 +175,6 @@ async def player_page(request: Request, ckey: str):
             "target_ckey": ckey,
             "not_found": (dossier is None),
             "servers": servers,
+            "tracker_stats": tracker_stats,
         },
     )
