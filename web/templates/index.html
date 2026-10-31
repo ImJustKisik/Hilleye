@@ -48,44 +48,6 @@
         {% include "partials/player_dossier.html" %}
       {% elif not_found %}
         {% include "partials/not_found.html" %}
-      {% else %}
-        <div class="panel standby-panel">
-          <div class="standby-body">
-            <h2 class="standby-heading">Search a Player by BYOND CKey</h2>
-            <p class="standby-copy">
-              Enter any Space Station 13 player's <code>ckey</code> above to inspect their current online status, cumulative tracked playtime, per-server hour distribution, and recent session history.
-            </p>
-            <div class="standby-notes">
-              <div class="standby-note-item">
-                <h3 class="standby-note-title">Key Normalization</h3>
-                <p>Spaces, punctuation, and uppercase letters are stripped automatically (for example, <code>Honk_Master!</code> becomes <code>honkmaster</code>).</p>
-              </div>
-              <div class="standby-note-item">
-                <h3 class="standby-note-title">Session Continuity</h3>
-                <p>Servers are polled every <code>{{ tracker_stats.poll_interval if tracker_stats and tracker_stats.poll_interval else 120 }}s</code>. Brief disconnects under <code>{{ tracker_stats.grace_period_seconds if tracker_stats and tracker_stats.grace_period_seconds else 300 }}s</code> are merged into a single session.</p>
-              </div>
-            </div>
-          </div>
-
-          <dl class="standby-specs" aria-label="Telemetry configuration and routes">
-            <div class="spec-cell">
-              <dt>Monitored Servers</dt>
-              <dd class="mono-val">{{ servers|length if servers else 0 }} active</dd>
-            </div>
-            <div class="spec-cell">
-              <dt>Protocol &amp; Poll</dt>
-              <dd class="mono-val">Topic 0x0083 &bull; {{ tracker_stats.poll_interval if tracker_stats and tracker_stats.poll_interval else 120 }}s</dd>
-            </div>
-            <div class="spec-cell">
-              <dt>Direct Permalink</dt>
-              <dd class="mono-val">/player/{ckey}</dd>
-            </div>
-            <div class="spec-cell">
-              <dt>JSON Endpoint</dt>
-              <dd class="mono-val">/api/v1/player/{ckey}</dd>
-            </div>
-          </dl>
-        </div>
       {% endif %}
     </div>
   </section>
