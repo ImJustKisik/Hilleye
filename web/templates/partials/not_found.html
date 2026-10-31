@@ -1,19 +1,13 @@
-<div class="module-frame not-found-module" role="status">
-  <div class="module-bar">
-    <div class="module-title-group">
-      <span class="module-index alert">ERR // 404</span>
-      <span class="module-title">Query Diagnostic</span>
-    </div>
-    <span class="module-spec">ARCHIVE MISS</span>
-  </div>
-
+<div class="panel not-found-panel" role="status">
   <div class="not-found-body">
-    <div class="not-found-code">NO RECORD FOUND &mdash; <span class="queried-key">{{ ckey or raw_query or 'EMPTY_QUERY' }}</span></div>
+    <h2 class="not-found-heading">
+      No record found for <code class="queried-key">{{ ckey or raw_query or 'empty query' }}</code>
+    </h2>
     <p class="not-found-desc">
-      Target not detected on any monitored server frequencies.
+      Player not detected on any monitored Space Station 13 server.
     </p>
-    <div class="not-found-meta">
-      BYOND keys are normalized to lowercase alphanumeric characters (<code>[a-z0-9]</code>). Verify key spelling or confirm that the player has connected to a tracked Space Station 13 server since telemetry collection began.
-    </div>
+    <p class="not-found-meta">
+      BYOND keys are normalized to lowercase alphanumeric characters (<code>[a-z0-9]</code>). Check the spelling of the key, or confirm that the player has connected to a tracked server since monitoring started.
+    </p>
   </div>
 </div>

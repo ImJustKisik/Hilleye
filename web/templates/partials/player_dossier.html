@@ -1,10 +1,10 @@
-<article class="module-frame dossier-module" aria-label="Player Telemetry Dossier">
-  <!-- Dossier Header Banner -->
+<article class="panel dossier-panel" aria-label="Player Telemetry Dossier">
+  <!-- Dossier Header -->
   <header class="dossier-header">
     <div class="dossier-subject">
       <div class="subject-meta-row">
-        <span class="subject-tag">SUBJECT RECORD // CKEY</span>
-        <a href="/api/v1/player/{{ dossier.ckey }}" target="_blank" rel="noopener" class="raw-json-link" title="View raw machine-readable JSON dossier">JSON</a>
+        <span class="subject-label">Player Dossier</span>
+        <a href="/api/v1/player/{{ dossier.ckey }}" target="_blank" rel="noopener" class="raw-json-link" title="View raw machine-readable JSON dossier">Raw JSON</a>
       </div>
       <h2 class="subject-ckey">{{ dossier.ckey }}</h2>
     </div>
@@ -13,58 +13,58 @@
       {% if dossier.is_online %}
       <div class="telemetry-status online">
         <div class="status-top-line">
-          <span class="signal-led online" aria-hidden="true"></span>
-          <span class="status-state">ONLINE // ACTIVE SESSION</span>
+          <span class="status-dot online" aria-hidden="true"></span>
+          <span class="status-state">Online — Active Session</span>
         </div>
         <div class="status-detail">
           <span class="status-server">{{ dossier.current_server }}</span>
           <span class="status-sep">&bull;</span>
-          <span class="status-dur">{{ dossier.current_session_duration }}</span>
+          <span class="status-dur mono-val">{{ dossier.current_session_duration }}</span>
         </div>
       </div>
       {% else %}
       <div class="telemetry-status offline">
         <div class="status-top-line">
-          <span class="signal-led offline" aria-hidden="true"></span>
-          <span class="status-state">OFFLINE // ARCHIVED</span>
+          <span class="status-dot offline" aria-hidden="true"></span>
+          <span class="status-state">Offline</span>
         </div>
         <div class="status-detail">
-          <span>LAST SEEN: {{ dossier.last_seen }} UTC</span>
+          <span>Last seen: <span class="mono-val">{{ dossier.last_seen }} UTC</span></span>
         </div>
       </div>
       {% endif %}
     </div>
   </header>
 
-  <!-- 4-Cell Telemetry Strip -->
+  <!-- 4-Cell Summary Strip -->
   <div class="telemetry-strip">
     <div class="telemetry-cell">
-      <div class="cell-label">CUMULATIVE PLAYTIME</div>
-      <div class="cell-value accent">{{ dossier.total_hours }}<span class="unit">h</span></div>
-      <div class="cell-sub">{{ dossier.total_playtime_seconds }}s logged</div>
+      <div class="cell-label">Total Playtime</div>
+      <div class="cell-value">{{ dossier.total_hours }}<span class="unit">h</span></div>
+      <div class="cell-sub mono-val">{{ dossier.total_playtime_seconds }}s recorded</div>
     </div>
     <div class="telemetry-cell">
-      <div class="cell-label">MONITORED SECTORS</div>
+      <div class="cell-label">Servers Visited</div>
       <div class="cell-value">{{ dossier.servers_count }}</div>
-      <div class="cell-sub">Distinct station frequencies</div>
+      <div class="cell-sub">Monitored servers</div>
     </div>
     <div class="telemetry-cell">
-      <div class="cell-label">FIRST SIGHTING (UTC)</div>
+      <div class="cell-label">First Seen (UTC)</div>
       <div class="cell-value timestamp">{{ dossier.first_seen }}</div>
-      <div class="cell-sub">Initial archive entry</div>
+      <div class="cell-sub">Initial record</div>
     </div>
     <div class="telemetry-cell">
-      <div class="cell-label">LAST SIGNAL (UTC)</div>
+      <div class="cell-label">Last Seen (UTC)</div>
       <div class="cell-value timestamp">{{ dossier.last_seen }}</div>
-      <div class="cell-sub">Latest poll confirmation</div>
+      <div class="cell-sub">Latest poll</div>
     </div>
   </div>
 
   <!-- Server Playtime Distribution -->
   <section class="dossier-block">
     <div class="block-header">
-      <h3 class="block-title">01.1 // Sector Playtime Distribution</h3>
-      <span class="block-meta">{{ dossier.servers_count }} SECTOR(S) RECORDED</span>
+      <h3 class="block-title">Playtime by Server</h3>
+      <span class="block-meta mono-val">{{ dossier.servers_count }} {{ 'server' if dossier.servers_count == 1 else 'servers' }}</span>
     </div>
 
     {% if dossier.server_breakdown %}
@@ -73,31 +73,30 @@
       <div class="dist-row">
         <div class="dist-top">
           <div class="dist-server">
-            <span class="dist-rank">{{ "%02d"|format(loop.index) }}</span>
             <span class="dist-title">{{ srv.title }}</span>
           </div>
           <div class="dist-metrics">
             <span class="dist-hours">{{ srv.hours }}h</span>
             <span class="dist-pct">{{ srv.percentage }}%</span>
-            <span class="dist-last">LAST: {{ srv.last_visit }}</span>
+            <span class="dist-last">Last seen: {{ srv.last_visit }} UTC</span>
           </div>
         </div>
-        <div class="meter-track" role="progressbar" aria-valuenow="{{ srv.percentage }}" aria-valuemin="0" aria-valuemax="100">
+        <div class="meter-track" role="progressbar" aria-valuenow="{{ srv.percentage }}" aria-valuemin="0" aria-valuemax="100" aria-label="{{ srv.title }} playtime share">
           <div class="meter-fill" style="width: {{ srv.percentage }}%;"></div>
         </div>
       </div>
       {% endfor %}
     </div>
     {% else %}
-    <div class="block-empty">No sector playtime distribution recorded yet.</div>
+    <div class="block-empty">No server playtime breakdown recorded yet.</div>
     {% endif %}
   </section>
 
   <!-- Recent Sessions Log -->
   <section class="dossier-block">
     <div class="block-header">
-      <h3 class="block-title">01.2 // Recent Incursion Log</h3>
-      <span class="block-meta">LAST {{ dossier.recent_sessions|length }} SESSION(S)</span>
+      <h3 class="block-title">Recent Sessions</h3>
+      <span class="block-meta mono-val">Last {{ dossier.recent_sessions|length }}</span>
     </div>
 
     <div class="data-table-wrapper">
@@ -105,27 +104,27 @@
         <thead>
           <tr>
             <th scope="col" class="col-idx">#</th>
-            <th scope="col">Sector / Server</th>
+            <th scope="col">Server</th>
             <th scope="col">Session Start (UTC)</th>
             <th scope="col" class="col-num">Duration</th>
-            <th scope="col" class="col-state">State</th>
+            <th scope="col" class="col-state">Status</th>
           </tr>
         </thead>
         <tbody>
           {% for sess in dossier.recent_sessions %}
           <tr class="{% if sess.is_active %}row-active{% endif %}">
-            <td class="col-idx">{{ "%02d"|format(loop.index) }}</td>
+            <td class="col-idx">{{ loop.index }}</td>
             <td class="col-server">{{ sess.server_title }}</td>
             <td class="col-time">{{ sess.started_at }}</td>
             <td class="col-num col-dur">{{ sess.duration_str }}</td>
             <td class="col-state">
               {% if sess.is_active %}
               <span class="session-state active">
-                <span class="signal-led online" aria-hidden="true"></span>
-                <span>ACTIVE</span>
+                <span class="status-dot online" aria-hidden="true"></span>
+                <span>Active</span>
               </span>
               {% else %}
-              <span class="session-state closed">CONCLUDED</span>
+              <span class="session-state closed">Completed</span>
               {% endif %}
             </td>
           </tr>

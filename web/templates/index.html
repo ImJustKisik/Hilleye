@@ -2,16 +2,12 @@
 
 {% block content %}
 <div class="workbench-grid">
-  <!-- Primary Column: Query Console & Player Dossier -->
+  <!-- Primary Workspace: Player Search & Dossier Result -->
   <section class="primary-pane" aria-label="Player Dossier Lookup">
-    <!-- Command Query Module -->
-    <div class="module-frame query-module">
-      <div class="module-bar">
-        <div class="module-title-group">
-          <span class="module-index">01</span>
-          <h1 class="module-title">Player Dossier Query</h1>
-        </div>
-        <span class="module-spec">KEY NORMALIZATION: [a-z0-9]</span>
+    <div class="panel search-panel">
+      <div class="search-panel-header">
+        <h1 class="search-heading">Player Dossier Lookup</h1>
+        <span class="search-hint">Normalized key format: <code>[a-z0-9]</code></span>
       </div>
 
       <form class="query-form"
@@ -21,14 +17,14 @@
             hx-indicator="#search-indicator"
             action="/search"
             method="post">
-        <label for="ckey-input" class="sr-only">BYOND Player Ckey</label>
+        <label for="ckey-input" class="sr-only">BYOND Player CKey</label>
         <div class="command-input-wrap">
-          <span class="command-prefix" aria-hidden="true">CKEY //</span>
+          <span class="command-prefix" aria-hidden="true">ckey</span>
           <input type="text"
                  id="ckey-input"
                  name="ckey"
                  class="command-input"
-                 placeholder="enter target ckey (e.g. honkmaster)..."
+                 placeholder="Enter BYOND ckey (e.g. honkmaster)..."
                  value="{{ target_ckey or (dossier.ckey if dossier else '') }}"
                  autocomplete="off"
                  spellcheck="false"
@@ -41,96 +37,116 @@
               <path d="M12 3a9 9 0 0 1 9 9" stroke-linecap="square"></path>
             </svg>
           </span>
-          <span>QUERY RECORD</span>
+          <span>Search Player</span>
         </button>
       </form>
     </div>
 
     <!-- Dossier Output Viewport -->
-    <div id="dossier-container" aria-live="polite">
+    <div id="dossier-container" class="dossier-viewport" aria-live="polite">
       {% if dossier %}
         {% include "partials/player_dossier.html" %}
       {% elif not_found %}
         {% include "partials/not_found.html" %}
       {% else %}
-        <div class="module-frame standby-console">
-          <div class="standby-grid">
-            <div class="standby-main">
-              <div class="standby-kicker">TELEMETRY TERMINAL // STANDBY</div>
-              <h2 class="standby-heading">Ready to Query Player Record</h2>
-              <p class="standby-copy">
-                Enter any Space Station 13 BYOND <code>ckey</code> above to inspect live station presence, cumulative playtime hours, per-server distribution, and chronological incursion logs.
-              </p>
+        <div class="panel standby-panel">
+          <div class="standby-body">
+            <h2 class="standby-heading">Search a Player by BYOND CKey</h2>
+            <p class="standby-copy">
+              Enter any Space Station 13 player's <code>ckey</code> above to inspect their current online status, cumulative tracked playtime, per-server hour distribution, and recent session history.
+            </p>
+            <div class="standby-notes">
+              <div class="standby-note-item">
+                <h3 class="standby-note-title">Key Normalization</h3>
+                <p>Spaces, punctuation, and uppercase letters are stripped automatically (for example, <code>Honk_Master!</code> becomes <code>honkmaster</code>).</p>
+              </div>
+              <div class="standby-note-item">
+                <h3 class="standby-note-title">Session Continuity</h3>
+                <p>Servers are polled every <code>{{ tracker_stats.poll_interval if tracker_stats and tracker_stats.poll_interval else 120 }}s</code>. Brief disconnects under <code>{{ tracker_stats.grace_period_seconds if tracker_stats and tracker_stats.grace_period_seconds else 300 }}s</code> are merged into a single session.</p>
+              </div>
             </div>
-            <dl class="standby-specs">
-              <div class="spec-row">
-                <dt>PROTOCOL</dt>
-                <dd>BYOND Topic <code>\x00\x83</code></dd>
-              </div>
-              <div class="spec-row">
-                <dt>SCAN INTERVAL</dt>
-                <dd>120 seconds</dd>
-              </div>
-              <div class="spec-row">
-                <dt>SESSION GRACE</dt>
-                <dd>300s reconnect window</dd>
-              </div>
-              <div class="spec-row">
-                <dt>DIRECT ROUTE</dt>
-                <dd><code>/player/{ckey}</code></dd>
-              </div>
-            </dl>
           </div>
+
+          <dl class="standby-specs" aria-label="Telemetry configuration and routes">
+            <div class="spec-cell">
+              <dt>Monitored Servers</dt>
+              <dd class="mono-val">{{ servers|length if servers else 0 }} active</dd>
+            </div>
+            <div class="spec-cell">
+              <dt>Protocol &amp; Poll</dt>
+              <dd class="mono-val">Topic 0x0083 &bull; {{ tracker_stats.poll_interval if tracker_stats and tracker_stats.poll_interval else 120 }}s</dd>
+            </div>
+            <div class="spec-cell">
+              <dt>Direct Permalink</dt>
+              <dd class="mono-val">/player/{ckey}</dd>
+            </div>
+            <div class="spec-cell">
+              <dt>JSON Endpoint</dt>
+              <dd class="mono-val">/api/v1/player/{ckey}</dd>
+            </div>
+          </dl>
         </div>
       {% endif %}
     </div>
   </section>
 
-  <!-- Secondary Sidebar: Live Monitored Sector Directory -->
+  <!-- Secondary Sidebar: Monitored Servers Directory -->
   {% if servers %}
   <aside class="secondary-pane" aria-label="Monitored Servers Directory">
-    <div class="module-frame directory-module">
-      <div class="module-bar directory-header">
-        <div class="module-title-group">
-          <span class="module-index">02</span>
-          <h2 class="module-title">Monitored Sectors</h2>
+    <div class="panel directory-panel">
+      <div class="panel-header directory-header">
+        <div class="directory-title-wrap">
+          <h2 class="panel-title">Monitored Servers</h2>
+          <span class="directory-status">
+            <span class="status-dot online" aria-hidden="true"></span>
+            <span class="mono-val">{{ servers|length }} online</span>
+          </span>
         </div>
-        <div class="directory-controls">
-          <span class="sector-count-readout">{{ servers|length }} ONLINE</span>
-          <button type="button"
-                  class="mobile-directory-toggle"
-                  id="servers-toggle-btn"
-                  aria-expanded="false"
-                  aria-controls="servers-directory-body"
-                  onclick="toggleServersDirectory()">
-            <span id="servers-toggle-label">Show list</span>
-          </button>
-        </div>
+        <button type="button"
+                class="mobile-directory-toggle"
+                id="servers-toggle-btn"
+                aria-expanded="false"
+                aria-controls="servers-directory-body"
+                onclick="toggleServersDirectory()">
+          <span id="servers-toggle-label">Show servers</span>
+        </button>
       </div>
 
       <div class="directory-body" id="servers-directory-body">
         <div class="directory-filter-bar">
-          <label for="server-filter-input" class="sr-only">Filter monitored servers</label>
+          <label for="server-filter-input" class="sr-only">Filter monitored servers by name or address</label>
           <input type="text"
                  id="server-filter-input"
                  class="directory-filter-input"
-                 placeholder="Filter {{ servers|length }} active sectors by name or ID..."
-                  autocomplete="off"
+                 placeholder="Filter by server name or address..."
+                 autocomplete="off"
                  spellcheck="false"
                  oninput="filterServers(this.value)">
-          <span class="filter-counter" id="server-visible-count">{{ servers|length }}</span>
+          <div class="filter-meta">
+            <button type="button"
+                    id="server-filter-clear"
+                    class="filter-clear-btn"
+                    aria-label="Clear server filter"
+                    onclick="clearServerFilter()"
+                    hidden>Clear</button>
+            <span class="filter-counter" id="server-visible-count" aria-live="polite">{{ servers|length }} / {{ servers|length }}</span>
+          </div>
         </div>
 
-        <div class="sector-list" id="servers-grid-container" role="list">
+        <div class="sector-list" id="servers-grid-container" role="list" tabindex="0" aria-label="Active Space Station 13 servers">
           {% for s in servers %}
           <div class="sector-row" role="listitem" data-search="{{ (s.title or '')|lower }} {{ (s.identifier or '')|lower }}">
-            <span class="signal-led online" aria-hidden="true"></span>
+            <span class="status-dot online" aria-hidden="true" title="Server active"></span>
             <div class="sector-info">
-              <div class="sector-title" title="{{ s.title or s.identifier }}">{{ s.title or s.identifier }}</div>
+              <div class="sector-title">{{ s.title or s.identifier }}</div>
               <div class="sector-endpoint">{{ s.identifier }}</div>
             </div>
           </div>
           {% endfor %}
+        </div>
+
+        <div id="server-filter-empty" class="directory-empty" hidden>
+          No monitored servers match that filter.
         </div>
       </div>
     </div>
@@ -140,6 +156,8 @@
 
 {% if servers %}
 <script>
+  const TOTAL_SERVERS = {{ servers|length }};
+
   function toggleServersDirectory() {
     const body = document.getElementById('servers-directory-body');
     const btn = document.getElementById('servers-toggle-btn');
@@ -148,12 +166,13 @@
     const isExpanded = body.classList.toggle('is-open');
     btn.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
     if (label) {
-      label.textContent = isExpanded ? 'Hide list' : 'Show list';
+      label.textContent = isExpanded ? 'Hide servers' : 'Show servers';
     }
   }
 
   function filterServers(query) {
-    const q = (query || '').trim().toLowerCase();
+    const raw = query || '';
+    const q = raw.trim().toLowerCase();
     const rows = document.querySelectorAll('#servers-grid-container .sector-row');
     let visible = 0;
     rows.forEach(row => {
@@ -162,10 +181,29 @@
       row.style.display = match ? 'flex' : 'none';
       if (match) visible++;
     });
+
     const counter = document.getElementById('server-visible-count');
     if (counter) {
-      counter.textContent = visible;
+      counter.textContent = q ? (visible + ' / ' + TOTAL_SERVERS) : (TOTAL_SERVERS + ' / ' + TOTAL_SERVERS);
     }
+
+    const clearBtn = document.getElementById('server-filter-clear');
+    if (clearBtn) {
+      clearBtn.hidden = !raw.length;
+    }
+
+    const emptyState = document.getElementById('server-filter-empty');
+    if (emptyState) {
+      emptyState.hidden = visible > 0;
+    }
+  }
+
+  function clearServerFilter() {
+    const input = document.getElementById('server-filter-input');
+    if (!input) return;
+    input.value = '';
+    filterServers('');
+    input.focus();
   }
 </script>
 {% endif %}
