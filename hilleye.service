@@ -1,0 +1,17 @@
+[Unit]
+Description=Hilleye (CyberSyn Intel) SS13 Tracker
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/Hilleye
+Environment="PATH=/opt/Hilleye/venv/bin"
+ExecStart=/opt/Hilleye/venv/bin/python run.py
+Restart=always
+RestartSec=5s
+KillSignal=SIGINT
+TimeoutStopSec=10
+
+[Install]
+WantedBy=multi-user.target
