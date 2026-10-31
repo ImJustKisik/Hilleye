@@ -3,8 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="CyberSyn Intel // Space Station 13 Player Dossier & Playtime Tracker">
-  <title>{% block title %}Hilleye &bull; SS13 Player Playtime & Dossier Tracker{% endblock %}</title>
+  <meta name="description" content="Hilleye &bull; Space Station 13 Player Dossier & Playtime Tracker">
+  <title>{% block title %}Hilleye &bull; SS13 Player Dossier & Playtime Tracker{% endblock %}</title>
+  <link rel="icon" type="image/svg+xml" href="/static/img/favicon.svg">
   <link rel="stylesheet" href="/static/css/style.css">
   <script src="/static/js/htmx.min.js"></script>
 </head>
@@ -13,17 +14,10 @@
     <!-- Header / Navbar -->
     <header class="app-header">
       <a href="/" class="brand-wrapper">
-        <div class="brand-icon">
-          <!-- Minimalist radar / target eye SVG -->
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="12" cy="12" r="9"/>
-            <path d="M12 3v4M12 17v4M3 12h4M17 12h4"/>
-            <circle cx="12" cy="12" r="3" fill="currentColor"/>
-          </svg>
-        </div>
+        <img src="/static/img/logo.svg" alt="Hilleye Logo" class="brand-logo-img">
         <div>
           <span class="brand-title">Hilleye</span>
-          <span class="brand-badge">CyberSyn Intel</span>
+          <span class="brand-badge">SS13 Tracker</span>
         </div>
       </a>
 
@@ -48,7 +42,7 @@
 
     <!-- Footer -->
     <footer class="app-footer">
-      <div>Hilleye // SS13 Player Dossier & Playtime Intelligence</div>
+      <div>Hilleye &bull; Space Station 13 Player Dossier & Playtime Tracker</div>
       <div>SQLite WAL Engine &bull; Auto-reconnect Grace Period Active</div>
     </footer>
   </div>

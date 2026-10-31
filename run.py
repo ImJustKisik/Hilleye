@@ -12,7 +12,7 @@ def main():
     config = get_config()
     host = getattr(config, "host", "0.0.0.0")
     port = int(getattr(config, "port", 8000))
-    print(f"[*] Launching CyberSyn Intel on http://{host}:{port}")
+    print(f"[*] Launching Hilleye on http://{host}:{port}")
     uvicorn.run("web.app:app", host=host, port=port, log_level="info", access_log=True)
 
 

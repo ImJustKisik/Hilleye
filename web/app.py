@@ -31,10 +31,10 @@ async def lifespan(app: FastAPI):
     - On startup: initialize SQLite WAL database and start the background tracker.
     - On shutdown: stop background tracker and safely close database connections.
     """
-    logger.info("Initializing CyberSyn Intel SQLite WAL database...")
+    logger.info("Initializing Hilleye SQLite WAL database...")
     await core_db.init_db()
 
-    logger.info("Starting CyberSyn Intel background telemetry tracker...")
+    logger.info("Starting Hilleye background telemetry tracker...")
     tracker = get_tracker()
     try:
         await tracker.start()
@@ -43,7 +43,7 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    logger.info("Shutting down CyberSyn Intel background telemetry tracker...")
+    logger.info("Shutting down Hilleye background telemetry tracker...")
     try:
         await tracker.stop()
     except Exception as e:
@@ -51,11 +51,11 @@ async def lifespan(app: FastAPI):
 
     logger.info("Closing SQLite database connection pool...")
     await core_db.close_db()
-    logger.info("CyberSyn Intel shutdown complete.")
+    logger.info("Hilleye shutdown complete.")
 
 
 app = FastAPI(
-    title="CyberSyn Intel",
+    title="Hilleye",
     description="Space Station 13 Player & Server Playtime Intelligence Network",
     version="1.0.0",
     lifespan=lifespan,

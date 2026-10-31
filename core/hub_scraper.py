@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_HUB_URL = "http://www.byond.com/games/SpaceStation13?format=json"
 DEFAULT_TEXT_URL = "http://www.byond.com/games/Exadv1/SpaceStation13?format=text"
-USER_AGENT = "CyberSynIntel/1.0 (BYOND)"
+USER_AGENT = "Hilleye/1.0 (BYOND)"
 
 
 @dataclass

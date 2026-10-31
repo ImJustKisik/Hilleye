@@ -90,6 +90,19 @@ body::before {
   color: inherit;
 }
 
+.brand-logo-img {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-md);
+  box-shadow: 0 0 14px var(--accent-glow);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.brand-wrapper:hover .brand-logo-img {
+  transform: scale(1.05);
+  box-shadow: 0 0 18px rgba(225, 29, 72, 0.45);
+}
+
 .brand-icon {
   width: 32px;
   height: 32px;
