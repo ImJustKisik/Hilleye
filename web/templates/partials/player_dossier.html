@@ -1,109 +1,121 @@
 <div class="dossier-card">
-  <!-- Status Badge -->
-  {% if dossier.is_online %}
-  <div class="status-badge online">
-    <span class="status-indicator-dot"></span>
-    <span>[TARGET ACTIVE: SECTOR // {{ dossier.current_server }}] &mdash; ON STATION: {{ dossier.current_session_duration }}</span>
-  </div>
-  {% else %}
-  <div class="status-badge offline">
-    <span class="status-indicator-dot"></span>
-    <span>[TARGET INACTIVE / LAST SEEN: {{ dossier.last_seen }}]</span>
-  </div>
-  {% endif %}
-
-  <!-- Dossier Header -->
-  <div class="panel-header">
-    <span>TARGET IDENTIFIER: <strong style="color: var(--text-primary); font-size: 1.1em;">{{ dossier.ckey }}</strong></span>
-    <span style="font-size: 0.75rem; color: var(--text-muted);">SECURITY CLEARANCE: SYNDICATE HIGH</span>
-  </div>
-
-  <!-- Summary Metrics Grid -->
-  <div class="metrics-grid">
-    <div class="metric-box">
-      <div class="metric-label">TOTAL PLAYTIME</div>
-      <div class="metric-value highlight">{{ dossier.total_hours }} ч</div>
-      <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 2px;">{{ dossier.total_playtime_seconds }} SEC</div>
-    </div>
-    <div class="metric-box">
-      <div class="metric-label">SECTORS VISITED</div>
-      <div class="metric-value">{{ dossier.servers_count }}</div>
-      <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 2px;">STATION FREQS</div>
-    </div>
-    <div class="metric-box">
-      <div class="metric-label">FIRST CONTACT</div>
-      <div class="metric-value" style="font-size: 1rem;">{{ dossier.first_seen }}</div>
-    </div>
-    <div class="metric-box">
-      <div class="metric-label">LATEST TRANSMISSION</div>
-      <div class="metric-value" style="font-size: 1rem;">{{ dossier.last_seen }}</div>
-    </div>
-  </div>
-
-  <!-- Server Breakdown (Horizontal Bars) -->
-  <div class="panel" style="margin-bottom: 20px; padding: 16px;">
-    <div class="panel-header">
-      <span>SECTOR FREQUENCY DISTRIBUTION</span>
-      <span>{{ dossier.servers_count }} SECTOR(S)</span>
-    </div>
-    <div class="distribution-list">
-      {% for srv in dossier.server_breakdown %}
-      <div class="distribution-item">
-        <div class="distribution-meta">
-          <span style="font-weight: 700; color: var(--text-primary);">[{{ srv.title }}]</span>
-          <span>
-            <strong style="color: var(--accent-amber);">{{ srv.hours }} ч</strong> 
-            <span style="color: var(--text-muted);">({{ srv.percentage }}%)</span>
-            <span style="color: var(--text-muted); margin-left: 8px;">[ПОСЛЕДНИЙ ВИЗИТ: {{ srv.last_visit }}]</span>
-          </span>
-        </div>
-        <div class="bar-wrapper">
-          <div class="bar-fill" style="width: {{ srv.percentage }}%;"></div>
-        </div>
+  <!-- Dossier Profile Header -->
+  <div class="dossier-header">
+    <div class="dossier-identity">
+      <div class="avatar-badge">
+        {{ dossier.ckey[:2]|upper }}
       </div>
-      {% endfor %}
-      {% if not dossier.server_breakdown %}
-      <div style="color: var(--text-muted); font-size: 0.85rem;">NO SECTOR LOGS RECORDED.</div>
+      <div class="identity-text">
+        <h2>{{ dossier.ckey }}</h2>
+        <p>Player Dossier &bull; SS13 Telemetry Record</p>
+      </div>
+    </div>
+
+    <div>
+      {% if dossier.is_online %}
+      <div class="activity-badge online">
+        <span class="activity-indicator"></span>
+        <span>Online &bull; {{ dossier.current_server }} ({{ dossier.current_session_duration }})</span>
+      </div>
+      {% else %}
+      <div class="activity-badge offline">
+        <span class="activity-indicator"></span>
+        <span>Offline &bull; Last seen {{ dossier.last_seen }}</span>
+      </div>
       {% endif %}
     </div>
   </div>
 
-  <!-- Recent Sessions Log Table -->
-  <div class="panel" style="margin-bottom: 0; padding: 16px;">
-    <div class="panel-header">
-      <span>RECENT INCURSION LOGS</span>
-      <span>LAST 10 SESSIONS</span>
+  <!-- Summary Stats Row -->
+  <div class="stats-grid">
+    <div class="stat-item">
+      <div class="stat-label">Total Playtime</div>
+      <div class="stat-value highlight">{{ dossier.total_hours }}h</div>
+      <div style="font-size: 0.75rem; color: var(--text-dim); margin-top: 2px;">{{ dossier.total_playtime_seconds }}s recorded</div>
     </div>
-    <table class="tactical-table">
-      <thead>
-        <tr>
-          <th>SECTOR</th>
-          <th>STARTED AT</th>
-          <th>DURATION</th>
-          <th>STATUS</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for sess in dossier.recent_sessions %}
-        <tr>
-          <td style="font-weight: 700;">{{ sess.server_title }}</td>
-          <td>{{ sess.started_at }}</td>
-          <td style="color: var(--accent-amber);">{{ sess.duration_str }}</td>
-          <td>
-            {% if sess.is_active %}
-            <span style="color: var(--status-online); font-weight: 700;">● ACTIVE</span>
-            {% else %}
-            <span style="color: var(--text-muted);">CONCLUDED</span>
-            {% endif %}
-          </td>
-        </tr>
-        {% endfor %}
-        {% if not dossier.recent_sessions %}
-        <tr>
-          <td colspan="4" style="color: var(--text-muted); text-align: center; padding: 16px;">NO LOGGED INCURSIONS</td>
-        </tr>
-        {% endif %}
-      </tbody>
-    </table>
+    <div class="stat-item">
+      <div class="stat-label">Servers Visited</div>
+      <div class="stat-value">{{ dossier.servers_count }}</div>
+      <div style="font-size: 0.75rem; color: var(--text-dim); margin-top: 2px;">Station frequencies</div>
+    </div>
+    <div class="stat-item">
+      <div class="stat-label">First Seen</div>
+      <div class="stat-value" style="font-size: 1rem; font-weight: 500;">{{ dossier.first_seen }}</div>
+    </div>
+    <div class="stat-item">
+      <div class="stat-label">Last Seen</div>
+      <div class="stat-value" style="font-size: 1rem; font-weight: 500;">{{ dossier.last_seen }}</div>
+    </div>
+  </div>
+
+  <!-- Server Breakdown Section -->
+  <div class="dossier-section">
+    <div class="section-heading">
+      <span>Playtime Distribution</span>
+      <span>{{ dossier.servers_count }} Server(s)</span>
+    </div>
+    <div class="server-list">
+      {% for srv in dossier.server_breakdown %}
+      <div class="server-item">
+        <div class="server-meta">
+          <span class="server-name">{{ srv.title }}</span>
+          <div class="server-stats">
+            <span class="server-hours">{{ srv.hours }}h</span>
+            <span class="server-pct">({{ srv.percentage }}%)</span>
+            <span class="server-visit">Last visit: {{ srv.last_visit }}</span>
+          </div>
+        </div>
+        <div class="progress-track">
+          <div class="progress-fill" style="width: {{ srv.percentage }}%;"></div>
+        </div>
+      </div>
+      {% endfor %}
+      {% if not dossier.server_breakdown %}
+      <div style="color: var(--text-dim); font-size: 0.85rem; padding: 12px 0;">No server playtime recorded yet.</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Recent Sessions History -->
+  <div class="dossier-section">
+    <div class="section-heading">
+      <span>Recent Sessions</span>
+      <span>Last 10 Logged Incursions</span>
+    </div>
+    <div class="data-table-wrapper">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Server</th>
+            <th>Started</th>
+            <th>Duration</th>
+            <th>State</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for sess in dossier.recent_sessions %}
+          <tr>
+            <td style="font-weight: 600;">{{ sess.server_title }}</td>
+            <td class="table-time">{{ sess.started_at }}</td>
+            <td class="table-duration">{{ sess.duration_str }}</td>
+            <td>
+              {% if sess.is_active %}
+              <span style="color: var(--status-online); font-weight: 600; font-size: 0.8rem; display: inline-flex; align-items: center; gap: 4px;">
+                <span class="status-dot"></span> In Progress
+              </span>
+              {% else %}
+              <span style="color: var(--text-dim); font-size: 0.8rem;">Concluded</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+          {% if not dossier.recent_sessions %}
+          <tr>
+            <td colspan="4" style="color: var(--text-dim); text-align: center; padding: 24px;">No session history available.</td>
+          </tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
   </div>
 </div>
