@@ -1,0 +1,43 @@
+{
+  "tracker": {
+    "poll_interval_seconds": 120,
+    "grace_period_seconds": 300,
+    "socket_timeout_seconds": 3.0,
+    "max_concurrent_sockets": 30,
+    "byond_hub_url": "http://www.byond.com/games/Exadv1/SpaceStation13?format=text"
+  },
+  "custom_servers": [
+    {
+      "identifier": "byond://play.ss13.ru:1337",
+      "title": "Tau Ceti Classic",
+      "ip": "play.ss13.ru",
+      "port": 1337
+    },
+    {
+      "identifier": "byond://play.ss13.ru:25555",
+      "title": "Tau Ceti Extended",
+      "ip": "play.ss13.ru",
+      "port": 25555
+    },
+    {
+      "identifier": "byond://game.whitedream.org:1337",
+      "title": "WhiteDream 1",
+      "ip": "game.whitedream.org",
+      "port": 1337
+    },
+    {
+      "identifier": "byond://game.whitedream.org:1338",
+      "title": "WhiteDream 2",
+      "ip": "game.whitedream.org",
+      "port": 1338
+    }
+  ],
+  "web": {
+    "host": "0.0.0.0",
+    "port": 8080,
+    "app_title": "CYBERSYN INTEL // SS13 DOSSIER TRACKER"
+  },
+  "database": {
+    "path": "tracker.db"
+  }
+}

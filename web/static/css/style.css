@@ -1,0 +1,365 @@
+/* ==========================================================================
+   CYBERSYN INTEL // Syndicate Black Ops Tactical Terminal Stylesheet
+   Color Palette:
+     --bg-primary: #0a0b0e (Obsidian)
+     --bg-surface: #12151b (Gunmetal steel)
+     --bg-surface-elevated: #181d26
+     --border-dim: #222733
+     --border-bright: #2e3545
+     --accent-carmine: #bb0202
+     --accent-crimson: #e53935
+     --accent-amber: #deb700
+     --status-online: #00e676
+     --status-offline: #e53935
+     --text-primary: #e6edf3
+     --text-muted: #8b949e
+   ========================================================================== */
+
+:root {
+  --bg-primary: #0a0b0e;
+  --bg-surface: #12151b;
+  --bg-surface-elevated: #181d26;
+  --border-dim: #222733;
+  --border-bright: #2e3545;
+  --accent-carmine: #bb0202;
+  --accent-crimson: #e53935;
+  --accent-amber: #deb700;
+  --status-online: #00e676;
+  --status-offline: #e53935;
+  --text-primary: #e6edf3;
+  --text-muted: #8b949e;
+  --font-mono: 'JetBrains Mono', 'Fira Code', 'Consolas', 'Courier New', monospace;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 14px;
+  line-height: 1.5;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+a {
+  color: var(--accent-amber);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+/* Container */
+.terminal-container {
+  max-width: 1100px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 24px 16px;
+  flex: 1;
+}
+
+/* Header */
+.terminal-header {
+  border-bottom: 2px solid var(--accent-carmine);
+  padding-bottom: 16px;
+  margin-bottom: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.terminal-title {
+  font-size: 1.25rem;
+  letter-spacing: 0.15em;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.terminal-title .brand-red {
+  color: var(--accent-crimson);
+  font-weight: 700;
+  text-shadow: 0 0 10px rgba(229, 57, 53, 0.4);
+}
+
+.terminal-subtitle {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  letter-spacing: 0.05em;
+}
+
+/* Panels */
+.panel {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-dim);
+  border-radius: 4px;
+  padding: 20px;
+  margin-bottom: 24px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.panel-header {
+  border-bottom: 1px solid var(--border-dim);
+  padding-bottom: 10px;
+  margin-bottom: 16px;
+  font-size: 0.85rem;
+  letter-spacing: 0.1em;
+  color: var(--accent-amber);
+  text-transform: uppercase;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+/* Tactical Search Form */
+.search-form {
+  display: flex;
+  gap: 12px;
+}
+
+.search-input-wrapper {
+  position: relative;
+  flex: 1;
+}
+
+.search-input {
+  width: 100%;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-bright);
+  border-radius: 3px;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 1rem;
+  padding: 12px 16px;
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.search-input:focus {
+  border-color: var(--accent-crimson);
+  box-shadow: 0 0 12px rgba(229, 57, 53, 0.3);
+}
+
+.btn-tactical {
+  background: var(--accent-carmine);
+  color: #ffffff;
+  border: 1px solid var(--accent-crimson);
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  padding: 12px 24px;
+  cursor: pointer;
+  transition: background 0.2s, box-shadow 0.2s, transform 0.1s;
+}
+
+.btn-tactical:hover {
+  background: var(--accent-crimson);
+  box-shadow: 0 0 14px rgba(229, 57, 53, 0.5);
+}
+
+.btn-tactical:active {
+  transform: translateY(1px);
+}
+
+/* Dossier Card Components */
+.dossier-card {
+  animation: fadeIn 0.3s ease-in;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  border-radius: 3px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  margin-bottom: 20px;
+}
+
+.status-badge.online {
+  background: rgba(0, 230, 118, 0.12);
+  border: 1px solid var(--status-online);
+  color: var(--status-online);
+  box-shadow: 0 0 10px rgba(0, 230, 118, 0.25);
+}
+
+.status-badge.offline {
+  background: rgba(229, 57, 53, 0.12);
+  border: 1px solid var(--status-offline);
+  color: var(--status-offline);
+  box-shadow: 0 0 10px rgba(229, 57, 53, 0.25);
+}
+
+.status-indicator-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.online .status-indicator-dot {
+  background: var(--status-online);
+  box-shadow: 0 0 6px var(--status-online);
+}
+
+.offline .status-indicator-dot {
+  background: var(--status-offline);
+  box-shadow: 0 0 6px var(--status-offline);
+}
+
+/* Summary Grid */
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.metric-box {
+  background: var(--bg-surface-elevated);
+  border: 1px solid var(--border-dim);
+  padding: 12px 16px;
+  border-radius: 3px;
+}
+
+.metric-label {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  letter-spacing: 0.05em;
+  margin-bottom: 4px;
+  text-transform: uppercase;
+}
+
+.metric-value {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.metric-value.highlight {
+  color: var(--accent-amber);
+}
+
+/* Distribution Bars */
+.distribution-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-bottom: 24px;
+}
+
+.distribution-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.distribution-meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.85rem;
+}
+
+.bar-wrapper {
+  background: var(--bg-primary);
+  border: 1px solid var(--border-dim);
+  height: 12px;
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent-carmine), var(--accent-crimson));
+  box-shadow: 0 0 8px rgba(229, 57, 53, 0.4);
+  transition: width 0.5s ease;
+}
+
+/* Table */
+.tactical-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.tactical-table th,
+.tactical-table td {
+  padding: 10px 14px;
+  text-align: left;
+  border-bottom: 1px solid var(--border-dim);
+}
+
+.tactical-table th {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  letter-spacing: 0.05em;
+  background: var(--bg-surface-elevated);
+  text-transform: uppercase;
+}
+
+.tactical-table tr:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+/* Tactical Not Found Message */
+.not-found-box {
+  background: rgba(229, 57, 53, 0.06);
+  border: 1px solid var(--accent-carmine);
+  padding: 24px;
+  border-radius: 4px;
+  text-align: center;
+  animation: fadeIn 0.3s ease-in;
+}
+
+.not-found-title {
+  color: var(--accent-crimson);
+  font-size: 1.1rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  margin-bottom: 8px;
+}
+
+.not-found-desc {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+/* Footer */
+.terminal-footer {
+  border-top: 1px solid var(--border-dim);
+  padding-top: 16px;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.htmx-indicator {
+  display: none;
+}
+
+.htmx-request .htmx-indicator {
+  display: inline-block;
+}
+.htmx-request.htmx-indicator {
+  display: inline-block;
+}

@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}CYBERSYN INTEL // TARGET DOSSIER TRACKER{% endblock %}</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+  <script src="/static/js/htmx.min.js"></script>
+</head>
+<body>
+  <div class="terminal-container">
+    <header class="terminal-header">
+      <div class="terminal-title">
+        <span>[ <span class="brand-red">CYBERSYN INTEL</span> NETWORK // TARGET DOSSIER TRACKER ]</span>
+      </div>
+      <div class="terminal-subtitle">
+        SYNDICATE HIGH COMMAND // BLACK OPS TELEMETRY & PLAYTIME INTELLIGENCE
+      </div>
+    </header>
+
+    <main>
+      {% block content %}{% endblock %}
+    </main>
+
+    <footer class="terminal-footer">
+      <div>[ CLASSIFIED // INTERNAL SYNDICATE DIRECTIVE ]</div>
+      <div>CYBERSYN INTEL v1.0 &bull; WAL ENGINE ONLINE</div>
+    </footer>
+  </div>
+</body>
+</html>

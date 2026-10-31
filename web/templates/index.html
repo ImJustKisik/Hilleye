@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+
+{% block content %}
+<!-- Search Panel -->
+<div class="panel">
+  <div class="panel-header">
+    <span>TACTICAL TARGET ACQUISITION</span>
+    <span>FREQUENCY INTERCEPTOR</span>
+  </div>
+  <form class="search-form"
+        hx-post="/search"
+        hx-target="#dossier-container"
+        hx-swap="innerHTML"
+        hx-indicator="#search-indicator"
+        action="/search"
+        method="post">
+    <div class="search-input-wrapper">
+      <input type="text"
+             name="ckey"
+             class="search-input"
+             placeholder="[ ENTER CKEY: honkmaster ]"
+             value="{{ target_ckey or (dossier.ckey if dossier else '') }}"
+             autocomplete="off"
+             autofocus>
+    </div>
+    <button type="submit" class="btn-tactical">[ TRACK ]</button>
+  </form>
+  <div id="search-indicator" class="htmx-indicator" style="margin-top: 10px; color: var(--accent-amber); font-size: 0.85rem;">
+    <span>⚡ SCANNING SECTOR TELEMETRY ARCHIVES...</span>
+  </div>
+</div>
+
+<!-- Dossier Display Container -->
+<div id="dossier-container">
+  {% if dossier %}
+    {% include "partials/player_dossier.html" %}
+  {% elif not_found %}
+    {% include "partials/not_found.html" %}
+  {% else %}
+    <div class="panel" style="text-align: center; padding: 48px 24px; color: var(--text-muted);">
+      <div style="color: var(--accent-amber); font-size: 1.1rem; margin-bottom: 8px;">[ SYSTEM READY // ARCHIVE IDLE ]</div>
+      <div>ENTER ANY TARGET BYOND CKEY IN THE QUERY CONSOLE ABOVE TO RETRIEVE PLAYTIME & DOSSIER TELEMETRY.</div>
+    </div>
+  {% endif %}
+</div>
+
+<!-- Active Monitored Sectors Summary -->
+{% if servers %}
+<div class="panel" style="margin-top: 24px;">
+  <div class="panel-header">
+    <span>MONITORED SECTOR FREQUENCIES</span>
+    <span>{{ servers|length }} SECTORS ONLINE</span>
+  </div>
+  <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+    {% for s in servers %}
+    <span style="background: var(--bg-surface-elevated); border: 1px solid var(--border-dim); padding: 4px 10px; border-radius: 2px; font-size: 0.8rem;">
+      <span style="color: var(--status-online);">●</span> {{ s.title or s.identifier }}
+    </span>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+{% endblock %}
