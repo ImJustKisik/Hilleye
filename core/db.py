@@ -31,7 +31,23 @@ CREATE TABLE IF NOT EXISTS servers (
     ip TEXT NOT NULL,
     port INTEGER NOT NULL,
     last_seen TIMESTAMP NOT NULL,
-    is_active BOOLEAN DEFAULT 1
+    is_active BOOLEAN DEFAULT 1,
+    current_players INTEGER DEFAULT 0,
+    map_name TEXT,
+    round_duration INTEGER DEFAULT 0,
+    gamemode TEXT,
+    admins_count INTEGER DEFAULT 0,
+    version TEXT
+);
+
+-- Server Online History Snapshots (Timeseries)
+CREATE TABLE IF NOT EXISTS server_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    server_id INTEGER NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+    timestamp REAL NOT NULL,
+    player_count INTEGER NOT NULL,
+    round_duration INTEGER DEFAULT 0,
+    map_name TEXT
 );
 
 -- Normalized Players
@@ -56,6 +72,7 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE INDEX IF NOT EXISTS idx_sessions_ckey ON sessions(ckey);
 CREATE INDEX IF NOT EXISTS idx_sessions_active ON sessions(ended_at) WHERE ended_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_sessions_server ON sessions(server_id);
+CREATE INDEX IF NOT EXISTS idx_snapshots_server_time ON server_snapshots(server_id, timestamp);
 """
 
 _current_db_path: str = "tracker.db"
@@ -100,6 +117,40 @@ def format_duration(seconds: Union[int, float]) -> str:
     return f"{secs}s"
 
 
+def format_hms(seconds: Optional[Union[int, float]]) -> str:
+    """Formats duration in seconds to HH:MM:SS string (e.g. '01:24:05')."""
+    total_sec = int(max(0, seconds or 0))
+    hours = total_sec // 3600
+    minutes = (total_sec % 3600) // 60
+    secs = total_sec % 60
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
+
+_SERVER_MIGRATION_COLUMNS: List[Tuple[str, str]] = [
+    ("current_players", "INTEGER DEFAULT 0"),
+    ("map_name", "TEXT"),
+    ("round_duration", "INTEGER DEFAULT 0"),
+    ("gamemode", "TEXT"),
+    ("admins_count", "INTEGER DEFAULT 0"),
+    ("version", "TEXT"),
+]
+
+
+async def _migrate_schema(conn: aiosqlite.Connection) -> None:
+    """Safely migrates existing database tables by adding missing columns via PRAGMA table_info."""
+    async with conn.cursor() as cur:
+        await cur.execute("PRAGMA table_info(servers);")
+        rows = await cur.fetchall()
+        existing_cols = {r[1] if isinstance(r, tuple) else r["name"] for r in rows}
+
+        for col_name, col_def in _SERVER_MIGRATION_COLUMNS:
+            if col_name not in existing_cols:
+                try:
+                    await cur.execute(f"ALTER TABLE servers ADD COLUMN {col_name} {col_def};")
+                except Exception as exc:
+                    logger.debug("Column migration warning for %s: %s", col_name, exc)
+
+
 async def init_db(db_path: str = "tracker.db") -> None:
     """
     Initializes SQLite database at db_path with WAL mode and schema definitions.
@@ -130,6 +181,7 @@ async def init_db(db_path: str = "tracker.db") -> None:
         await conn.execute("PRAGMA busy_timeout=5000;")
 
         await conn.executescript(SCHEMA_SQL)
+        await _migrate_schema(conn)
         await conn.commit()
 
         _connection = conn
@@ -164,6 +216,7 @@ async def get_connection() -> aiosqlite.Connection:
                 await conn.execute("PRAGMA foreign_keys=ON;")
                 await conn.execute("PRAGMA busy_timeout=5000;")
                 await conn.executescript(SCHEMA_SQL)
+                await _migrate_schema(conn)
                 await conn.commit()
                 _connection = conn
     return _connection
@@ -176,26 +229,64 @@ async def upsert_server(
     port: int,
     is_active: bool = True,
     now_ts: Optional[float] = None,
+    current_players: Optional[int] = None,
+    map_name: Optional[str] = None,
+    round_duration: Optional[int] = None,
+    gamemode: Optional[str] = None,
+    admins_count: Optional[int] = None,
+    version: Optional[str] = None,
 ) -> int:
     """
     Upserts server record and returns its database ID.
-    Updates title, ip, port, last_seen, and is_active on identifier conflict.
+    Updates title, ip, port, last_seen, is_active, and round metrics on identifier conflict.
     """
     ts = time.time() if now_ts is None else float(now_ts)
+    ins_players = int(current_players) if current_players is not None else 0
+    ins_round_dur = int(round_duration) if round_duration is not None else 0
+    ins_admins = int(admins_count) if admins_count is not None else 0
+
     conn = await get_connection()
     async with conn.cursor() as cur:
         await cur.execute(
             """
-            INSERT INTO servers (identifier, title, ip, port, last_seen, is_active)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO servers (
+                identifier, title, ip, port, last_seen, is_active,
+                current_players, map_name, round_duration, gamemode, admins_count, version
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(identifier) DO UPDATE SET
                 title = excluded.title,
                 ip = excluded.ip,
                 port = excluded.port,
                 last_seen = excluded.last_seen,
-                is_active = excluded.is_active;
+                is_active = excluded.is_active,
+                current_players = CASE WHEN ? IS NOT NULL THEN excluded.current_players ELSE servers.current_players END,
+                map_name = CASE WHEN ? IS NOT NULL THEN excluded.map_name ELSE servers.map_name END,
+                round_duration = CASE WHEN ? IS NOT NULL THEN excluded.round_duration ELSE servers.round_duration END,
+                gamemode = CASE WHEN ? IS NOT NULL THEN excluded.gamemode ELSE servers.gamemode END,
+                admins_count = CASE WHEN ? IS NOT NULL THEN excluded.admins_count ELSE servers.admins_count END,
+                version = CASE WHEN ? IS NOT NULL THEN excluded.version ELSE servers.version END;
             """,
-            (identifier, title, ip, int(port), ts, 1 if is_active else 0),
+            (
+                identifier,
+                title,
+                ip,
+                int(port),
+                ts,
+                1 if is_active else 0,
+                ins_players,
+                map_name,
+                ins_round_dur,
+                gamemode,
+                ins_admins,
+                version,
+                current_players,
+                map_name,
+                round_duration,
+                gamemode,
+                admins_count,
+                version,
+            ),
         )
         await conn.commit()
 
@@ -206,13 +297,61 @@ async def upsert_server(
         return int(row["id"])
 
 
+async def record_server_snapshot(
+    server_id: int,
+    player_count: int,
+    round_duration: int = 0,
+    map_name: Optional[str] = None,
+    ts: Optional[float] = None,
+) -> int:
+    """Records a point-in-time server online snapshot for timeseries history."""
+    snap_ts = time.time() if ts is None else float(ts)
+    conn = await get_connection()
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            INSERT INTO server_snapshots (server_id, timestamp, player_count, round_duration, map_name)
+            VALUES (?, ?, ?, ?, ?);
+            """,
+            (
+                int(server_id),
+                snap_ts,
+                int(max(0, player_count)),
+                int(max(0, round_duration or 0)),
+                map_name,
+            ),
+        )
+        await conn.commit()
+        return int(cur.lastrowid or 0)
+
+
+async def prune_server_snapshots(
+    max_age_days: int = 7,
+    now_ts: Optional[float] = None,
+) -> int:
+    """Deletes server snapshots older than max_age_days and returns the count of deleted rows."""
+    ref_ts = time.time() if now_ts is None else float(now_ts)
+    cutoff_ts = ref_ts - (max_age_days * 86400.0)
+    conn = await get_connection()
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "DELETE FROM server_snapshots WHERE timestamp < ?;",
+            (cutoff_ts,),
+        )
+        deleted = cur.rowcount if cur.rowcount is not None and cur.rowcount >= 0 else 0
+        await conn.commit()
+        return int(deleted)
+
+
 async def get_active_servers() -> List[Dict[str, Any]]:
     """Returns list of active monitored servers."""
     conn = await get_connection()
     async with conn.cursor() as cur:
         await cur.execute(
             """
-            SELECT id, identifier, title, ip, port, last_seen, is_active
+            SELECT
+                id, identifier, title, ip, port, last_seen, is_active,
+                current_players, map_name, round_duration, gamemode, admins_count, version
             FROM servers
             WHERE is_active = 1
             ORDER BY title ASC;
@@ -228,6 +367,12 @@ async def get_active_servers() -> List[Dict[str, Any]]:
                 "port": r["port"],
                 "last_seen": r["last_seen"],
                 "is_active": bool(r["is_active"]),
+                "current_players": int(r["current_players"] or 0),
+                "map_name": r["map_name"],
+                "round_duration": int(r["round_duration"] or 0),
+                "gamemode": r["gamemode"],
+                "admins_count": int(r["admins_count"] or 0),
+                "version": r["version"],
             }
             for r in rows
         ]
@@ -478,6 +623,7 @@ async def get_player_dossier(ckey: str) -> Optional[Dict[str, Any]]:
             """
             SELECT 
                 s.id,
+                s.server_id,
                 COALESCE(srv.title, 'Unknown Sector ' || s.server_id) as server_title,
                 s.started_at,
                 s.last_seen_at,
@@ -497,6 +643,7 @@ async def get_player_dossier(ckey: str) -> Optional[Dict[str, Any]]:
             dur = int(s["duration_seconds"])
             recent_sessions.append(
                 {
+                    "server_id": s["server_id"],
                     "server_title": s["server_title"],
                     "started_at": format_timestamp(s["started_at"]),
                     "ended_at": format_timestamp(s["ended_at"]) if s["ended_at"] is not None else None,
@@ -537,6 +684,312 @@ async def get_player_dossier(ckey: str) -> Optional[Dict[str, Any]]:
     return dossier
 
 
+def _build_chart_24h(points: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Builds lightweight SVG polyline coordinates (viewBox 0 0 600 120) and summary metrics."""
+    if not points:
+        return {
+            "points_str": "",
+            "area_points_str": "",
+            "min_players": 0,
+            "max_players": 0,
+            "avg_players": 0.0,
+            "count": 0,
+            "start_label": None,
+            "end_label": None,
+        }
+
+    counts = [int(p["player_count"]) for p in points]
+    min_p = min(counts)
+    max_p = max(counts)
+    avg_p = round(sum(counts) / len(counts), 1)
+
+    x_min, x_max = 10.0, 590.0
+    y_top, y_bottom = 16.0, 104.0
+
+    def _calc_y(val: int) -> float:
+        if max_p <= 0:
+            return y_bottom
+        if max_p == min_p:
+            return (y_top + y_bottom) / 2.0
+        ratio = (val - min_p) / float(max_p - min_p)
+        return round(y_bottom - ratio * (y_bottom - y_top), 1)
+
+    coords: List[Tuple[float, float]] = []
+    n = len(points)
+    if n == 1:
+        y_val = _calc_y(counts[0])
+        coords = [(x_min, y_val), (x_max, y_val)]
+    else:
+        for i, c in enumerate(counts):
+            x_val = round(x_min + (i / float(n - 1)) * (x_max - x_min), 1)
+            y_val = _calc_y(c)
+            coords.append((x_val, y_val))
+
+    points_str = " ".join(f"{x},{y}" for x, y in coords)
+    area_points_str = f"{coords[0][0]},{y_bottom} {points_str} {coords[-1][0]},{y_bottom}"
+
+    return {
+        "points_str": points_str,
+        "area_points_str": area_points_str,
+        "min_players": min_p,
+        "max_players": max_p,
+        "avg_players": avg_p,
+        "count": n,
+        "start_label": points[0].get("time_str"),
+        "end_label": points[-1].get("time_str"),
+    }
+
+
+async def get_server_details(
+    server_id: int,
+    now_ts: Optional[float] = None,
+) -> Optional[Dict[str, Any]]:
+    """
+    Returns detailed server status, current round parameters, active online players,
+    top-20 players by playtime on this server, aggregate server statistics, and 24h online history.
+    Returns None if server_id does not exist.
+    """
+    conn = await get_connection()
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            SELECT
+                id, identifier, title, ip, port, last_seen, is_active,
+                current_players, map_name, round_duration, gamemode, admins_count, version
+            FROM servers
+            WHERE id = ?;
+            """,
+            (int(server_id),),
+        )
+        srv_row = await cur.fetchone()
+        if srv_row is None:
+            return None
+
+        # Active online players on this server
+        await cur.execute(
+            """
+            SELECT
+                ckey,
+                started_at,
+                last_seen_at,
+                duration_seconds,
+                (unixepoch() - started_at) AS live_duration_seconds
+            FROM sessions
+            WHERE server_id = ? AND ended_at IS NULL
+            ORDER BY started_at ASC;
+            """,
+            (int(server_id),),
+        )
+        online_rows = await cur.fetchall()
+        online_players: List[Dict[str, Any]] = []
+        current_wall_ts = time.time()
+        for r in online_rows:
+            started_ts = float(r["started_at"])
+            last_seen_ts = float(r["last_seen_at"])
+            stored_dur = int(r["duration_seconds"] or 0)
+            if now_ts is not None:
+                dur = max(0, int(round(float(now_ts) - started_ts)))
+            elif stored_dur > 0:
+                dur = stored_dur
+            elif 0 <= (current_wall_ts - started_ts) < 86400 * 7:
+                dur = max(0, int(round(current_wall_ts - started_ts)))
+            else:
+                dur = max(0, int(round(last_seen_ts - started_ts)))
+
+            online_players.append(
+                {
+                    "ckey": r["ckey"],
+                    "started_at": format_timestamp(started_ts),
+                    "started_at_ts": started_ts,
+                    "duration_seconds": dur,
+                    "duration_str": format_duration(dur),
+                }
+            )
+
+        # Top-20 players on this server by total hours/seconds
+        await cur.execute(
+            """
+            SELECT
+                ckey,
+                COALESCE(SUM(duration_seconds), 0) AS total_seconds,
+                MAX(last_seen_at) AS last_seen
+            FROM sessions
+            WHERE server_id = ?
+            GROUP BY ckey
+            ORDER BY total_seconds DESC, ckey ASC
+            LIMIT 20;
+            """,
+            (int(server_id),),
+        )
+        top_rows = await cur.fetchall()
+        top_players: List[Dict[str, Any]] = []
+        for idx, r in enumerate(top_rows):
+            tot_sec = int(r["total_seconds"] or 0)
+            tot_hours = round(tot_sec / 3600.0, 1)
+            top_players.append(
+                {
+                    "rank": idx + 1,
+                    "ckey": r["ckey"],
+                    "total_seconds": tot_sec,
+                    "total_hours": tot_hours,
+                    "hours": tot_hours,
+                    "duration_str": format_duration(tot_sec),
+                    "last_seen": format_timestamp(r["last_seen"]),
+                    "last_seen_ts": float(r["last_seen"]) if r["last_seen"] is not None else None,
+                }
+            )
+
+        # Aggregate server statistics
+        await cur.execute(
+            """
+            SELECT
+                COUNT(DISTINCT ckey) AS unique_players,
+                COALESCE(SUM(duration_seconds), 0) AS total_playtime_seconds
+            FROM sessions
+            WHERE server_id = ?;
+            """,
+            (int(server_id),),
+        )
+        agg_row = await cur.fetchone()
+        unique_players = int(agg_row["unique_players"] or 0) if agg_row else 0
+        total_playtime_seconds = int(agg_row["total_playtime_seconds"] or 0) if agg_row else 0
+        total_hours = round(total_playtime_seconds / 3600.0, 1)
+
+        # 24-hour online history points
+        if now_ts is not None:
+            ref_snap_ts = float(now_ts)
+        else:
+            await cur.execute(
+                "SELECT MAX(timestamp) AS max_ts FROM server_snapshots WHERE server_id = ?;",
+                (int(server_id),),
+            )
+            max_row = await cur.fetchone()
+            max_ts = float(max_row["max_ts"]) if (max_row and max_row["max_ts"] is not None) else None
+            if max_ts is not None and abs(current_wall_ts - max_ts) > 86400 * 30:
+                ref_snap_ts = max_ts
+            else:
+                ref_snap_ts = current_wall_ts
+
+        cutoff_24h = ref_snap_ts - 86400.0
+        await cur.execute(
+            """
+            SELECT id, timestamp, player_count, round_duration, map_name
+            FROM server_snapshots
+            WHERE server_id = ? AND timestamp >= ?
+            ORDER BY timestamp ASC;
+            """,
+            (int(server_id), cutoff_24h),
+        )
+        snap_rows = await cur.fetchall()
+
+        snapshots_24h: List[Dict[str, Any]] = []
+        if len(snap_rows) <= 48:
+            for sr in snap_rows:
+                snapshots_24h.append(
+                    {
+                        "timestamp": float(sr["timestamp"]),
+                        "time_str": format_timestamp(sr["timestamp"]),
+                        "player_count": int(sr["player_count"]),
+                        "round_duration": int(sr["round_duration"] or 0),
+                        "map_name": sr["map_name"],
+                    }
+                )
+        else:
+            # Downsample into hourly buckets when more than 48 snapshots exist in 24h
+            await cur.execute(
+                """
+                SELECT
+                    CAST(timestamp / 3600 AS INTEGER) * 3600 AS bucket_ts,
+                    MAX(player_count) AS player_count,
+                    MAX(round_duration) AS round_duration,
+                    MAX(map_name) AS map_name
+                FROM server_snapshots
+                WHERE server_id = ? AND timestamp >= ?
+                GROUP BY CAST(timestamp / 3600 AS INTEGER)
+                ORDER BY bucket_ts ASC;
+                """,
+                (int(server_id), cutoff_24h),
+            )
+            hourly_rows = await cur.fetchall()
+            for hr in hourly_rows:
+                snapshots_24h.append(
+                    {
+                        "timestamp": float(hr["bucket_ts"]),
+                        "time_str": format_timestamp(hr["bucket_ts"]),
+                        "player_count": int(hr["player_count"]),
+                        "round_duration": int(hr["round_duration"] or 0),
+                        "map_name": hr["map_name"],
+                    }
+                )
+
+    chart_24h = _build_chart_24h(snapshots_24h)
+
+    raw_current_players = int(srv_row["current_players"] or 0)
+    effective_current_players = max(raw_current_players, len(online_players))
+    round_dur_sec = int(srv_row["round_duration"] or 0)
+    round_dur_str = format_hms(round_dur_sec)
+    last_seen_str = format_timestamp(srv_row["last_seen"])
+    is_active = bool(srv_row["is_active"])
+
+    details: Dict[str, Any] = {
+        "id": int(srv_row["id"]),
+        "server_id": int(srv_row["id"]),
+        "identifier": srv_row["identifier"],
+        "title": srv_row["title"],
+        "ip": srv_row["ip"],
+        "port": int(srv_row["port"]),
+        "is_active": is_active,
+        "last_seen": last_seen_str,
+        "last_seen_ts": float(srv_row["last_seen"]),
+        "current_players": effective_current_players,
+        "map_name": srv_row["map_name"],
+        "round_duration": round_dur_sec,
+        "round_duration_str": round_dur_str,
+        "gamemode": srv_row["gamemode"],
+        "admins_count": int(srv_row["admins_count"] or 0),
+        "version": srv_row["version"],
+        "unique_players": unique_players,
+        "total_playtime_seconds": total_playtime_seconds,
+        "total_hours": total_hours,
+        "online_players": online_players,
+        "top_players": top_players,
+        "snapshots_24h": snapshots_24h,
+        "online_history": snapshots_24h,
+        "chart_24h": chart_24h,
+        "server": {
+            "id": int(srv_row["id"]),
+            "identifier": srv_row["identifier"],
+            "title": srv_row["title"],
+            "ip": srv_row["ip"],
+            "port": int(srv_row["port"]),
+            "is_active": is_active,
+            "last_seen": last_seen_str,
+            "current_players": effective_current_players,
+            "map_name": srv_row["map_name"],
+            "round_duration": round_dur_sec,
+            "round_duration_str": round_dur_str,
+            "gamemode": srv_row["gamemode"],
+            "admins_count": int(srv_row["admins_count"] or 0),
+            "version": srv_row["version"],
+        },
+        "round": {
+            "current_players": effective_current_players,
+            "map_name": srv_row["map_name"],
+            "round_duration": round_dur_sec,
+            "round_duration_str": round_dur_str,
+            "gamemode": srv_row["gamemode"],
+            "admins_count": int(srv_row["admins_count"] or 0),
+            "version": srv_row["version"],
+        },
+        "summary": {
+            "unique_players": unique_players,
+            "total_playtime_seconds": total_playtime_seconds,
+            "total_hours": total_hours,
+        },
+    }
+    return details
+
+
 class Database:
     """Wrapper class providing an object-oriented interface for the SQLite WAL engine."""
 
@@ -550,9 +1003,54 @@ class Database:
         await close_db()
 
     async def upsert_server(
-        self, identifier: str, title: str, ip: str, port: int, is_active: bool = True
+        self,
+        identifier: str,
+        title: str,
+        ip: str,
+        port: int,
+        is_active: bool = True,
+        now_ts: Optional[float] = None,
+        current_players: Optional[int] = None,
+        map_name: Optional[str] = None,
+        round_duration: Optional[int] = None,
+        gamemode: Optional[str] = None,
+        admins_count: Optional[int] = None,
+        version: Optional[str] = None,
     ) -> int:
-        return await upsert_server(identifier, title, ip, port, is_active)
+        return await upsert_server(
+            identifier,
+            title,
+            ip,
+            port,
+            is_active=is_active,
+            now_ts=now_ts,
+            current_players=current_players,
+            map_name=map_name,
+            round_duration=round_duration,
+            gamemode=gamemode,
+            admins_count=admins_count,
+            version=version,
+        )
+
+    async def record_server_snapshot(
+        self,
+        server_id: int,
+        player_count: int,
+        round_duration: int = 0,
+        map_name: Optional[str] = None,
+        ts: Optional[float] = None,
+    ) -> int:
+        return await record_server_snapshot(server_id, player_count, round_duration, map_name, ts)
+
+    async def prune_server_snapshots(
+        self, max_age_days: int = 7, now_ts: Optional[float] = None
+    ) -> int:
+        return await prune_server_snapshots(max_age_days, now_ts)
+
+    async def get_server_details(
+        self, server_id: int, now_ts: Optional[float] = None
+    ) -> Optional[Dict[str, Any]]:
+        return await get_server_details(server_id, now_ts)
 
     async def get_active_servers(self) -> List[Dict[str, Any]]:
         return await get_active_servers()

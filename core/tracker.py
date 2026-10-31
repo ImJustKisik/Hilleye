@@ -17,6 +17,8 @@ from core.config import AppConfig, get_config
 from core.db import (
     get_active_servers,
     normalize_ckey,
+    prune_server_snapshots,
+    record_server_snapshot,
     update_player_sessions,
     upsert_server,
 )
@@ -118,6 +120,7 @@ class Tracker:
         self._last_poll_duration: float = 0.0
         self._servers_tracked: int = 0
         self._tracked_players: int = 0
+        self._last_prune_time: Optional[float] = None
 
     def is_running(self) -> bool:
         """Checks if the background polling loop is actively running."""
@@ -184,6 +187,12 @@ class Tracker:
         async def _process_server(srv: ServerInfo) -> int:
             nonlocal total_online_seen
             server_ckeys: Set[str] = set()
+            topic_players_count: Optional[int] = None
+            map_name: Optional[str] = None
+            round_duration: Optional[int] = None
+            gamemode: Optional[str] = None
+            admins_count: Optional[int] = None
+            version: Optional[str] = None
 
             # Pre-populate with ckeys parsed directly from hub (if present)
             if srv.players:
@@ -218,6 +227,67 @@ class Tracker:
                                 c = normalize_ckey(p)
                                 if c:
                                     server_ckeys.add(c)
+
+                        # Parse numeric player count if provided
+                        raw_pcount = topic_data.get("players")
+                        if raw_pcount is None or isinstance(raw_pcount, list):
+                            raw_pcount = topic_data.get("player_count")
+                        if isinstance(raw_pcount, (int, float)):
+                            topic_players_count = max(0, int(raw_pcount))
+                        elif isinstance(raw_pcount, str) and raw_pcount.strip().isdigit():
+                            topic_players_count = int(raw_pcount.strip())
+
+                        # Parse map_name
+                        raw_map = topic_data.get("map_name") or topic_data.get("map")
+                        if raw_map is not None:
+                            map_str = str(raw_map).strip()
+                            if map_str:
+                                map_name = map_str
+
+                        # Parse round_duration (in seconds)
+                        raw_dur = (
+                            topic_data.get("round_duration")
+                            if topic_data.get("round_duration") is not None
+                            else topic_data.get("round_time")
+                        )
+                        if raw_dur is not None:
+                            try:
+                                round_duration = max(0, int(float(str(raw_dur).strip())))
+                            except (ValueError, TypeError):
+                                round_duration = 0
+
+                        # Parse gamemode / mode
+                        raw_mode = (
+                            topic_data.get("gamemode")
+                            or topic_data.get("mode")
+                            or topic_data.get("game_mode")
+                        )
+                        if raw_mode is not None:
+                            mode_str = str(raw_mode).strip()
+                            if mode_str:
+                                gamemode = mode_str
+
+                        # Parse admins count
+                        raw_admins = (
+                            topic_data.get("admins")
+                            if topic_data.get("admins") is not None
+                            else topic_data.get("admins_count")
+                        )
+                        if raw_admins is not None:
+                            if isinstance(raw_admins, list):
+                                admins_count = len(raw_admins)
+                            else:
+                                try:
+                                    admins_count = max(0, int(float(str(raw_admins).strip())))
+                                except (ValueError, TypeError):
+                                    admins_count = 0
+
+                        # Parse version
+                        raw_ver = topic_data.get("version")
+                        if raw_ver is not None:
+                            ver_str = str(raw_ver).strip()
+                            if ver_str:
+                                version = ver_str
                 except Exception as top_err:
                     logger.debug(
                         "Topic query error for server %s: %s",
@@ -225,8 +295,14 @@ class Tracker:
                         top_err,
                     )
 
+            effective_players = max(
+                len(server_ckeys),
+                topic_players_count if topic_players_count is not None else 0,
+                int(srv.player_count or 0),
+            )
+
             try:
-                # Upsert server record
+                # Upsert server record with round metadata
                 server_id = await upsert_server(
                     identifier=srv.identifier,
                     title=srv.title,
@@ -234,6 +310,21 @@ class Tracker:
                     port=srv.port,
                     is_active=True,
                     now_ts=ts,
+                    current_players=effective_players,
+                    map_name=map_name,
+                    round_duration=round_duration if round_duration is not None else 0,
+                    gamemode=gamemode,
+                    admins_count=admins_count if admins_count is not None else 0,
+                    version=version,
+                )
+
+                # Record online history snapshot
+                await record_server_snapshot(
+                    server_id=server_id,
+                    player_count=effective_players,
+                    round_duration=round_duration if round_duration is not None else 0,
+                    map_name=map_name,
+                    ts=ts,
                 )
 
                 # Update session states
@@ -257,6 +348,14 @@ class Tracker:
         if discovered_servers:
             tasks = [_process_server(s) for s in discovered_servers]
             await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Prune snapshots older than 7 days once per 24h
+        if self._last_prune_time is None or (ts - self._last_prune_time) >= 86400.0:
+            try:
+                await prune_server_snapshots(max_age_days=7, now_ts=ts)
+                self._last_prune_time = ts
+            except Exception as prune_err:
+                logger.debug("Error pruning old server snapshots: %s", prune_err)
 
         self._tracked_players = len(total_online_seen)
         self._poll_count += 1

@@ -88,6 +88,26 @@ async def get_servers() -> Dict[str, Any]:
     return {"servers": servers}
 
 
+@app.get("/api/v1/server/{server_id}")
+async def get_server_api(server_id: int) -> Any:
+    """
+    Returns detailed JSON status, current round parameters, active roster,
+    top-20 players by playtime, and 24-hour online history for the specified server.
+    Returns 404 if server_id does not exist.
+    """
+    details = await core_db.get_server_details(server_id)
+    if details is None:
+        return JSONResponse(
+            status_code=404,
+            content={
+                "error": "Server not found",
+                "server_id": server_id,
+                "detail": f"Server #{server_id} not found in registry",
+            },
+        )
+    return details
+
+
 @app.get("/api/v1/player/{ckey}")
 async def get_player_api(ckey: str) -> Dict[str, Any]:
     """
@@ -177,4 +197,45 @@ async def player_page(request: Request, ckey: str):
             "servers": servers,
             "tracker_stats": tracker_stats,
         },
+    )
+
+
+@app.get("/server/{server_id}")
+async def server_page(request: Request, server_id: int):
+    """
+    Renders detailed server telemetry page (/server/{server_id}).
+    Returns 404 HTML response if server_id does not exist in database.
+    """
+    server_details = await core_db.get_server_details(server_id)
+    servers = await core_db.get_active_servers()
+    tracker = get_tracker()
+    tracker_stats = tracker.get_stats() if tracker else {}
+
+    if server_details is None:
+        return templates.TemplateResponse(
+            request=request,
+            name="server.html",
+            context={
+                "request": request,
+                "server": None,
+                "server_id": server_id,
+                "not_found": True,
+                "servers": servers,
+                "tracker_stats": tracker_stats,
+            },
+            status_code=404,
+        )
+
+    return templates.TemplateResponse(
+        request=request,
+        name="server.html",
+        context={
+            "request": request,
+            "server": server_details,
+            "server_id": server_id,
+            "not_found": False,
+            "servers": servers,
+            "tracker_stats": tracker_stats,
+        },
+        status_code=200,
     )

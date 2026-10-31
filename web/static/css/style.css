@@ -1337,3 +1337,126 @@ code,
     scroll-behavior: auto !important;
   }
 }
+
+
+/* ==========================================================================
+   Server Detail Page & Sparkline Styles
+   ========================================================================== */
+
+.sector-row {
+  text-decoration: none;
+  color: inherit;
+}
+
+.server-link,
+.player-link,
+.back-link {
+  color: var(--text-primary);
+  text-decoration: none;
+  transition: color 0.12s ease;
+}
+
+.server-link:hover,
+.player-link:hover,
+.back-link:hover {
+  color: var(--accent-red-hover);
+  text-decoration: underline;
+}
+
+.breadcrumb-bar {
+  margin-bottom: 16px;
+  font-size: 0.86rem;
+}
+
+.back-link {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.server-header-actions {
+  display: flex;
+  align-items: stretch;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.connect-btn {
+  text-decoration: none;
+  padding: 10px 18px;
+}
+
+.server-metrics-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.server-metrics-grid .telemetry-cell:nth-child(3n) {
+  border-right: none;
+}
+
+.server-metrics-grid .telemetry-cell:nth-child(-n+3) {
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.server-text-val {
+  font-family: var(--font-sans);
+  font-size: 1.15rem;
+  overflow-wrap: anywhere;
+}
+
+.chart-stats {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.sparkline-container {
+  background: var(--bg-recessed);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px 10px;
+}
+
+.sparkline-svg {
+  width: 100%;
+  height: 120px;
+  display: block;
+}
+
+.sparkline-grid-line {
+  stroke: var(--border-subtle);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+
+.sparkline-area {
+  fill: rgba(16, 185, 129, 0.12);
+}
+
+.sparkline-line {
+  stroke: var(--status-online);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.sparkline-axis {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 8px;
+  font-size: 0.74rem;
+  color: var(--text-muted);
+}
+
+.text-muted {
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+@media (max-width: 768px) {
+  .server-metrics-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

@@ -73,7 +73,7 @@
       <div class="dist-row">
         <div class="dist-top">
           <div class="dist-server">
-            <span class="dist-title">{{ srv.title }}</span>
+            <a href="/server/{{ srv.server_id }}" class="dist-title server-link">{{ srv.title }}</a>
           </div>
           <div class="dist-metrics">
             <span class="dist-hours">{{ srv.hours }}h</span>
@@ -114,7 +114,13 @@
           {% for sess in dossier.recent_sessions %}
           <tr class="{% if sess.is_active %}row-active{% endif %}">
             <td class="col-idx">{{ loop.index }}</td>
-            <td class="col-server">{{ sess.server_title }}</td>
+            <td class="col-server">
+              {% if sess.server_id %}
+              <a href="/server/{{ sess.server_id }}" class="server-link">{{ sess.server_title }}</a>
+              {% else %}
+              {{ sess.server_title }}
+              {% endif %}
+            </td>
             <td class="col-time">{{ sess.started_at }}</td>
             <td class="col-num col-dur">{{ sess.duration_str }}</td>
             <td class="col-state">

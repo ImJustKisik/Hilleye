@@ -97,13 +97,13 @@
 
         <div class="sector-list" id="servers-grid-container" role="list" tabindex="0" aria-label="Active Space Station 13 servers">
           {% for s in servers %}
-          <div class="sector-row" role="listitem" data-search="{{ (s.title or '')|lower }} {{ (s.identifier or '')|lower }}">
+          <a href="/server/{{ s.id }}" class="sector-row" role="listitem" data-search="{{ (s.title or '')|lower }} {{ (s.identifier or '')|lower }}">
             <span class="status-dot online" aria-hidden="true" title="Server active"></span>
             <div class="sector-info">
               <div class="sector-title">{{ s.title or s.identifier }}</div>
               <div class="sector-endpoint">{{ s.identifier }}</div>
             </div>
-          </div>
+          </a>
           {% endfor %}
         </div>
 

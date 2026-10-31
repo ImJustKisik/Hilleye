@@ -1,0 +1,215 @@
+{% extends "base.html" %}
+
+{% block title %}
+  {% if server %}{{ server.title }} — Server Telemetry — Hilleye{% else %}Server Not Found — Hilleye{% endif %}
+{% endblock %}
+
+{% block content %}
+<div class="server-page-layout">
+  <nav class="breadcrumb-bar" aria-label="Breadcrumb navigation">
+    <a href="/" class="back-link">&larr; Back to Server Directory &amp; Player Search</a>
+  </nav>
+
+  {% if not server %}
+  <div class="panel not-found-panel" role="status">
+    <div class="not-found-body">
+      <h1 class="not-found-heading">
+        Server <code class="queried-key">#{{ server_id }}</code> not found
+      </h1>
+      <p class="not-found-desc">
+        The requested Space Station 13 server ID does not exist in the monitoring database.
+      </p>
+      <p class="not-found-meta">
+        Return to the <a href="/" class="server-link">main directory</a> to browse active monitored servers.
+      </p>
+    </div>
+  </div>
+  {% else %}
+  <article class="panel dossier-panel server-detail-panel" aria-label="Server Telemetry Overview">
+    <!-- 1. Server Header -->
+    <header class="dossier-header server-header">
+      <div class="dossier-subject">
+        <div class="subject-meta-row">
+          <span class="subject-label">Monitored Sector #{{ server.id }}</span>
+          <span class="mono-val sector-endpoint">{{ server.ip }}:{{ server.port }}</span>
+          {% if server.version %}
+          <span class="mono-val sector-endpoint">BYOND {{ server.version }}</span>
+          {% endif %}
+          <a href="/api/v1/server/{{ server.id }}" target="_blank" rel="noopener" class="raw-json-link" title="View raw machine-readable JSON">Raw JSON</a>
+        </div>
+        <h1 class="subject-ckey server-heading">{{ server.title }}</h1>
+      </div>
+
+      <div class="server-header-actions">
+        <div class="telemetry-status {% if server.is_active %}online{% else %}offline{% endif %}">
+          <div class="status-top-line">
+            <span class="status-dot {% if server.is_active %}online{% else %}offline{% endif %}" aria-hidden="true"></span>
+            <span class="status-state">{% if server.is_active %}Active{% else %}Inactive{% endif %}</span>
+          </div>
+          <div class="status-detail">
+            <span>Last response: <span class="mono-val">{{ server.last_seen }} UTC</span></span>
+          </div>
+        </div>
+
+        <a href="{{ 'byond://' ~ server.ip ~ ':' ~ server.port if (server.ip and server.port) else server.identifier }}"
+           class="command-submit connect-btn"
+           title="Direct connect via BYOND client">
+          <span>Connect ({{ server.ip }}:{{ server.port }})</span>
+        </a>
+      </div>
+    </header>
+
+    <!-- 2. Current Round Parameters (6-Cell Grid) -->
+    <div class="telemetry-strip server-metrics-grid" aria-label="Current Round Parameters">
+      <div class="telemetry-cell">
+        <div class="cell-label">Current Players</div>
+        <div class="cell-value">{{ server.current_players }}</div>
+        <div class="cell-sub mono-val">{{ server.online_players|length }} tracked sessions</div>
+      </div>
+
+      <div class="telemetry-cell">
+        <div class="cell-label">Map</div>
+        <div class="cell-value server-text-val">{{ server.map_name or 'N/A' }}</div>
+        <div class="cell-sub">Active sector map</div>
+      </div>
+
+      <div class="telemetry-cell">
+        <div class="cell-label">Round Duration</div>
+        <div class="cell-value">{{ server.round_duration_str }}</div>
+        <div class="cell-sub mono-val">{{ server.round_duration }}s elapsed</div>
+      </div>
+
+      <div class="telemetry-cell">
+        <div class="cell-label">Game Mode</div>
+        <div class="cell-value server-text-val">{{ server.gamemode or 'N/A' }}</div>
+        <div class="cell-sub">Round mode</div>
+      </div>
+
+      <div class="telemetry-cell">
+        <div class="cell-label">Admins</div>
+        <div class="cell-value">{{ server.admins_count }}</div>
+        <div class="cell-sub">Staff online</div>
+      </div>
+
+      <div class="telemetry-cell">
+        <div class="cell-label">Total Server Hours</div>
+        <div class="cell-value">{{ server.total_hours }}<span class="unit">h</span></div>
+        <div class="cell-sub mono-val">{{ server.unique_players }} unique players</div>
+      </div>
+    </div>
+
+    <!-- 3. 24-Hour Online Activity Sparkline (Inline SVG) -->
+    <section class="dossier-block" aria-label="24-Hour Online History">
+      <div class="block-header">
+        <h2 class="block-title">Online Activity (Last 24 Hours)</h2>
+        <div class="chart-stats mono-val">
+          <span>Min: <strong>{{ server.chart_24h.min_players }}</strong></span>
+          <span class="sep">&bull;</span>
+          <span>Max: <strong>{{ server.chart_24h.max_players }}</strong></span>
+          <span class="sep">&bull;</span>
+          <span>Avg: <strong>{{ server.chart_24h.avg_players }}</strong></span>
+        </div>
+      </div>
+
+      {% if server.chart_24h and server.chart_24h.count > 0 %}
+      <div class="sparkline-container">
+        <svg class="sparkline-svg"
+             viewBox="0 0 600 120"
+             preserveAspectRatio="none"
+             role="img"
+             aria-label="24-hour player count sparkline, min {{ server.chart_24h.min_players }}, max {{ server.chart_24h.max_players }}">
+          <line x1="10" y1="16" x2="590" y2="16" class="sparkline-grid-line" />
+          <line x1="10" y1="60" x2="590" y2="60" class="sparkline-grid-line" />
+          <line x1="10" y1="104" x2="590" y2="104" class="sparkline-grid-line" />
+          <polygon points="{{ server.chart_24h.area_points_str }}" class="sparkline-area" />
+          <polyline points="{{ server.chart_24h.points_str }}" class="sparkline-line" fill="none" />
+        </svg>
+        <div class="sparkline-axis mono-val">
+          <span>{{ server.chart_24h.start_label or '24h ago' }} UTC</span>
+          <span>{{ server.chart_24h.count }} snapshots (Min {{ server.chart_24h.min_players }} / Max {{ server.chart_24h.max_players }})</span>
+          <span>{{ server.chart_24h.end_label or 'Now' }} UTC</span>
+        </div>
+      </div>
+      {% else %}
+      <div class="block-empty">No online snapshots recorded in the last 24 hours.</div>
+      {% endif %}
+    </section>
+
+    <!-- 4. Current Online Players -->
+    <section class="dossier-block" aria-label="Players Currently Online">
+      <div class="block-header">
+        <h2 class="block-title">Players Currently Online</h2>
+        <span class="block-meta mono-val">{{ server.online_players|length }} online</span>
+      </div>
+
+      {% if server.online_players %}
+      <div class="data-table-wrapper">
+        <table class="telemetry-table">
+          <thead>
+            <tr>
+              <th scope="col" class="col-idx">#</th>
+              <th scope="col">Player (CKey)</th>
+              <th scope="col">Session Started (UTC)</th>
+              <th scope="col" class="col-num">Current Session Duration</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for p in server.online_players %}
+            <tr class="row-active">
+              <td class="col-idx">{{ loop.index }}</td>
+              <td class="col-server">
+                <a href="/player/{{ p.ckey }}" class="player-link mono-val">{{ p.ckey }}</a>
+              </td>
+              <td class="col-time">{{ p.started_at }}</td>
+              <td class="col-num col-dur">{{ p.duration_str }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="block-empty">No players currently online</div>
+      {% endif %}
+    </section>
+
+    <!-- 5. Top-20 Players by Total Playtime on Server -->
+    <section class="dossier-block" aria-label="Top 20 Players by Playtime">
+      <div class="block-header">
+        <h2 class="block-title">Top 20 Players by Total Hours</h2>
+        <span class="block-meta mono-val">Top {{ server.top_players|length }}</span>
+      </div>
+
+      <div class="data-table-wrapper">
+        <table class="telemetry-table">
+          <thead>
+            <tr>
+              <th scope="col" class="col-idx">Rank</th>
+              <th scope="col">Player (CKey)</th>
+              <th scope="col" class="col-num">Total Playtime</th>
+              <th scope="col" class="col-state">Last Seen (UTC)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for p in server.top_players %}
+            <tr>
+              <td class="col-idx">{{ p.rank }}</td>
+              <td class="col-server">
+                <a href="/player/{{ p.ckey }}" class="player-link mono-val">{{ p.ckey }}</a>
+              </td>
+              <td class="col-num col-dur">{{ p.total_hours }}h <span class="text-muted">({{ p.duration_str }})</span></td>
+              <td class="col-state col-time">{{ p.last_seen }}</td>
+            </tr>
+            {% endfor %}
+            {% if not server.top_players %}
+            <tr>
+              <td colspan="4" class="table-empty-cell">No recorded player sessions on this server yet.</td>
+            </tr>
+            {% endif %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </article>
+  {% endif %}
+</div>
+{% endblock %}
