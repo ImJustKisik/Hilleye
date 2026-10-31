@@ -6,3 +6,5 @@ __pycache__/
 *.db-wal
 *.db-shm
 .agents/
+examples/whitelist.json
+
