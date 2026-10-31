@@ -3,17 +3,20 @@ CYBERSYN INTEL // Web Application
 FastAPI application, Lifespan manager, REST endpoints, and HTMX SSR views.
 """
 
-import logging
+from collections import OrderedDict
 from contextlib import asynccontextmanager
+import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+import time
+from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import FastAPI, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from core.byond_topic import normalize_ckey
+from core.card_renderer import render_player_card
 from core import db as core_db
 from core.tracker import get_tracker
 
@@ -22,6 +25,47 @@ logger = logging.getLogger(__name__)
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
 TEMPLATES_DIR = BASE_DIR / "templates"
+
+CARD_CACHE_TTL_SECONDS: float = 60.0
+CARD_CACHE_MAX_SIZE: int = 256
+_card_cache: "OrderedDict[str, Tuple[float, bytes]]" = OrderedDict()
+_card_cache_db_path: Optional[str] = None
+
+
+def clear_card_cache() -> None:
+    """Clears the in-memory player card PNG cache."""
+    _card_cache.clear()
+
+
+def _get_cached_card(norm_ckey: str) -> Optional[bytes]:
+    """Retrieves cached PNG bytes for norm_ckey if within TTL, else None."""
+    global _card_cache_db_path
+    current_db = getattr(core_db, "_current_db_path", None)
+    if current_db != _card_cache_db_path:
+        _card_cache.clear()
+        _card_cache_db_path = current_db
+
+    entry = _card_cache.get(norm_ckey)
+    if entry is None:
+        return None
+
+    cached_at, png_bytes = entry
+    if (time.monotonic() - cached_at) >= CARD_CACHE_TTL_SECONDS:
+        _card_cache.pop(norm_ckey, None)
+        return None
+
+    _card_cache.move_to_end(norm_ckey)
+    return png_bytes
+
+
+def _set_cached_card(norm_ckey: str, png_bytes: bytes) -> None:
+    """Stores rendered PNG bytes in the bounded TTL LRU cache."""
+    global _card_cache_db_path
+    _card_cache_db_path = getattr(core_db, "_current_db_path", None)
+    _card_cache[norm_ckey] = (time.monotonic(), png_bytes)
+    _card_cache.move_to_end(norm_ckey)
+    while len(_card_cache) > CARD_CACHE_MAX_SIZE:
+        _card_cache.popitem(last=False)
 
 
 @asynccontextmanager
@@ -129,6 +173,45 @@ async def get_player_api(ckey: str) -> Dict[str, Any]:
         )
 
     return dossier
+
+
+@app.get("/api/v1/player/{ckey}/card.png")
+async def get_player_card_png(ckey: str) -> Response:
+    """
+    Returns a 720x360 PNG player dossier card for Discord clients.
+    Caches rendered PNGs in memory with a 60-second TTL and sets Cache-Control header.
+    Returns 404 if the player is not found.
+    """
+    norm_ckey = normalize_ckey(ckey)
+    if not norm_ckey:
+        return JSONResponse(
+            status_code=404,
+            content={"error": "Player not found", "ckey": ckey, "detail": "Invalid or empty ckey"},
+        )
+
+    cached_png = _get_cached_card(norm_ckey)
+    if cached_png is not None:
+        return Response(
+            content=cached_png,
+            media_type="image/png",
+            headers={"Cache-Control": "public, max-age=60"},
+        )
+
+    dossier = await core_db.get_player_dossier(norm_ckey)
+    if dossier is None:
+        return JSONResponse(
+            status_code=404,
+            content={"error": "Player not found", "ckey": ckey, "detail": "Target not found on monitored frequencies"},
+        )
+
+    png_bytes = render_player_card(dossier)
+    _set_cached_card(norm_ckey, png_bytes)
+
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=60"},
+    )
 
 
 @app.post("/search")

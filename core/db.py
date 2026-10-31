@@ -572,7 +572,8 @@ async def get_player_dossier(ckey: str) -> Optional[Dict[str, Any]]:
             """
             SELECT 
                 COALESCE(SUM(duration_seconds), 0) as total_playtime_seconds,
-                COUNT(DISTINCT server_id) as servers_count
+                COUNT(DISTINCT server_id) as servers_count,
+                COUNT(id) as sessions_count
             FROM sessions
             WHERE ckey = ?;
             """,
@@ -582,6 +583,7 @@ async def get_player_dossier(ckey: str) -> Optional[Dict[str, Any]]:
         total_playtime_seconds = int(summary_row["total_playtime_seconds"]) if summary_row else 0
         total_hours = round(total_playtime_seconds / 3600.0, 1)
         servers_count = int(summary_row["servers_count"]) if summary_row else 0
+        sessions_count = int(summary_row["sessions_count"]) if summary_row else 0
 
         first_seen_str = format_timestamp(player_row["first_seen"])
         last_seen_str = format_timestamp(player_row["last_seen"])
@@ -663,6 +665,7 @@ async def get_player_dossier(ckey: str) -> Optional[Dict[str, Any]]:
         "total_playtime_seconds": total_playtime_seconds,
         "total_hours": total_hours,
         "servers_count": servers_count,
+        "sessions_count": sessions_count,
         "status": {
             "online": is_online,
             "is_online": is_online,
@@ -674,6 +677,7 @@ async def get_player_dossier(ckey: str) -> Optional[Dict[str, Any]]:
             "total_playtime_seconds": total_playtime_seconds,
             "total_hours": total_hours,
             "servers_count": servers_count,
+            "sessions_count": sessions_count,
             "first_seen": first_seen_str,
             "last_seen": last_seen_str,
         },
