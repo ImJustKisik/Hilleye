@@ -33,8 +33,35 @@ import aiohttp
 import discord
 from discord.ext import commands
 
-HILLEYE_API_BASE = os.getenv("HILLEYE_API_BASE", "http://127.0.0.1:8000").rstrip("/")
+# ============================================================================
+# НАСТРОЙКА ТОКЕНА DISCORD:
+# Впишите ваш пользовательский токен внутри кавычек ниже (или создайте файл
+# examples/token.txt и вставьте токен туда):
+# ============================================================================
 DISCORD_TOKEN = os.getenv("DISCORD_USER_TOKEN", "YOUR_DISCORD_USER_TOKEN")
+
+_TOKEN_FILE = Path(__file__).resolve().parent / "token.txt"
+if DISCORD_TOKEN == "YOUR_DISCORD_USER_TOKEN" and _TOKEN_FILE.is_file():
+    DISCORD_TOKEN = _TOKEN_FILE.read_text(encoding="utf-8").strip().strip('"').strip("'")
+
+
+def _resolve_default_api_base() -> str:
+    """Reads web port from project config.json (default 8080) to build API base URL."""
+    env_base = os.getenv("HILLEYE_API_BASE")
+    if env_base:
+        return env_base.rstrip("/")
+    cfg_path = Path(__file__).resolve().parent.parent / "config.json"
+    if cfg_path.is_file():
+        try:
+            cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+            port = int(cfg.get("web", {}).get("port", 8080))
+            return f"http://127.0.0.1:{port}"
+        except Exception:
+            pass
+    return "http://127.0.0.1:8080"
+
+
+HILLEYE_API_BASE = _resolve_default_api_base()
 DEFAULT_WHITELIST_PATH = Path(__file__).resolve().parent / "whitelist.json"
 WHITELIST_PATH = Path(os.getenv("HILLEYE_WHITELIST_FILE", str(DEFAULT_WHITELIST_PATH)))
 

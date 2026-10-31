@@ -7,4 +7,6 @@ __pycache__/
 *.db-shm
 .agents/
 examples/whitelist.json
+examples/token.txt
+
 
