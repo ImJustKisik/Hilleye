@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set, Tuple
 import httpx
 from core.byond_topic import bounded_int, normalize_ckey, parse_round_duration
+from core.text_encoding import decode_byond_text
 
 logger = logging.getLogger(__name__)
 
@@ -573,7 +574,7 @@ async def fetch_hub_servers(
                     body.extend(chunk)
                     if len(body) > MAX_HUB_BYTES:
                         raise ValueError("Hub response exceeds size limit")
-                return body.decode("utf-8", errors="replace")
+                return decode_byond_text(bytes(body), response.charset_encoding or "cp1251")
         return await asyncio.wait_for(receive(), timeout=timeout)
 
     try:

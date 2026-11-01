@@ -38,9 +38,12 @@ The unit, adversarial, concurrency, and E2E tests use temporary databases and lo
 
 ### Collection and monitoring
 
-`GET /live` checks the web process. `/health` and `/ready` return HTTP 503 until a healthy
-collection cycle completes, and on stale collection, Hub failures, Topic failures, low disk
-space, or clock changes. Monitor these endpoints externally. Multiple web workers sharing
+`GET /live` checks the web process. `/health` and `/ready` return HTTP 503 while the
+database is unavailable, the collector is stopped, no recent cycle has completed, or the
+leader's clock is untrusted. Hub and Topic failures in a completed cycle return HTTP 200
+with `status: degraded`, `ready: true`, and `collection_status: degraded`; diagnostics
+remain in `tracker`. Monitor HTTP availability and collection quality separately.
+Multiple web workers sharing
 one local SQLite file elect one collector through an OS file lock; a follower retries
 ownership every second after the owner exits. SQLite and the lock file must be on the same
 local filesystem, not separate per-container volumes or network filesystems.

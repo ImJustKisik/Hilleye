@@ -15,6 +15,7 @@ import socket
 import struct
 import urllib.parse
 from typing import Any, Dict, List, Optional, Tuple, Union
+from core.text_encoding import decode_byond_text
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,23 @@ TYPE_NULL = 0x00
 
 _LEGACY_PLAYER_KEY_RE = re.compile(r"^player(\d+)$", re.IGNORECASE)
 _DURATION_COLON_RE = re.compile(r"^(\d+):(\d{1,2})(?::(\d{1,2}))?$")
+
+
+def _unquote_plus(value: str) -> str:
+    return decode_byond_text(urllib.parse.unquote_to_bytes(value.replace("+", " ")))
+
+
+def _parse_qsl(value: str, keep_blank_values: bool = True) -> List[Tuple[str, str]]:
+    # Decode each percent-encoded component separately so legacy bytes are
+    # preserved, including in nested BYOND list2params values.
+    pairs = []
+    for field in value.split("&"):
+        if not field:
+            continue
+        key, _, val = field.partition("=")
+        if val or keep_blank_values:
+            pairs.append((_unquote_plus(key), _unquote_plus(val)))
+    return pairs
 
 
 def normalize_ckey(raw: Optional[str]) -> str:
@@ -139,7 +157,7 @@ def _split_byond_sublist(val: str) -> List[str]:
     if ("&" in v or "=" in v) and "," not in v:
         items: List[str] = []
         for token in v.split("&"):
-            token = urllib.parse.unquote_plus(token).strip()
+            token = _unquote_plus(token).strip()
             if not token:
                 continue
             if "=" in token:
@@ -184,7 +202,7 @@ def parse_adminlist_value(raw: Any) -> List[Dict[str, str]]:
                     k, r = item.split("=", 1)
                     ck = normalize_ckey(k)
                     if ck:
-                        result.append({"ckey": ck, "key": k.strip(), "rank": urllib.parse.unquote_plus(r).strip() or "Admin"})
+                        result.append({"ckey": ck, "key": k.strip(), "rank": _unquote_plus(r).strip() or "Admin"})
                 else:
                     ck = normalize_ckey(item)
                     if ck:
@@ -195,7 +213,7 @@ def parse_adminlist_value(raw: Any) -> List[Dict[str, str]]:
         if not s:
             return []
         if "&" in s or "=" in s:
-            for k, v in urllib.parse.parse_qsl(s, keep_blank_values=True):
+            for k, v in _parse_qsl(s, keep_blank_values=True):
                 ck = normalize_ckey(k)
                 if ck:
                     result.append({"ckey": ck, "key": k.strip(), "rank": v.strip() or "Admin"})
@@ -229,7 +247,7 @@ def parse_manifest_response(raw: Union[str, Dict[str, Any], None]) -> Dict[str, 
             s = s[1:]
         if not s or s.lower().startswith("throttled") or "=" not in s:
             return {}
-        for k, v in urllib.parse.parse_qsl(s, keep_blank_values=True):
+        for k, v in _parse_qsl(s, keep_blank_values=True):
             dept_key = k.strip().lower()
             if dept_key and v:
                 dept_dict[dept_key] = v
@@ -245,7 +263,7 @@ def parse_manifest_response(raw: Union[str, Dict[str, Any], None]) -> Dict[str, 
             continue
         entries: List[Dict[str, str]] = []
         if isinstance(encoded_members, str):
-            for char_name, job_rank in urllib.parse.parse_qsl(encoded_members, keep_blank_values=True):
+            for char_name, job_rank in _parse_qsl(encoded_members, keep_blank_values=True):
                 c_name = char_name.strip()
                 j_rank = job_rank.strip() or "Crew"
                 if c_name:
@@ -270,8 +288,8 @@ def parse_manifest_response(raw: Union[str, Dict[str, Any], None]) -> Dict[str, 
                     if c_name.strip():
                         entries.append(
                             {
-                                "name": urllib.parse.unquote_plus(c_name).strip(),
-                                "rank": urllib.parse.unquote_plus(j_rank).strip() or "Crew",
+                                "name": _unquote_plus(c_name).strip(),
+                                "rank": _unquote_plus(j_rank).strip() or "Crew",
                             }
                         )
         if entries:
@@ -346,7 +364,7 @@ def parse_topic_response(data: bytes) -> Union[str, float, None]:
                 return None
             raw_payload = data[5 : 4 + payload_len]
             clean_bytes = raw_payload.rstrip(b"\x00")
-            return clean_bytes.decode("utf-8", errors="replace")
+            return decode_byond_text(clean_bytes)
 
         elif type_byte == TYPE_FLOAT:
             if payload_len < 5 or len(data) < 4 + payload_len:
@@ -399,7 +417,7 @@ def parse_topic_query_string(raw: str) -> Union[Dict[str, Any], List[str], str]:
     if "=" in clean_str:
         result: Dict[str, Any] = {}
         legacy_players: List[Tuple[int, str]] = []
-        pairs = urllib.parse.parse_qsl(clean_str, keep_blank_values=True)
+        pairs = _parse_qsl(clean_str, keep_blank_values=True)
         for key, val in pairs:
             k = key.strip().lower()
             v = val.strip()

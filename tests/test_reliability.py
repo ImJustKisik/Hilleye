@@ -513,7 +513,13 @@ async def test_readiness_detects_good_stale_and_failed_collection(async_client, 
         await asyncio.wait_for(collected(), 2)
         assert (await async_client.get("/ready")).status_code == 200
         tracker._cycle_healthy = False
-        assert (await async_client.get("/ready")).status_code == 503
+        await db.record_collector_cycle(time.time(), False)
+        for endpoint in ("/health", "/ready"):
+            response = await async_client.get(endpoint)
+            assert response.status_code == 200
+            assert response.json()["status"] == "degraded"
+            assert response.json()["ready"] is True
+            assert response.json()["collection_status"] == "degraded"
         tracker._cycle_healthy = True
         await db.record_collector_cycle(time.time() - 10000, True)
         assert (await async_client.get("/ready")).status_code == 503

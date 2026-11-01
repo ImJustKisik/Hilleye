@@ -12,6 +12,8 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import FastAPI, Form, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.responses import HTMLResponse, JSONResponse, Response, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -120,26 +122,53 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 
+@app.middleware("http")
+async def response_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "SAMEORIGIN"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    if request.url.path.startswith("/static/") and response.status_code in (200, 206, 304):
+        response.headers["Cache-Control"] = "public, max-age=86400, stale-while-revalidate=3600"
+    return response
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error(request: Request, exc: RequestValidationError):
+    if "text/html" in request.headers.get("accept", "").lower():
+        return templates.TemplateResponse(
+            request=request, name="error.html",
+            context={"status_code": 422, "message": "Invalid request parameters. Check the address or form values and try again."},
+            status_code=422,
+        )
+    return await request_validation_exception_handler(request, exc)
+
+
 @app.get("/health")
 @app.get("/ready")
 async def health_check():
     """
-    Operational health check returning system and tracker status.
+    Check DB/worker readiness separately from external collection quality.
     """
     tracker = get_tracker()
     tracker_stats = tracker.get_stats() if tracker else {}
     ready = False
+    collection_healthy = False
     try:
         if core_db._connection is not None:
             state = await asyncio.wait_for(core_db.get_collector_state(), timeout=2)
             age = time.time() - state["completed_at"] if state else None
-            ready = bool(tracker.is_running() and state and state["healthy"] and
+            ready = bool(tracker.is_running() and state and
                          0 <= age <= tracker.poll_interval + tracker.config.cycle_timeout_seconds)
+            collection_healthy = bool(state and state["healthy"])
             if tracker.is_leader:
-                ready = ready and tracker._cycle_healthy and tracker._clock_trusted
+                collection_healthy = collection_healthy and tracker._cycle_healthy
+                ready = ready and tracker._clock_trusted
     except Exception:
         logger.exception("Database readiness check failed")
-    return JSONResponse({"status": "ok" if ready else "degraded", "tracker": tracker_stats},
+    return JSONResponse({"status": "ok" if ready and collection_healthy else "degraded",
+                         "ready": ready, "collection_status": "ok" if collection_healthy else "degraded",
+                         "tracker": tracker_stats},
                         status_code=200 if ready else 503)
 
 

@@ -23,6 +23,8 @@
           <input type="text"
                  id="ckey-input"
                  name="ckey"
+                 required
+                 pattern=".*\S.*"
                  class="command-input"
                  placeholder="Enter BYOND ckey (e.g. honkmaster)..."
                  value="{{ target_ckey or (dossier.ckey if dossier else '') }}"
@@ -95,9 +97,9 @@
           </div>
         </div>
 
-        <div class="sector-list" id="servers-grid-container" role="list" tabindex="0" aria-label="Active Space Station 13 servers">
+        <ul class="sector-list" id="servers-grid-container" role="list" tabindex="0" aria-label="Active Space Station 13 servers">
           {% for s in servers %}
-          <a href="/server/{{ s.id }}" class="sector-row" role="listitem" data-search="{{ (s.title or '')|lower }} {{ (s.identifier or '')|lower }} {{ (s.map_name or '')|lower }} {{ (s.gamemode or '')|lower }}">
+          <li><a href="/server/{{ s.id }}" class="sector-row" data-search="{{ (s.title or '')|lower }} {{ (s.identifier or '')|lower }} {{ (s.map_name or '')|lower }} {{ (s.gamemode or '')|lower }}">
             <span class="status-dot online" aria-hidden="true" title="Server active"></span>
             <div class="sector-info">
               <div class="sector-top-row">
@@ -116,9 +118,9 @@
                 {% endif %}
               </div>
             </div>
-          </a>
+          </a></li>
           {% endfor %}
-        </div>
+        </ul>
 
         <div id="server-filter-empty" class="directory-empty" hidden>
           No monitored servers match that filter.
@@ -153,7 +155,7 @@
     rows.forEach(row => {
       const hay = row.getAttribute('data-search') || row.textContent.toLowerCase();
       const match = !q || hay.includes(q);
-      row.style.display = match ? 'flex' : 'none';
+      row.parentElement.hidden = !match;
       if (match) visible++;
     });
 
