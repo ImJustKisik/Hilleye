@@ -634,3 +634,36 @@ def test_invalid_text_count_is_unknown_and_truncation_is_observable(monkeypatch)
     monkeypatch.setattr(scraper, "MAX_HUB_SERVERS", 1)
     result = scraper.parse_hub_text('world/1\nurl="byond://8.8.8.8:1234"\nworld/2\nurl="byond://1.1.1.1:1234"')
     assert len(result) == 1 and result.errors == 1
+
+
+def test_selfbot_server_matching_by_id_and_partial_name():
+    import ast
+    from pathlib import Path
+    from typing import Any, Dict, List, Optional, Tuple
+    source = ast.parse(Path("examples/selfbot_example.py").read_text(encoding="utf-8"))
+    nodes = [n for n in source.body if isinstance(n, ast.FunctionDef) and n.name == "match_servers_by_query"]
+    namespace = dict(Any=Any, Dict=Dict, List=List, Optional=Optional, Tuple=Tuple, re=__import__("re"))
+    exec(compile(ast.Module(body=nodes, type_ignores=[]), "selfbot_match", "exec"), namespace)
+    match_servers_by_query = namespace["match_servers_by_query"]
+
+    servers = [
+        {"id": 1, "title": "Tau Ceti Classic I", "current_players": 42, "map_name": "BoxStation"},
+        {"id": 2, "title": "Tau Ceti Classic II", "current_players": 65, "map_name": "MetaStation"},
+        {"id": 3, "title": "Sierra Bay [RU]", "current_players": 28, "map_name": "Torch"},
+        {"id": 4, "title": "SS220 Paradise", "current_players": 110, "map_name": "Cyberiad"},
+    ]
+
+    # Exact ID match (with or without '#')
+    assert [s["id"] for s in match_servers_by_query(servers, "3")] == [3]
+    assert [s["id"] for s in match_servers_by_query(servers, "#2")] == [2]
+
+    # Exact title match (case-insensitive)
+    assert [s["id"] for s in match_servers_by_query(servers, "sierra bay [ru]")] == [3]
+
+    # Partial name match (sorted by relevance then online players)
+    assert [s["id"] for s in match_servers_by_query(servers, "sierra")] == [3]
+    assert [s["id"] for s in match_servers_by_query(servers, "tau ceti")] == [2, 1]
+    assert [s["id"] for s in match_servers_by_query(servers, "paradise")] == [4]
+    assert [s["id"] for s in match_servers_by_query(servers, "220")] == [4]
+    assert match_servers_by_query(servers, "nonexistent") == []
+
