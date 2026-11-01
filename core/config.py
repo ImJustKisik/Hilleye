@@ -16,11 +16,29 @@ DEFAULT_CONFIG_PATH = PROJECT_DIR / "config.json"
 
 DEFAULT_CUSTOM_SERVERS: List[Dict[str, Any]] = [
     {
+        "identifier": "byond://BYOND.world.1659081175",
+        "title": "[RU] Celadon: SierraBay",
+        "ip": "45.93.200.145",
+        "port": 1350,
+    },
+    {
+        "identifier": "byond://BYOND.world.805690456",
+        "title": "[RU] Celadon Shiptest: Alpha",
+        "ip": "45.93.200.145",
+        "port": 1337,
+    },
+    {
+        "identifier": "byond://BYOND.world.1821602746",
+        "title": "[RU] [LRP] Celadon Skyrat",
+        "ip": "45.93.200.145",
+        "port": 7731,
+    },
+    {
         "identifier": "byond://178.62.241.130:1337",
         "title": "Tau Ceti Classic",
         "ip": "178.62.241.130",
         "port": 1337,
-    }
+    },
 ]
 
 

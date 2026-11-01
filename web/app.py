@@ -24,6 +24,7 @@ from core.byond_topic import (
 )
 from core.card_renderer import render_player_card
 from core import db as core_db
+from core.hub_scraper import KNOWN_PAGER_ENDPOINTS
 from core.tracker import get_tracker
 from core.config import get_config
 
@@ -377,6 +378,9 @@ async def fetch_server_manifest_htmx(request: Request, server_id: int):
 
     ip = server_details.get("ip")
     port = int(server_details.get("port") or 0)
+    ident = server_details.get("identifier") or ""
+    if port == 0 and ident in KNOWN_PAGER_ENDPOINTS:
+        ip, port = KNOWN_PAGER_ENDPOINTS[ident]
     query_error: Optional[str] = None
 
     cache_key = (core_db._current_db_path, server_id)
@@ -387,9 +391,14 @@ async def fetch_server_manifest_htmx(request: Request, server_id: int):
             if not ip or not 0 < port <= 65535:
                 raise ValueError("This server has a pager address; a direct Topic endpoint is unavailable.")
             tracker = get_tracker()
-            trusted = any(c.get("identifier") == server_details["identifier"] or
-                          (c.get("ip") == ip and c.get("port") == port)
-                          for c in tracker.custom_servers)
+            trusted = (
+                ident in KNOWN_PAGER_ENDPOINTS
+                or any(
+                    c.get("identifier") == server_details["identifier"]
+                    or (c.get("ip") == ip and c.get("port") == port)
+                    for c in tracker.custom_servers
+                )
+            )
             # Share the collector's connection budget, including concurrent HTTP requests.
             async with tracker.semaphore:
                 target = ip if trusted else await asyncio.wait_for(public_topic_ip(ip, port), tracker.socket_timeout)

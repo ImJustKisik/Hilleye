@@ -261,6 +261,12 @@ class Tracker:
                 return
             ts = float(now_ts) if now_ts is not None else self._observation_time()
             metrics: Dict[str, Any] = {}
+            if getattr(srv, "map_name", None):
+                metrics["map_name"] = str(srv.map_name).strip()[:512]
+            if getattr(srv, "gamemode", None):
+                metrics["gamemode"] = str(srv.gamemode).strip()[:512]
+            if getattr(srv, "round_duration", None) is not None:
+                metrics["round_duration"] = bounded_int(srv.round_duration)
             player_count = bounded_int(srv.player_count) if srv.from_hub and srv.count_known else None
             if topic_received:
                 topic_roster = extract_player_list(data)

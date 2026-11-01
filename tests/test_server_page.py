@@ -482,3 +482,73 @@ async def test_sierrabay_manifest_endpoint(async_client, mock_topic_server, monk
     assert details is not None
     assert details["manifest_total_crew"] == 4
     assert "command" in details["manifest"]
+
+
+
+@pytest.mark.asyncio
+async def test_pager_server_upgrade_and_hub_status_metadata_fallback(test_db, mock_topic_server, monkeypatch):
+    """
+    Verifies:
+    1. A BYOND Hub entry with a pager URL (e.g., byond://BYOND.world.1659081175 for [RU] Celadon: SierraBay)
+       is automatically upgraded to its direct TCP endpoint and queried via ?status=2.
+    2. An unconfigured pager-only server still extracts map_name, gamemode, and round_duration
+       from the BYOND Hub HTML status string so it does not display N/A and 00:00:00.
+    """
+    from core.hub_scraper import parse_hub_text
+
+    hub_text = (
+        'world/1\n'
+        '\turl = "byond://BYOND.world.1659081175"\n'
+        '\tstatus = "<b>\\[RU\\] Celadon: SierraBay</b> — playing <b>secret</b> on <b>NSV Sierra</b>"\n'
+        '\tplayers = list("LiquidParadise", "Roche Hendson")\n'
+        'world/2\n'
+        '\turl = "byond://BYOND.world.999999999"\n'
+        '\tstatus = "<b>Pager Only Bay Server</b> — playing <b>extended</b> on <b>SEV Torch</b> | Round Time: <b>01:30</b>"\n'
+        '\tplayers = 5\n'
+    )
+    parsed = parse_hub_text(hub_text)
+    assert len(parsed) == 2
+    assert parsed[0].map_name == "NSV Sierra"
+    assert parsed[0].gamemode == "secret"
+    assert parsed[1].map_name == "SEV Torch"
+    assert parsed[1].gamemode == "extended"
+    assert parsed[1].round_duration == 5400
+
+    port = mock_topic_server.port
+    monkeypatch.setitem(
+        __import__("core.hub_scraper", fromlist=["KNOWN_PAGER_ENDPOINTS"]).KNOWN_PAGER_ENDPOINTS,
+        "byond://BYOND.world.1659081175",
+        ("127.0.0.1", port),
+    )
+    from core.hub_scraper import merge_custom_servers
+    merged = merge_custom_servers(parsed, [])
+    assert merged[0].identifier == "byond://BYOND.world.1659081175"
+    assert merged[0].ip == "127.0.0.1"
+    assert merged[0].port == port
+    assert merged[0].trusted is True
+
+    mock_topic_server.set_string_response(
+        "version=Baystation&mode=secret&respawn=1&enter=1&players=2&stationtime=21%3A20"
+        "&roundduration=08%3A19&map=NSV+Sierra&admins=1"
+        "&playerlist=LiquidParadise%26Roche+Hendson"
+        "&adminlist=Roche+Hendson%3DGame+Admin&active_players=1"
+    )
+    from unittest.mock import AsyncMock
+    monkeypatch.setattr("core.tracker.fetch_hub_servers", AsyncMock(return_value=merged))
+
+    tracker = Tracker(config={"custom_servers": []})
+    await tracker.poll_once(now_ts=80000.0)
+
+    servers = await core_db.get_active_servers()
+    sierra = next(s for s in servers if s["identifier"] == "byond://BYOND.world.1659081175")
+    assert sierra["ip"] == "127.0.0.1"
+    assert sierra["port"] == port
+    assert sierra["map_name"] == "NSV Sierra"
+    assert sierra["gamemode"] == "secret"
+    assert sierra["round_duration"] == 8 * 3600 + 19 * 60
+    assert sierra["admins_count"] == 1
+
+    pager_only = next(s for s in servers if s["identifier"] == "byond://BYOND.world.999999999")
+    assert pager_only["map_name"] == "SEV Torch"
+    assert pager_only["gamemode"] == "extended"
+    assert pager_only["round_duration"] == 5400

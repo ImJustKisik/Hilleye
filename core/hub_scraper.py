@@ -13,7 +13,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set, Tuple
 import httpx
-from core.byond_topic import bounded_int, normalize_ckey
+from core.byond_topic import bounded_int, normalize_ckey, parse_round_duration
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +22,15 @@ DEFAULT_TEXT_URL = "http://www.byond.com/games/Exadv1/SpaceStation13?format=text
 USER_AGENT = "Hilleye/1.0 (BYOND)"
 MAX_HUB_BYTES = 4 * 1024 * 1024
 MAX_HUB_SERVERS = 2000
+
+# Known direct TCP endpoints for servers that publish a BYOND.world.<id> pager URL on the Hub.
+# Ensures direct BYOND Topic (?status=2, ?manifest) works out-of-the-box even if config.json
+# on a deployed instance has not been manually updated yet.
+KNOWN_PAGER_ENDPOINTS: Dict[str, Tuple[str, int]] = {
+    "byond://BYOND.world.1659081175": ("45.93.200.145", 1350),  # [RU] Celadon: SierraBay
+    "byond://BYOND.world.805690456": ("45.93.200.145", 1337),   # [RU] Celadon Shiptest: Alpha
+    "byond://BYOND.world.1821602746": ("45.93.200.145", 7731),  # [RU] [LRP] Celadon Skyrat
+}
 
 
 @dataclass
@@ -39,6 +48,9 @@ class ServerInfo:
     trusted: bool = False
     count_known: bool = True
     roster_complete: bool = True
+    map_name: Optional[str] = None
+    gamemode: Optional[str] = None
+    round_duration: Optional[int] = None
 
 
 class HubResult(list):
@@ -78,6 +90,81 @@ def clean_server_title(raw_status: str) -> str:
     # Normalize whitespace
     clean = " ".join(clean.split()).strip()
     return clean or "Unknown Station"
+
+
+def parse_hub_status_metadata(raw_status: str) -> Dict[str, Any]:
+    """
+    Extracts fallback round metadata (map_name, gamemode, round_duration) from a BYOND Hub
+    status HTML string when direct Topic telemetry is unavailable (e.g., pager-only servers).
+
+    Supported Hub status formats:
+      - Baystation / SierraBay: `playing <b>secret</b> on <b>NSV Sierra</b>`
+      - TG / Monkestation / Para / CM: `Map: <b>MetaStation</b>`, `Mode: <b>Extended</b>`,
+        `Round Time: <b>01:24</b>` or `Time: <b>01:24:05</b>`
+    """
+    if not raw_status or not isinstance(raw_status, str):
+        return {}
+
+    text = html.unescape(raw_status)
+    text = text.replace(r"\[", "[").replace(r"\]", "]").replace(r"\"", '"')
+    meta: Dict[str, Any] = {}
+
+    def _clean_fragment(val: str) -> str:
+        cleaned = re.sub(r"<[^>]+>", "", val)
+        return " ".join(cleaned.split()).strip()[:128]
+
+    # 1. Baystation / SierraBay / Polaris pattern: "playing <b>mode</b> on <b>map</b>"
+    bay_match = re.search(
+        r"playing\s+<b(?:\s+[^>]*)?>(.*?)</b>\s+on\s+<b(?:\s+[^>]*)?>(.*?)</b>",
+        text,
+        re.IGNORECASE | re.DOTALL,
+    )
+    if bay_match:
+        mode_val = _clean_fragment(bay_match.group(1))
+        map_val = _clean_fragment(bay_match.group(2))
+        if mode_val:
+            meta["gamemode"] = mode_val
+        if map_val:
+            meta["map_name"] = map_val
+
+    # 2. Explicit "Map: <b>...</b>" or "Current Map: ..."
+    if "map_name" not in meta:
+        map_match = re.search(
+            r"(?:current\s+)?map\s*:\s*(?:<b(?:\s+[^>]*)?>(.*?)</b>|([^<\r\n|;\]]+))",
+            text,
+            re.IGNORECASE | re.DOTALL,
+        )
+        if map_match:
+            raw_map = map_match.group(1) if map_match.group(1) is not None else map_match.group(2)
+            map_val = _clean_fragment(raw_map or "")
+            if map_val and map_val.lower() not in ("unknown", "n/a", "none"):
+                meta["map_name"] = map_val
+
+    # 3. Explicit "Mode: <b>...</b>" or "Game Mode: ..."
+    if "gamemode" not in meta:
+        mode_match = re.search(
+            r"(?:game\s+)?mode\s*:\s*(?:<b(?:\s+[^>]*)?>(.*?)</b>|([^<\r\n|;\]]+))",
+            text,
+            re.IGNORECASE | re.DOTALL,
+        )
+        if mode_match:
+            raw_mode = mode_match.group(1) if mode_match.group(1) is not None else mode_match.group(2)
+            mode_val = _clean_fragment(raw_mode or "")
+            if mode_val and mode_val.lower() not in ("unknown", "n/a", "none"):
+                meta["gamemode"] = mode_val
+
+    # 4. Explicit "Round Time: <b>01:24</b>" / "Time: 01:24:05" / "Duration: 01:24"
+    dur_match = re.search(
+        r"(?:round\s+time|round\s+duration|duration|time)\s*:\s*(?:<b(?:\s+[^>]*)?>)?\s*([0-9]{1,2}:[0-9]{2}(?::[0-9]{2})?)",
+        text,
+        re.IGNORECASE,
+    )
+    if dur_match:
+        parsed_dur = parse_round_duration(dur_match.group(1))
+        if parsed_dur is not None:
+            meta["round_duration"] = parsed_dur
+
+    return meta
 
 
 def _parse_url_address(url_str: str) -> Tuple[str, str, int]:
@@ -164,6 +251,7 @@ def parse_hub_text(text: str) -> List[ServerInfo]:
         status_match = re.search(r'status\s*=\s*"((?:[^"\\]|\\.)*)"', block, re.DOTALL)
         raw_status = status_match.group(1) if status_match else ""
         title = clean_server_title(raw_status)
+        status_meta = parse_hub_status_metadata(raw_status)
 
         # Parse player list or scalar player count
         players: List[str] = []
@@ -200,6 +288,9 @@ def parse_hub_text(text: str) -> List[ServerInfo]:
                 roster_known=list_match is not None or count_val == 0,
                 count_known=(list_match is not None and list_complete) or count_val is not None,
                 roster_complete=list_complete,
+                map_name=status_meta.get("map_name"),
+                gamemode=status_meta.get("gamemode"),
+                round_duration=status_meta.get("round_duration"),
             )
         )
 
@@ -243,6 +334,7 @@ def parse_hub_json(data: Any) -> List[ServerInfo]:
 
         raw_status = entry.get("status") or entry.get("title") or ""
         title = clean_server_title(str(raw_status))
+        status_meta = parse_hub_status_metadata(str(raw_status))
 
         players: List[str] = []
         player_count = 0
@@ -279,6 +371,9 @@ def parse_hub_json(data: Any) -> List[ServerInfo]:
                 roster_known=isinstance(raw_players, list) or bounded_int(raw_players) == 0,
                 count_known=(isinstance(raw_players, list) and all(isinstance(p, str) and len(p) <= 128 for p in raw_players)) or bounded_int(raw_players) is not None or bounded_int(entry.get("player_count")) is not None,
                 roster_complete=not isinstance(raw_players, list) or all(isinstance(p, str) and len(p) <= 128 for p in raw_players),
+                map_name=status_meta.get("map_name"),
+                gamemode=status_meta.get("gamemode"),
+                round_duration=status_meta.get("round_duration"),
             )
         )
 
@@ -305,11 +400,14 @@ def merge_custom_servers(
     # Index hub servers
     hub_map: Dict[str, ServerInfo] = {}
     hub_endpoint_map: Dict[Tuple[str, int], ServerInfo] = {}
+    hub_pager_title_map: Dict[str, ServerInfo] = {}
 
     for s in hub_servers:
         hub_map[s.identifier] = s
         if s.port > 0 and s.ip:
             hub_endpoint_map[(s.ip, s.port)] = s
+        elif s.title and s.title != "Unknown Station":
+            hub_pager_title_map.setdefault(s.title.strip().lower(), s)
 
     # Merge custom servers first (custom servers have priority)
     if custom_servers and isinstance(custom_servers, list):
@@ -364,8 +462,14 @@ def merge_custom_servers(
             if title.lower() == "none":
                 title = ""
 
-            # Check if matched in hub
+            # Check if matched in hub (by identifier, endpoint, or pager title when custom has real ip:port)
             existing = hub_map.get(identifier) or (hub_endpoint_map.get((ip, port)) if (port > 0 and ip) else None)
+            if existing is None and title and port > 0 and ip:
+                pager_match = hub_pager_title_map.get(title.lower())
+                if pager_match is not None and pager_match.identifier not in seen_identifiers:
+                    existing = pager_match
+                    seen_identifiers.add(pager_match.identifier)
+
             players = existing.players if existing else []
             player_count = existing.player_count if existing else 0
 
@@ -382,6 +486,9 @@ def merge_custom_servers(
                 trusted=True,
                 count_known=existing.count_known if existing else False,
                 roster_complete=existing.roster_complete if existing else True,
+                map_name=existing.map_name if existing else None,
+                gamemode=existing.gamemode if existing else None,
+                round_duration=existing.round_duration if existing else None,
             )
             merged.append(srv)
             seen_identifiers.add(identifier)
@@ -395,6 +502,28 @@ def merge_custom_servers(
             continue
         if s.port > 0 and s.ip and (s.ip, s.port) in seen_endpoints:
             continue
+
+        # Upgrade known pager addresses to their real TCP endpoints if not already overridden
+        if s.port == 0 and s.identifier in KNOWN_PAGER_ENDPOINTS:
+            known_ip, known_port = KNOWN_PAGER_ENDPOINTS[s.identifier]
+            if (known_ip, known_port) not in seen_endpoints:
+                s = ServerInfo(
+                    identifier=s.identifier,
+                    title=s.title,
+                    ip=known_ip,
+                    port=known_port,
+                    players=s.players,
+                    player_count=s.player_count,
+                    roster_known=s.roster_known,
+                    from_hub=s.from_hub,
+                    trusted=True,
+                    count_known=s.count_known,
+                    roster_complete=s.roster_complete,
+                    map_name=s.map_name,
+                    gamemode=s.gamemode,
+                    round_duration=s.round_duration,
+                )
+
         merged.append(s)
         seen_identifiers.add(s.identifier)
         if s.port > 0 and s.ip:
