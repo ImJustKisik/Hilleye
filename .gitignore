@@ -7,9 +7,8 @@ __pycache__/
 *.db-shm
 *.collector.lock
 .agents/
-examples/whitelist.json
+examples/whitelist.json*
 examples/token.txt
+examples/subscriptions.json*
 backups/
 *.db.gz
-
-
