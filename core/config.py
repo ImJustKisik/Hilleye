@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 from pydantic import BaseModel, Field, field_validator
@@ -10,7 +11,8 @@ from core.hub_scraper import _parse_url_address
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_CONFIG_PATH = Path("config.json")
+PROJECT_DIR = Path(__file__).resolve().parent.parent
+DEFAULT_CONFIG_PATH = PROJECT_DIR / "config.json"
 
 DEFAULT_CUSTOM_SERVERS: List[Dict[str, Any]] = [
     {
@@ -25,16 +27,19 @@ DEFAULT_CUSTOM_SERVERS: List[Dict[str, Any]] = [
 class AppConfig(BaseModel):
     """Application configuration schema with fallback defaults and field synchronization."""
 
-    poll_interval: int = Field(default=120, description="Polling interval in seconds")
-    poll_interval_seconds: int = Field(default=120, description="Alias for poll_interval")
+    poll_interval: int = Field(default=120, ge=1, le=86400, description="Polling interval in seconds")
+    poll_interval_seconds: int = Field(default=120, ge=1, le=86400, description="Alias for poll_interval")
     grace_period_seconds: int = Field(
-        default=300, description="Grace period before closing disconnected player session"
+        default=300, ge=1, le=86400, description="Grace period before closing disconnected player session"
     )
-    socket_timeout: float = Field(default=3.0, description="Socket connect/read timeout in seconds")
-    topic_timeout_seconds: float = Field(default=3.0, description="Alias for socket_timeout")
-    topic_concurrency: int = Field(default=30, description="Maximum concurrent topic socket queries")
-    topic_semaphore_limit: int = Field(default=30, description="Alias for topic_concurrency")
-    db_path: str = Field(default="tracker.db", description="SQLite database path")
+    socket_timeout: float = Field(default=3.0, gt=0, le=300, allow_inf_nan=False, description="Socket connect/read timeout in seconds")
+    topic_timeout_seconds: float = Field(default=3.0, gt=0, le=300, allow_inf_nan=False, description="Alias for socket_timeout")
+    topic_concurrency: int = Field(default=30, ge=1, le=256, description="Maximum concurrent topic socket queries")
+    topic_semaphore_limit: int = Field(default=30, ge=1, le=256, description="Alias for topic_concurrency")
+    cycle_timeout_seconds: float = Field(default=300, gt=0, le=3600, allow_inf_nan=False)
+    stale_server_seconds: int = Field(default=900, ge=1)
+    min_free_disk_mb: int = Field(default=100, ge=0)
+    db_path: str = Field(default="tracker.db", min_length=1, description="SQLite database path")
     hub_url: str = Field(
         default="http://www.byond.com/games/SpaceStation13?format=json",
         description="BYOND SS13 Hub JSON URL",
@@ -114,6 +119,30 @@ class AppConfig(BaseModel):
         return sanitized
 
     def __init__(self, **data: Any):
+        # Explicit top-level values take precedence over the legacy nested layout.
+        nested = data.get("tracker", {})
+        if nested is not None and not isinstance(nested, dict):
+            raise ValueError("tracker must be an object")
+        aliases = {
+            "poll_interval_seconds": "poll_interval",
+            "socket_timeout_seconds": "socket_timeout",
+            "topic_timeout_seconds": "socket_timeout",
+            "max_concurrent_sockets": "topic_concurrency",
+            "topic_semaphore_limit": "topic_concurrency",
+            "byond_hub_url": "hub_url",
+        }
+        for key, value in (nested or {}).items():
+            canonical = aliases.get(key, key)
+            if canonical not in data and not any(k in data for k, v in aliases.items() if v == canonical):
+                data[canonical] = value
+        for key, canonical in aliases.items():
+            if key in data:
+                data.setdefault(canonical, data[key])
+        database = data.get("database", {})
+        if not isinstance(database, dict):
+            raise ValueError("database must be an object")
+        if "path" in database:
+            data.setdefault("db_path", database["path"])
         # Synchronize alias pairs if one is provided
         if "poll_interval" in data and "poll_interval_seconds" not in data:
             data["poll_interval_seconds"] = data["poll_interval"]
@@ -137,6 +166,12 @@ class AppConfig(BaseModel):
 
         super().__init__(**data)
 
+    def resolved_db_path(self) -> str:
+        if self.db_path == ":memory:":
+            return self.db_path
+        path = Path(self.db_path).expanduser()
+        return str(path.resolve() if path.is_absolute() else (PROJECT_DIR / path).resolve())
+
     def __getitem__(self, item: str) -> Any:
         """Allow dictionary-style access for backwards compatibility."""
         if hasattr(self, item):
@@ -159,31 +194,25 @@ Config = AppConfig
 def load_config(config_path: Union[str, Path] = DEFAULT_CONFIG_PATH) -> AppConfig:
     """
     Loads configuration from a JSON file.
-    Falls back gracefully to defaults if the file does not exist, is empty,
-    or contains invalid JSON.
+    A missing file uses defaults; an invalid existing configuration stops startup.
     """
     path = Path(config_path)
     if not path.is_file():
         logger.info("Config file '%s' not found. Using default configuration.", path)
-        return AppConfig()
+        return AppConfig(db_path=os.getenv("HILLEYE_DB_PATH", "tracker.db"))
 
     try:
         content = path.read_text(encoding="utf-8").strip()
         if not content:
-            logger.warning("Config file '%s' is empty. Using defaults.", path)
-            return AppConfig()
+            raise ValueError("configuration is empty")
         raw_data = json.loads(content)
         if not isinstance(raw_data, dict):
-            logger.warning("Config file '%s' root is not a JSON object. Using defaults.", path)
-            return AppConfig()
+            raise ValueError("configuration root must be an object")
+        if os.getenv("HILLEYE_DB_PATH"):
+            raw_data["db_path"] = os.environ["HILLEYE_DB_PATH"]
         return AppConfig(**raw_data)
     except Exception as exc:
-        logger.warning(
-            "Failed to load or parse config from '%s': %s. Using default configuration.",
-            path,
-            exc,
-        )
-        return AppConfig()
+        raise ValueError(f"Invalid configuration '{path}': {exc}") from exc
 
 
 _GLOBAL_CONFIG: Optional[AppConfig] = None

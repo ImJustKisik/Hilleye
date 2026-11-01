@@ -5,8 +5,11 @@ __pycache__/
 *.db
 *.db-wal
 *.db-shm
+*.collector.lock
 .agents/
 examples/whitelist.json
 examples/token.txt
+backups/
+*.db.gz
 
 

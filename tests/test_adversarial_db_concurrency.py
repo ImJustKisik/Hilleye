@@ -330,17 +330,17 @@ class TestDossierMathematicalCorrectness:
 
         # S1: 1800s (30m)
         await update_player_sessions(s1, {ckey}, now_ts=1000.0)
-        await update_player_sessions(s1, {ckey}, now_ts=2800.0)
+        await update_player_sessions(s1, {ckey}, now_ts=2800.0, grace_period_seconds=86400)
         await update_player_sessions(s1, set(), now_ts=3200.0)
 
         # S2: 3600s (60m)
         await update_player_sessions(s2, {ckey}, now_ts=4000.0)
-        await update_player_sessions(s2, {ckey}, now_ts=7600.0)
+        await update_player_sessions(s2, {ckey}, now_ts=7600.0, grace_period_seconds=86400)
         await update_player_sessions(s2, set(), now_ts=8000.0)
 
         # S3: 5400s (90m)
         await update_player_sessions(s3, {ckey}, now_ts=9000.0)
-        await update_player_sessions(s3, {ckey}, now_ts=14400.0)
+        await update_player_sessions(s3, {ckey}, now_ts=14400.0, grace_period_seconds=86400)
         await update_player_sessions(s3, set(), now_ts=15000.0)
 
         dossier = await get_player_dossier(ckey)
@@ -365,7 +365,7 @@ class TestDossierMathematicalCorrectness:
 
         # 4500 seconds = 1.25 hours -> round(1.25, 1) = 1.2 or 1.3
         await update_player_sessions(s1, {ckey}, now_ts=1000.0)
-        await update_player_sessions(s1, {ckey}, now_ts=5500.0)
+        await update_player_sessions(s1, {ckey}, now_ts=5500.0, grace_period_seconds=86400)
 
         dossier = await get_player_dossier(ckey)
         assert dossier is not None
@@ -396,7 +396,8 @@ class TestDossierMathematicalCorrectness:
 
         # 36,000,000 seconds = 10,000 hours
         await update_player_sessions(sid, {ckey}, now_ts=1000.0)
-        await update_player_sessions(sid, {ckey}, now_ts=36001000.0)
+        # This test checks formatting with an explicit long continuity window.
+        await update_player_sessions(sid, {ckey}, now_ts=36001000.0, grace_period_seconds=36000001)
         await update_player_sessions(sid, set(), now_ts=36001500.0)
 
         dossier = await get_player_dossier(ckey)

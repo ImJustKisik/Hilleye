@@ -82,9 +82,9 @@ async def test_full_simulated_e2e_lifecycle(temp_db_path, mock_topic_server):
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         # Check /health
         health_resp = await client.get("/health")
-        assert health_resp.status_code == 200
+        assert health_resp.status_code == 503
         health_data = health_resp.json()
-        assert health_data.get("status") == "ok"
+        assert health_data.get("status") == "degraded"
 
         # Check /api/v1/servers
         servers_resp = await client.get("/api/v1/servers")
@@ -100,7 +100,7 @@ async def test_full_simulated_e2e_lifecycle(temp_db_path, mock_topic_server):
             assert status_info.get("online") is True or status_info.get("is_online") is True
 
         # Check POST /search -> returns HTMX fragment with online status
-        search_resp = await client.post("/search", data={"ckey": "honkmaster"})
+        search_resp = await client.post("/search", headers={"HX-Request": "true"}, data={"ckey": "honkmaster"})
         assert search_resp.status_code == 200
         assert "honkmaster" in search_resp.text.lower()
 
@@ -149,7 +149,7 @@ async def test_full_simulated_e2e_lifecycle(temp_db_path, mock_topic_server):
         unknown_resp = await client.get("/api/v1/player/nonexistent_agent_999")
         assert unknown_resp.status_code == 404
 
-        unknown_search = await client.post("/search", data={"ckey": "nonexistent_agent_999"})
+        unknown_search = await client.post("/search", headers={"HX-Request": "true"}, data={"ckey": "nonexistent_agent_999"})
         assert unknown_search.status_code == 200
         assert "NO RECORD FOUND" in unknown_search.text or "NOT DETECTED" in unknown_search.text.upper()
 

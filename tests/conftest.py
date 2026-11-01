@@ -16,6 +16,17 @@ import pytest
 import httpx
 
 
+@pytest.fixture(autouse=True)
+def offline_tracker_hub(monkeypatch):
+    """Tracker tests use local custom sockets; scraper tests provide their own HTTP transport."""
+    from core.hub_scraper import HubResult, merge_custom_servers
+
+    async def discover(*, custom_servers=None, **kwargs):
+        return HubResult(merge_custom_servers([], custom_servers), healthy=True)
+
+    monkeypatch.setattr("core.tracker.fetch_hub_servers", discover)
+
+
 # Sample Hub Payloads for Testing
 SAMPLE_HUB_JSON = [
     {

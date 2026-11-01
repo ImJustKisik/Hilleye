@@ -5,24 +5,27 @@ FastAPI application, Lifespan manager, REST endpoints, and HTMX SSR views.
 
 from collections import OrderedDict
 from contextlib import asynccontextmanager
+import asyncio
 import logging
 from pathlib import Path
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import FastAPI, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from core.byond_topic import (
     normalize_ckey,
     parse_manifest_response,
+    public_topic_ip,
     query_topic,
 )
 from core.card_renderer import render_player_card
 from core import db as core_db
 from core.tracker import get_tracker
+from core.config import get_config
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +37,9 @@ CARD_CACHE_TTL_SECONDS: float = 60.0
 CARD_CACHE_MAX_SIZE: int = 256
 _card_cache: "OrderedDict[str, Tuple[float, bytes]]" = OrderedDict()
 _card_cache_db_path: Optional[str] = None
+_card_slots = asyncio.Semaphore(2)
+_manifest_tasks: Dict[Tuple[str, int], asyncio.Task] = {}
+_manifest_results: OrderedDict = OrderedDict()
 
 
 def clear_card_cache() -> None:
@@ -80,26 +86,25 @@ async def lifespan(app: FastAPI):
     - On shutdown: stop background tracker and safely close database connections.
     """
     logger.info("Initializing Hilleye SQLite WAL database...")
-    await core_db.init_db()
+    config = get_config()
+    await core_db.init_db(config.resolved_db_path())
 
     logger.info("Starting Hilleye background telemetry tracker...")
-    tracker = get_tracker()
+    tracker = get_tracker(config=config)
     try:
         await tracker.start()
-    except Exception as e:
-        logger.error(f"Failed to start tracker: {e}")
-
-    yield
-
-    logger.info("Shutting down Hilleye background telemetry tracker...")
-    try:
-        await tracker.stop()
-    except Exception as e:
-        logger.error(f"Error stopping tracker: {e}")
-
-    logger.info("Closing SQLite database connection pool...")
-    await core_db.close_db()
-    logger.info("Hilleye shutdown complete.")
+        yield
+    finally:
+        try:
+            await tracker.stop()
+            tasks = list(_manifest_tasks.values())
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            _manifest_tasks.clear()
+            _manifest_results.clear()
+        finally:
+            await core_db.close_db()
 
 
 app = FastAPI(
@@ -115,16 +120,31 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 
 @app.get("/health")
-async def health_check() -> Dict[str, Any]:
+@app.get("/ready")
+async def health_check():
     """
     Operational health check returning system and tracker status.
     """
     tracker = get_tracker()
     tracker_stats = tracker.get_stats() if tracker else {}
-    return {
-        "status": "ok",
-        "tracker": tracker_stats,
-    }
+    ready = False
+    try:
+        if core_db._connection is not None:
+            state = await asyncio.wait_for(core_db.get_collector_state(), timeout=2)
+            age = time.time() - state["completed_at"] if state else None
+            ready = bool(tracker.is_running() and state and state["healthy"] and
+                         0 <= age <= tracker.poll_interval + tracker.config.cycle_timeout_seconds)
+            if tracker.is_leader:
+                ready = ready and tracker._cycle_healthy and tracker._clock_trusted
+    except Exception:
+        logger.exception("Database readiness check failed")
+    return JSONResponse({"status": "ok" if ready else "degraded", "tracker": tracker_stats},
+                        status_code=200 if ready else 503)
+
+
+@app.get("/live")
+async def liveness():
+    return {"status": "ok"}
 
 
 @app.get("/api/v1/servers")
@@ -208,7 +228,14 @@ async def get_player_card_png(ckey: str) -> Response:
             content={"error": "Player not found", "ckey": ckey, "detail": "Target not found on monitored frequencies"},
         )
 
-    png_bytes = render_player_card(dossier)
+    async with _card_slots:
+        # Hold the slot until the thread finishes, even if the HTTP client leaves.
+        task = asyncio.create_task(asyncio.to_thread(render_player_card, dossier))
+        try:
+            png_bytes = await asyncio.shield(task)
+        except asyncio.CancelledError:
+            await task
+            raise
     _set_cached_card(norm_ckey, png_bytes)
 
     return Response(
@@ -226,15 +253,20 @@ async def search_player(request: Request, ckey: str = Form(default="")):
     Supports HX-Push-Url to update browser location bar dynamically.
     """
     norm_ckey = normalize_ckey(ckey.strip()) if ckey else ""
+    target_url = f"/player/{norm_ckey}" if norm_ckey else "/"
+    if request.headers.get("hx-request", "").lower() != "true":
+        return RedirectResponse(target_url, status_code=303)
     dossier = await core_db.get_player_dossier(norm_ckey) if norm_ckey else None
 
     if dossier is None:
-        return templates.TemplateResponse(
+        response = templates.TemplateResponse(
             request=request,
             name="partials/not_found.html",
             context={"ckey": ckey, "raw_query": ckey},
             status_code=200,
         )
+        response.headers["HX-Push-Url"] = target_url
+        return response
 
     response = templates.TemplateResponse(
         request=request,
@@ -280,10 +312,12 @@ async def player_page(request: Request, ckey: str):
             "request": request,
             "dossier": dossier,
             "target_ckey": ckey,
+            "ckey": ckey,
             "not_found": (dossier is None),
             "servers": servers,
             "tracker_stats": tracker_stats,
         },
+        status_code=404 if dossier is None else 200,
     )
 
 
@@ -343,27 +377,69 @@ async def fetch_server_manifest_htmx(request: Request, server_id: int):
 
     ip = server_details.get("ip")
     port = int(server_details.get("port") or 0)
-    manifest_data: Dict[str, Any] = {}
     query_error: Optional[str] = None
 
-    if ip and port > 0:
-        raw_resp = await query_topic(ip=ip, port=port, query="?manifest", timeout=3.0)
-        if isinstance(raw_resp, dict):
-            manifest_data = parse_manifest_response(raw_resp)
-            if manifest_data:
-                await core_db.upsert_server(
-                    identifier=server_details["identifier"],
-                    title=server_details["title"],
-                    ip=ip,
-                    port=port,
-                    is_active=server_details.get("is_active", True),
-                    manifest=manifest_data,
-                )
-                server_details = await core_db.get_server_details(server_id) or server_details
-            elif "raw" in raw_resp and "throttled" in str(raw_resp.get("raw", "")).lower():
-                query_error = "Server topic throttled (wait 3s and retry)."
-        elif raw_resp is None:
-            query_error = "Server did not respond to ?manifest topic query."
+    cache_key = (core_db._current_db_path, server_id)
+
+    async def refresh():
+        error = None
+        try:
+            if not ip or not 0 < port <= 65535:
+                raise ValueError("This server has a pager address; a direct Topic endpoint is unavailable.")
+            tracker = get_tracker()
+            trusted = any(c.get("identifier") == server_details["identifier"] or
+                          (c.get("ip") == ip and c.get("port") == port)
+                          for c in tracker.custom_servers)
+            # Share the collector's connection budget, including concurrent HTTP requests.
+            async with tracker.semaphore:
+                target = ip if trusted else await asyncio.wait_for(public_topic_ip(ip, port), tracker.socket_timeout)
+                raw = await query_topic(ip=target, port=port, query="?manifest", timeout=tracker.socket_timeout)
+            departments = {str(k).lower(): v for k, v in raw.items()
+                           if str(k).lower() in core_db._DEPT_LABELS} if isinstance(raw, dict) else {}
+            def valid_members(value):
+                if isinstance(value, str):
+                    return not value.strip() or "=" in value
+                if isinstance(value, dict):
+                    return all(isinstance(k, str) and isinstance(v, str) for k, v in value.items())
+                if isinstance(value, list):
+                    return all((isinstance(v, dict) and isinstance(v.get("name"), str) and v["name"].strip())
+                               or (isinstance(v, str) and "=" in v) for v in value)
+                return False
+            recognized = bool(departments) and all(valid_members(v) for v in departments.values())
+            if recognized:
+                manifest = parse_manifest_response(raw)
+                await core_db.save_manifest(server_id, manifest, time.time())
+            else:
+                error = "Manifest unavailable or unrecognized; displaying previously received data."
+        except Exception as exc:
+            logger.warning("Manifest query failed for server %s: %s", server_id, exc)
+            error = "Manifest query failed; displaying previously received data."
+        _manifest_results[cache_key] = (time.monotonic(), error)
+        _manifest_results.move_to_end(cache_key)
+        while len(_manifest_results) > 256:
+            _manifest_results.popitem(last=False)
+        return error
+
+    cached = _manifest_results.get(cache_key)
+    if cached is not None and time.monotonic() - cached[0] < 3:
+        query_error = cached[1]
+    else:
+        task = _manifest_tasks.get(cache_key)
+        if task is None:
+            if len(_manifest_tasks) >= 64:
+                return HTMLResponse("Manifest query capacity reached; retry shortly.", status_code=503)
+            task = asyncio.create_task(asyncio.wait_for(refresh(), 30))
+            _manifest_tasks[cache_key] = task
+            def on_done(done):
+                _manifest_tasks.pop(cache_key, None)
+                if not done.cancelled():
+                    done.exception()  # Observe failures even if every HTTP client disconnects.
+            task.add_done_callback(on_done)
+        try:
+            query_error = await asyncio.shield(task)
+        except asyncio.TimeoutError:
+            query_error = "Manifest query timed out; displaying previously received data."
+    server_details = await core_db.get_server_details(server_id) or server_details
 
     return templates.TemplateResponse(
         request=request,

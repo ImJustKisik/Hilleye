@@ -28,12 +28,12 @@ class TestHealthEndpoint:
     """Tests GET /health operational status."""
 
     @pytest.mark.asyncio
-    async def test_health_check_returns_ok_and_tracker_status(self, async_client):
+    async def test_health_check_reports_stopped_tracker(self, async_client):
         response = await async_client.get("/health")
-        assert response.status_code == 200
+        assert response.status_code == 503
 
         data = response.json()
-        assert data.get("status") == "ok"
+        assert data.get("status") == "degraded"
         assert "tracker" in data
         assert isinstance(data["tracker"], dict)
 
@@ -100,7 +100,7 @@ class TestHtmxSearchEndpoint:
         ckey = "honkmaster"
         await seed_player_data(ckey=ckey, server_title="Syndicate Outpost")
 
-        response = await async_client.post("/search", data={"ckey": ckey})
+        response = await async_client.post("/search", headers={"HX-Request": "true"}, data={"ckey": ckey})
         assert response.status_code == 200
         html = response.text
 
@@ -111,7 +111,7 @@ class TestHtmxSearchEndpoint:
 
     @pytest.mark.asyncio
     async def test_search_unknown_player_renders_not_found_partial(self, async_client):
-        response = await async_client.post("/search", data={"ckey": "ghost_target_999"})
+        response = await async_client.post("/search", headers={"HX-Request": "true"}, data={"ckey": "ghost_target_999"})
         assert response.status_code == 200  # HTMX partial renders 200, never 500
         html = response.text
 
@@ -121,7 +121,7 @@ class TestHtmxSearchEndpoint:
     @pytest.mark.asyncio
     async def test_search_empty_or_special_chars_does_not_crash(self, async_client):
         for bad_input in ["", "   ", "___", "!@#$"]:
-            response = await async_client.post("/search", data={"ckey": bad_input})
+            response = await async_client.post("/search", headers={"HX-Request": "true"}, data={"ckey": bad_input})
             # Must return 200 (not-found fragment) or 400, never 500
             assert response.status_code in (200, 400)
             if response.status_code == 200:
@@ -155,7 +155,7 @@ class TestPlayerPageAndDashboardRoutes:
     @pytest.mark.asyncio
     async def test_player_page_unknown_target_renders_not_found(self, async_client):
         response = await async_client.get("/player/unknown_infiltrator_007")
-        assert response.status_code == 200
+        assert response.status_code == 404
         html = response.text
 
         assert "NO RECORD FOUND" in html or "NOT DETECTED" in html.upper()

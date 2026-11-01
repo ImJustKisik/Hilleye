@@ -79,8 +79,7 @@ class TestAdversarialCkeyNormalization:
     def test_normalize_ckey_massive_string(self):
         huge = "A" * 50_000 + "_!@#" + "9" * 50_000
         result = normalize_ckey(huge)
-        assert len(result) == 100_000
-        assert result == "a" * 50_000 + "9" * 50_000
+        assert result == ""  # Unbounded remote identifiers must never reach storage.
 
     @pytest.mark.asyncio
     async def test_update_player_sessions_with_only_invalid_ckeys(self, test_db):
@@ -501,6 +500,5 @@ class TestFormattingAndTrackerEdgeCases:
         assert stats["poll_count"] == 1
         # Check that player '5' was not created as a player record
         dossier = await get_player_dossier("5")
-        # If 'players' was parsed as string '5', it would create a player '5'
-        # Let's verify whether it handled it safely
+        assert dossier is None
 

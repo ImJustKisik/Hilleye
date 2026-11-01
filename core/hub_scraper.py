@@ -6,18 +6,22 @@ or JSON errors. Merges and deduplicates user-defined custom servers from configu
 """
 
 import html
+import asyncio
 import json
 import logging
 import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set, Tuple
 import httpx
+from core.byond_topic import bounded_int, normalize_ckey
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_HUB_URL = "http://www.byond.com/games/SpaceStation13?format=json"
 DEFAULT_TEXT_URL = "http://www.byond.com/games/Exadv1/SpaceStation13?format=text"
 USER_AGENT = "Hilleye/1.0 (BYOND)"
+MAX_HUB_BYTES = 4 * 1024 * 1024
+MAX_HUB_SERVERS = 2000
 
 
 @dataclass
@@ -30,6 +34,18 @@ class ServerInfo:
     port: int
     players: List[str] = field(default_factory=list)
     player_count: int = 0
+    roster_known: bool = False
+    from_hub: bool = True
+    trusted: bool = False
+    count_known: bool = True
+    roster_complete: bool = True
+
+
+class HubResult(list):
+    def __init__(self, servers, healthy=True, errors=0):
+        super().__init__(servers)
+        self.healthy = healthy
+        self.errors = errors
 
 
 HubServer = ServerInfo
@@ -75,6 +91,8 @@ def _parse_url_address(url_str: str) -> Tuple[str, str, int]:
       - Trailing slashes: 'byond://1.2.3.4:1234/'
     """
     raw = url_str.strip()
+    if len(raw) > 512 or ("://" in raw and not raw.startswith("byond://")):
+        raise ValueError("Invalid BYOND URL")
     addr = raw[8:] if raw.startswith("byond://") else raw
     addr = addr.rstrip("/")
 
@@ -86,7 +104,9 @@ def _parse_url_address(url_str: str) -> Tuple[str, str, int]:
         port = 0
         if rest.startswith(":"):
             port_s = rest[1:]
-            port = int(port_s) if port_s.isdigit() else 0
+            port = int(port_s) if port_s.isdigit() and len(port_s) <= 5 else 0
+        if port > 65535:
+            raise ValueError("Invalid port")
         identifier = f"byond://[{ip}]:{port}" if port > 0 else f"byond://[{ip}]"
         return identifier, ip, port
 
@@ -98,7 +118,9 @@ def _parse_url_address(url_str: str) -> Tuple[str, str, int]:
             identifier = f"byond://[{ip}]"
         else:
             ip, _, port_s = addr.partition(":")
-            port = int(port_s) if port_s.isdigit() else 0
+            port = int(port_s) if port_s.isdigit() and len(port_s) <= 5 else 0
+            if port > 65535:
+                raise ValueError("Invalid port")
             identifier = f"byond://{ip}:{port}" if port > 0 else f"byond://{ip}"
     else:
         ip = addr
@@ -116,13 +138,14 @@ def parse_hub_text(text: str) -> List[ServerInfo]:
     and 'players = list(...)' player lists.
     """
     servers: List[ServerInfo] = []
+    errors = 0
     if not text:
         return servers
 
     # Split by world/ headers
     blocks = re.split(r"(?:^|\n)(?=world/\w+)", text)
 
-    for block in blocks:
+    for block in blocks[:MAX_HUB_SERVERS + 1]:
         if not block.strip().startswith("world/"):
             continue
 
@@ -131,7 +154,12 @@ def parse_hub_text(text: str) -> List[ServerInfo]:
             continue
 
         raw_url = url_match.group(1).strip()
-        identifier, ip, port = _parse_url_address(raw_url)
+        try:
+            identifier, ip, port = _parse_url_address(raw_url)
+        except ValueError:
+            logger.warning("Skipping invalid Hub endpoint")
+            errors += 1
+            continue
 
         status_match = re.search(r'status\s*=\s*"((?:[^"\\]|\\.)*)"', block, re.DOTALL)
         raw_status = status_match.group(1) if status_match else ""
@@ -140,17 +168,26 @@ def parse_hub_text(text: str) -> List[ServerInfo]:
         # Parse player list or scalar player count
         players: List[str] = []
         player_count = 0
+        count_val = None
+        list_complete = True
 
         list_match = re.search(r"players\s*=\s*list\((.*?)\)", block, re.DOTALL)
         if list_match:
             raw_list = list_match.group(1)
             found = re.findall(r'"([^"]*)"', raw_list)
-            players = [p.strip() for p in found if p.strip()]
+            players = [p.strip() for p in found if normalize_ckey(p)]
+            remaining = re.sub(r'"[^"]*"', "", raw_list)
+            list_complete = not remaining.strip(" ,\t\r\n") and all(len(p) <= 128 for p in found)
+            if not list_complete:
+                errors += 1
             player_count = len(players)
         else:
             count_match = re.search(r"players\s*=\s*(\d+)", block)
             if count_match:
-                player_count = int(count_match.group(1))
+                count_val = bounded_int(count_match.group(1))
+                player_count = count_val or 0
+                if count_val is None:
+                    errors += 1
 
         servers.append(
             ServerInfo(
@@ -160,10 +197,14 @@ def parse_hub_text(text: str) -> List[ServerInfo]:
                 port=port,
                 players=players,
                 player_count=player_count,
+                roster_known=list_match is not None or count_val == 0,
+                count_known=(list_match is not None and list_complete) or count_val is not None,
+                roster_complete=list_complete,
             )
         )
 
-    return servers
+    truncated = sum(block.strip().startswith("world/") for block in blocks) > MAX_HUB_SERVERS
+    return HubResult(servers, errors=errors + int(truncated))
 
 
 def parse_hub_json(data: Any) -> List[ServerInfo]:
@@ -172,6 +213,7 @@ def parse_hub_json(data: Any) -> List[ServerInfo]:
     Supports list-of-objects and dict-of-objects formats.
     """
     servers: List[ServerInfo] = []
+    errors = 0
     if not data:
         return servers
 
@@ -183,15 +225,21 @@ def parse_hub_json(data: Any) -> List[ServerInfo]:
             if isinstance(v, dict):
                 entries.append(v)
 
-    for entry in entries:
+    for entry in entries[:MAX_HUB_SERVERS]:
         raw_url_val = entry.get("url")
         if not raw_url_val:
             continue
-        raw_url = str(raw_url_val).strip()
+        if not isinstance(raw_url_val, str):
+            continue
+        raw_url = raw_url_val.strip()
         if not raw_url or raw_url.lower() == "none":
             continue
 
-        identifier, ip, port = _parse_url_address(raw_url)
+        try:
+            identifier, ip, port = _parse_url_address(raw_url)
+        except ValueError:
+            logger.warning("Skipping invalid Hub endpoint")
+            continue
 
         raw_status = entry.get("status") or entry.get("title") or ""
         title = clean_server_title(str(raw_status))
@@ -201,12 +249,24 @@ def parse_hub_json(data: Any) -> List[ServerInfo]:
 
         raw_players = entry.get("players")
         if isinstance(raw_players, list):
-            players = [str(p).strip() for p in raw_players if str(p).strip()]
+            players = [p.strip() for p in raw_players if normalize_ckey(p)]
             player_count = len(players)
+            if any(not isinstance(p, str) or len(p) > 128 for p in raw_players):
+                logger.warning("Invalid Hub player list elements ignored")
+                errors += 1
         elif isinstance(raw_players, (int, float)):
-            player_count = int(raw_players)
+            count = bounded_int(raw_players)
+            if count is None:
+                logger.warning("Skipping invalid Hub player count")
+                errors += 1
+                continue
+            player_count = count
         elif "player_count" in entry and isinstance(entry["player_count"], (int, float)):
-            player_count = int(entry["player_count"])
+            count = bounded_int(entry["player_count"])
+            if count is None:
+                errors += 1
+                continue
+            player_count = count
 
         servers.append(
             ServerInfo(
@@ -216,10 +276,13 @@ def parse_hub_json(data: Any) -> List[ServerInfo]:
                 port=port,
                 players=players,
                 player_count=player_count,
+                roster_known=isinstance(raw_players, list) or bounded_int(raw_players) == 0,
+                count_known=(isinstance(raw_players, list) and all(isinstance(p, str) and len(p) <= 128 for p in raw_players)) or bounded_int(raw_players) is not None or bounded_int(entry.get("player_count")) is not None,
+                roster_complete=not isinstance(raw_players, list) or all(isinstance(p, str) and len(p) <= 128 for p in raw_players),
             )
         )
 
-    return servers
+    return HubResult(servers, errors=errors + int(len(entries) > MAX_HUB_SERVERS))
 
 
 def merge_custom_servers(
@@ -314,6 +377,11 @@ def merge_custom_servers(
                 port=port,
                 players=players,
                 player_count=player_count,
+                roster_known=existing.roster_known if existing else False,
+                from_hub=existing is not None,
+                trusted=True,
+                count_known=existing.count_known if existing else False,
+                roster_complete=existing.roster_complete if existing else True,
             )
             merged.append(srv)
             seen_identifiers.add(identifier)
@@ -360,53 +428,56 @@ async def fetch_hub_servers(
     Returns:
         Deduplicated list of ServerInfo objects.
     """
-    headers = {"User-Agent": USER_AGENT}
+    headers = {"User-Agent": USER_AGENT, "Accept-Encoding": "identity"}
     servers: List[ServerInfo] = []
+    healthy = False
+    errors = 0
 
-    # 1. Attempt JSON Hub
+    async def read_body(url):
+        async def receive():
+            async with client.stream("GET", url, headers=headers, follow_redirects=True, timeout=timeout) as response:
+                response.raise_for_status()
+                if response.headers.get("Content-Encoding", "identity").lower() != "identity":
+                    raise ValueError("Compressed Hub responses are not accepted")
+                body = bytearray()
+                async for chunk in response.aiter_bytes(chunk_size=65536):
+                    body.extend(chunk)
+                    if len(body) > MAX_HUB_BYTES:
+                        raise ValueError("Hub response exceeds size limit")
+                return body.decode("utf-8", errors="replace")
+        return await asyncio.wait_for(receive(), timeout=timeout)
+
     try:
-        response = await client.get(
-            hub_url, headers=headers, follow_redirects=True, timeout=timeout
-        )
-        body = response.text.strip()
-        lower_body = body[:200].lower()
-
-        # Check if the response is actually HTML instead of JSON
-        if (
-            response.status_code != 200
-            or "<html" in lower_body
-            or "<!doctype" in lower_body
-        ):
-            raise ValueError(f"Received HTML or status {response.status_code} from JSON hub")
-
-        parsed_json = response.json()
-        servers = parse_hub_json(parsed_json)
-        # If JSON returned error dict or empty list, trigger text fallback
+        body = await read_body(hub_url)
+        if "<html" in body[:200].lower() or "<!doctype" in body[:200].lower():
+            raise ValueError("Hub returned HTML")
+        # The configured primary endpoint may itself use the BYOND text format.
+        if body.lstrip().startswith("world/"):
+            servers = parse_hub_text(body)
+        else:
+            parsed = json.loads(body)
+            servers = parse_hub_json(parsed)
         if not servers:
-            raise ValueError("No valid servers parsed from JSON hub")
-        logger.debug("Successfully scraped %d servers from JSON hub", len(servers))
-
-    except Exception as json_err:
-        logger.info(
-            "JSON hub fetch failed (%s). Falling back to text hub scraper at %s",
-            json_err,
-            fallback_url,
-        )
-        # 2. Fallback to Text Hub
+            raise ValueError("No valid servers parsed from primary Hub")
+        healthy = True
+        errors += getattr(servers, "errors", 0)
+    except Exception as exc:
+        errors += 1
+        logger.info("Primary Hub failed (%s); trying text fallback", exc)
         try:
-            text_response = await client.get(
-                fallback_url, headers=headers, follow_redirects=True, timeout=timeout
-            )
-            if text_response.status_code == 200:
-                servers = parse_hub_text(text_response.text)
-                logger.debug("Successfully scraped %d servers from text hub fallback", len(servers))
-            else:
-                logger.warning(
-                    "Text hub fallback returned HTTP status %s", text_response.status_code
-                )
-        except Exception as text_err:
-            logger.error("Text hub fallback also failed: %s", text_err)
+            body = await read_body(fallback_url)
+            servers = parse_hub_text(body)
+            healthy = bool(servers)
+            errors += getattr(servers, "errors", 0)
+            if not healthy:
+                errors += 1
+                logger.warning("Text Hub returned no usable records")
+        except Exception as exc:
+            errors += 1
+            logger.warning("Text Hub failed: %s", exc)
 
-    # 3. Merge custom servers from configuration
-    final_servers = merge_custom_servers(servers, custom_servers)
-    return final_servers
+    if len(servers) > MAX_HUB_SERVERS:
+        errors += 1
+        healthy = False
+        servers = servers[:MAX_HUB_SERVERS]
+    return HubResult(merge_custom_servers(servers, custom_servers), healthy=healthy, errors=errors)

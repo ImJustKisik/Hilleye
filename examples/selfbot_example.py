@@ -75,6 +75,7 @@ class WhitelistManager:
     def __init__(self, path: Path = WHITELIST_PATH) -> None:
         self.path = Path(path)
         self.allowed_ids: Set[int] = set()
+        self.env_ids: Set[int] = set()
         self.load()
 
         # Also load optional comma-separated IDs from HILLEYE_WHITELIST_IDS env var
@@ -82,7 +83,7 @@ class WhitelistManager:
         for part in env_ids.split(","):
             uid = extract_discord_user_id(part)
             if uid is not None:
-                self.allowed_ids.add(uid)
+                self.env_ids.add(uid)
 
     def load(self) -> Set[int]:
         """Loads allowed Discord user IDs from JSON file if present."""
@@ -125,7 +126,7 @@ class WhitelistManager:
         if owner_id is not None and int(author_id) == int(owner_id):
             return True
         self.load()
-        return int(author_id) in self.allowed_ids
+        return int(author_id) in (self.allowed_ids | self.env_ids)
 
 
 def normalize_ckey(raw: str) -> str:
@@ -340,7 +341,7 @@ async def status_command(ctx: commands.Context) -> None:
         timeout = aiohttp.ClientTimeout(total=5.0)
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.get(url) as resp:
-                if resp.status != 200:
+                if resp.status not in (200, 503):
                     await ctx.send(f"Hilleye health check HTTP {resp.status}.")
                     return
                 data = await resp.json()
@@ -351,8 +352,8 @@ async def status_command(ctx: commands.Context) -> None:
     tracker = data.get("tracker", {})
     await ctx.send(
         f"**Hilleye Status:** `{data.get('status', 'unknown').upper()}` | "
-        f"**Polls:** `{tracker.get('polls_completed', 0)}` | "
-        f"**Tracked Servers:** `{tracker.get('last_servers_count', 0)}`"
+        f"**Polls:** `{tracker.get('poll_count', 0)}` | "
+        f"**Tracked Servers:** `{tracker.get('servers_tracked', 0)}`"
     )
 
 

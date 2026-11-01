@@ -8,6 +8,8 @@ binary communication (0x00 0x83 framing, 16-bit big-endian payload length,
 import asyncio
 import json
 import logging
+import ipaddress
+import math
 import re
 import socket
 import struct
@@ -27,9 +29,59 @@ _DURATION_COLON_RE = re.compile(r"^(\d+):(\d{1,2})(?::(\d{1,2}))?$")
 
 def normalize_ckey(raw: Optional[str]) -> str:
     """Normalize a BYOND key/ckey by stripping punctuation and lowercasing."""
-    if not raw:
+    if not isinstance(raw, str) or not raw or len(raw) > 128:
         return ""
-    return re.sub(r"[^a-z0-9]", "", str(raw).lower())
+    return re.sub(r"[^a-z0-9]", "", raw.lower())
+
+
+def bounded_int(raw: Any, maximum: int = 1_000_000_000) -> Optional[int]:
+    """Parse finite nonnegative telemetry without propagating malformed fields."""
+    if isinstance(raw, (bool, list, dict)) or raw is None:
+        return None
+    if isinstance(raw, str) and len(raw) > 64:
+        return None
+    try:
+        value = float(raw)
+        return int(value) if math.isfinite(value) and 0 <= value <= maximum else None
+    except (ValueError, TypeError, OverflowError):
+        return None
+
+
+class PlayerList(list):
+    def __init__(self, values):
+        super().__init__(p for p in values if normalize_ckey(p))
+        self.complete = all(isinstance(p, str) and len(p) <= 128 for p in values)
+
+
+def extract_player_list(data: Dict[str, Any]) -> Optional[List[str]]:
+    """None denotes unknown; [] denotes an explicitly observed empty roster."""
+    data = {str(k).lower(): v for k, v in data.items()}
+    for key in ("playerlist", "players_list", "player_list", "list", "players"):
+        if key not in data:
+            continue
+        raw = data[key]
+        if isinstance(raw, list):
+            return PlayerList(raw)
+        if isinstance(raw, str) and (key != "players" or "," in raw):
+            return PlayerList(_split_byond_sublist(raw))
+    legacy = [(int(k[6:]), v) for k, v in data.items()
+              if _LEGACY_PLAYER_KEY_RE.fullmatch(k) and len(k[6:]) <= 6 and normalize_ckey(v)]
+    if legacy:
+        return [v for _, v in sorted(legacy)]
+    if bounded_int(data.get("players")) == 0 or bounded_int(data.get("player_count")) == 0:
+        return []
+    return None
+
+
+async def public_topic_ip(host: str, port: int) -> str:
+    """Resolve untrusted Hub targets once, reject special networks, pin the TCP IP."""
+    if not host or not 1 <= port <= 65535:
+        raise ValueError("Invalid Topic endpoint")
+    addresses = await asyncio.get_running_loop().getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    ips = {entry[4][0] for entry in addresses}
+    if not ips or any(not ipaddress.ip_address(ip).is_global for ip in ips):
+        raise ValueError("Hub Topic endpoint resolves to a private or special address")
+    return sorted(ips)[0]
 
 
 def parse_round_duration(raw: Any) -> Optional[int]:
@@ -44,10 +96,10 @@ def parse_round_duration(raw: Any) -> Optional[int]:
     if raw is None or isinstance(raw, (list, dict, bool)):
         return None
     if isinstance(raw, (int, float)):
-        return max(0, int(raw))
+        return bounded_int(raw)
 
     s = str(raw).strip()
-    if not s:
+    if not s or len(s) > 64:
         return None
 
     # Check "HH:MM" or "HH:MM:SS" format (Baystation / SierraBay roundduration2text() outputs "hh:mm")
@@ -57,9 +109,9 @@ def parse_round_duration(raw: Any) -> Optional[int]:
         part2 = int(colon_match.group(2))
         part3 = colon_match.group(3)
         if part3 is not None:
-            return max(0, part1 * 3600 + part2 * 60 + int(part3))
+            return bounded_int(part1 * 3600 + part2 * 60 + int(part3))
         # Baystation roundduration2text() is HH:MM (hours:minutes)
-        return max(0, part1 * 3600 + part2 * 60)
+        return bounded_int(part1 * 3600 + part2 * 60)
 
     # Check human-readable "1h 24m" or "45m"
     hm_match = re.match(r"^(?:(\d+)\s*h)?\s*(?:(\d+)\s*m)?\s*(?:(\d+)\s*s)?$", s, re.IGNORECASE)
@@ -67,11 +119,11 @@ def parse_round_duration(raw: Any) -> Optional[int]:
         h = int(hm_match.group(1) or 0)
         m = int(hm_match.group(2) or 0)
         sec = int(hm_match.group(3) or 0)
-        return max(0, h * 3600 + m * 60 + sec)
+        return bounded_int(h * 3600 + m * 60 + sec)
 
     try:
-        return max(0, int(float(s)))
-    except (ValueError, TypeError):
+        return bounded_int(s)
+    except (ValueError, TypeError, OverflowError):
         return None
 
 
@@ -84,7 +136,7 @@ def _split_byond_sublist(val: str) -> List[str]:
     if not v:
         return []
     # Nested list2params (e.g. status=2 playerlist="Alice&Bob&Charlie" or URL-encoded)
-    if "&" in v and "," not in v:
+    if ("&" in v or "=" in v) and "," not in v:
         items: List[str] = []
         for token in v.split("&"):
             token = urllib.parse.unquote_plus(token).strip()
@@ -335,7 +387,8 @@ def parse_topic_query_string(raw: str) -> Union[Dict[str, Any], List[str], str]:
         trimmed.startswith("[") and trimmed.endswith("]")
     ):
         try:
-            return json.loads(trimmed)
+            decoded = json.loads(trimmed)
+            return {str(k).lower(): v for k, v in decoded.items()} if isinstance(decoded, dict) else decoded
         except Exception:
             pass
 
@@ -348,12 +401,12 @@ def parse_topic_query_string(raw: str) -> Union[Dict[str, Any], List[str], str]:
         legacy_players: List[Tuple[int, str]] = []
         pairs = urllib.parse.parse_qsl(clean_str, keep_blank_values=True)
         for key, val in pairs:
-            k = key.strip()
+            k = key.strip().lower()
             v = val.strip()
             k_low = k.lower()
 
             legacy_match = _LEGACY_PLAYER_KEY_RE.match(k)
-            if legacy_match and v:
+            if legacy_match and len(legacy_match.group(1)) <= 6 and v:
                 legacy_players.append((int(legacy_match.group(1)), v))
 
             if k_low in ("playerlist", "players_list", "player_list", "list"):
@@ -361,14 +414,14 @@ def parse_topic_query_string(raw: str) -> Union[Dict[str, Any], List[str], str]:
             elif k_low == "adminlist":
                 result[k] = parse_adminlist_value(v)
             elif k_low in ("players", "player_count", "version", "round_duration", "admins", "active_players"):
-                if v.isdigit():
+                if v.isdigit() and len(v) <= 12:
                     result[k] = int(v)
                 elif "," in v:
                     result[k] = [p.strip() for p in v.split(",") if p.strip()]
                 else:
                     result[k] = v
             else:
-                if v.isdigit():
+                if v.isdigit() and len(v) <= 12:
                     result[k] = int(v)
                 elif "," in v and not v.startswith("{"):
                     result[k] = [p.strip() for p in v.split(",") if p.strip()]
@@ -376,7 +429,7 @@ def parse_topic_query_string(raw: str) -> Union[Dict[str, Any], List[str], str]:
                     result[k] = v
 
         # Synthesize playerlist from Baystation / SierraBay / TG legacy player0..playerN keys
-        if legacy_players and not result.get("playerlist"):
+        if legacy_players and "playerlist" not in result:
             legacy_players.sort(key=lambda item: item[0])
             result["playerlist"] = [p_name for _, p_name in legacy_players if p_name]
 
@@ -454,18 +507,18 @@ async def query_topic(
         finally:
             try:
                 writer.close()
-                await writer.wait_closed()
+                await asyncio.wait_for(writer.wait_closed(), timeout=0.5)
             except Exception:
                 pass
 
     async def _gated_query() -> Optional[bytes]:
         if semaphore is not None:
             async with semaphore:
-                return await _execute_query()
-        return await _execute_query()
+                return await asyncio.wait_for(_execute_query(), timeout=timeout)
+        return await asyncio.wait_for(_execute_query(), timeout=timeout)
 
     try:
-        raw_bytes = await asyncio.wait_for(_gated_query(), timeout=timeout)
+        raw_bytes = await _gated_query()
     except (
         asyncio.TimeoutError,
         ConnectionRefusedError,

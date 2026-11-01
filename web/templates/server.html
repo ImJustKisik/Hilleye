@@ -47,11 +47,11 @@
             <span class="status-state">{% if server.is_active %}Active{% else %}Inactive{% endif %}</span>
           </div>
           <div class="status-detail">
-            <span>Last response: <span class="mono-val">{{ server.last_seen }} UTC</span></span>
+            <span>Last observation: <span class="mono-val">{{ server.last_seen }} UTC</span></span>
           </div>
         </div>
 
-        <a href="{{ 'byond://' ~ server.ip ~ ':' ~ server.port if (server.ip and server.port) else server.identifier }}"
+        <a href="{{ server.connect_uri }}"
            class="command-submit connect-btn"
            title="Direct connect via BYOND client">
           <span>Connect ({{ server.ip }}:{{ server.port }})</span>
@@ -59,11 +59,19 @@
       </div>
     </header>
 
+    {% if not server.topic_available %}
+    <div class="manifest-notice">Hub discovery address only. Direct Topic metrics require a configured host and port.</div>
+    {% endif %}
+    <div class="manifest-notice">Telemetry last received: {{ server.telemetry_observed_at or 'Unknown' }}{% if server.telemetry_observed_at %} UTC{% endif %}.
+      Roster last received: {{ server.roster_observed_at or 'Unknown' }}{% if server.roster_observed_at %} UTC{% endif %}.
+      {% if server.telemetry_stale %}Telemetry may be stale.{% endif %}
+    </div>
+
     <!-- 2. Current Round Parameters (6-Cell Grid) -->
     <div class="telemetry-strip server-metrics-grid" aria-label="Current Round Parameters">
       <div class="telemetry-cell">
         <div class="cell-label">Current Players</div>
-        <div class="cell-value">{{ server.current_players }}</div>
+        <div class="cell-value">{{ server.current_players if server.current_players is not none else 'Unknown' }}</div>
         <div class="cell-sub mono-val">
           {% if server.active_players is not none %}
           {{ server.active_players }} in round &bull; {{ server.online_players|length }} tracked
@@ -101,7 +109,7 @@
 
       <div class="telemetry-cell">
         <div class="cell-label">Admins</div>
-        <div class="cell-value">{{ server.admins_count }}</div>
+        <div class="cell-value">{{ server.admins_count if server.admins_count is not none else 'Unknown' }}</div>
         <div class="cell-sub">
           {% if server.admin_list %}
           {% for adm in server.admin_list[:3] %}{{ adm.key }} ({{ adm.rank }}){% if not loop.last %}, {% endif %}{% endfor %}
@@ -141,8 +149,11 @@
           <line x1="10" y1="16" x2="590" y2="16" class="sparkline-grid-line" />
           <line x1="10" y1="60" x2="590" y2="60" class="sparkline-grid-line" />
           <line x1="10" y1="104" x2="590" y2="104" class="sparkline-grid-line" />
-          <polygon points="{{ server.chart_24h.area_points_str }}" class="sparkline-area" />
-          <polyline points="{{ server.chart_24h.points_str }}" class="sparkline-line" fill="none" />
+          {% for segment in server.chart_24h.segments %}
+          <polygon points="{{ segment.area_points_str }}" class="sparkline-area" />
+          <polyline points="{{ segment.points_str }}" class="sparkline-line" fill="none" />
+          {% if segment.single %}<circle cx="{{ segment.x }}" cy="{{ segment.y }}" r="2" class="sparkline-line" />{% endif %}
+          {% endfor %}
         </svg>
         <div class="sparkline-axis mono-val">
           <span>{{ server.chart_24h.start_label or '24h ago' }} UTC</span>

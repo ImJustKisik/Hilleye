@@ -17,7 +17,7 @@ class TestConfigLoading:
         assert cfg.topic_concurrency == 30
         assert cfg.topic_semaphore_limit == 30
         assert cfg.db_path == "tracker.db"
-        assert "format=json" in cfg.hub_url
+        assert "format=text" in cfg.hub_url
         assert "format=text" in cfg.hub_text_url
         assert len(cfg.custom_servers) >= 1
 
@@ -33,11 +33,11 @@ class TestConfigLoading:
         assert cfg.poll_interval == 120
         assert cfg.grace_period_seconds == 300
 
-    def test_load_corrupted_json_returns_defaults(self, tmp_path: Path):
+    def test_load_corrupted_json_reports_error(self, tmp_path: Path):
         bad_file = tmp_path / "corrupted.json"
         bad_file.write_text("{invalid json", encoding="utf-8")
-        cfg = load_config(bad_file)
-        assert cfg.poll_interval == 120
+        with pytest.raises(ValueError, match="Invalid configuration"):
+            load_config(bad_file)
 
     def test_alias_synchronization(self):
         cfg1 = AppConfig(poll_interval=60, socket_timeout=5.0)

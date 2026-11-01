@@ -214,13 +214,13 @@ class TestPlayerDossierAggregation:
 
         # Create session on Tau Ceti (3600 seconds = 1 hour)
         await update_player_sessions(s1, {ckey}, now_ts=1000.0)
-        await update_player_sessions(s1, {ckey}, now_ts=4600.0)
+        await update_player_sessions(s1, {ckey}, now_ts=4600.0, grace_period_seconds=86400)
         # Close s1 session
         await update_player_sessions(s1, set(), now_ts=5000.0)
 
         # Create active session on White Dream (1800 seconds = 0.5 hour)
         await update_player_sessions(s2, {ckey}, now_ts=6000.0)
-        await update_player_sessions(s2, {ckey}, now_ts=7800.0)
+        await update_player_sessions(s2, {ckey}, now_ts=7800.0, grace_period_seconds=86400)
 
         dossier = await get_player_dossier(ckey)
         assert dossier is not None

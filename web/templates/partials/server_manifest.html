@@ -1,4 +1,7 @@
 <div class="manifest-partial">
+  {% if server and server.manifest_observed_at %}
+  <div class="manifest-notice">Last received: {{ server.manifest_observed_at }} UTC{% if query_error %} (stale){% endif %}</div>
+  {% endif %}
   {% if query_error %}
   <div class="manifest-notice">{{ query_error }}</div>
   {% endif %}

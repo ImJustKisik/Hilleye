@@ -6,6 +6,8 @@ grace period state machine and tactical player dossier aggregations.
 """
 
 import asyncio
+from contextvars import ContextVar
+from functools import wraps
 from datetime import datetime, timezone
 import json
 import logging
@@ -23,6 +25,7 @@ PRAGMA journal_mode = WAL;
 PRAGMA synchronous = NORMAL;
 PRAGMA foreign_keys = ON;
 PRAGMA busy_timeout = 5000;
+BEGIN IMMEDIATE;
 
 -- Tracked BYOND Servers
 CREATE TABLE IF NOT EXISTS servers (
@@ -79,12 +82,84 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE INDEX IF NOT EXISTS idx_sessions_ckey ON sessions(ckey);
 CREATE INDEX IF NOT EXISTS idx_sessions_active ON sessions(ended_at) WHERE ended_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_sessions_server ON sessions(server_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_online ON sessions(server_id,started_at) WHERE ended_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_snapshots_server_time ON server_snapshots(server_id, timestamp);
+CREATE INDEX IF NOT EXISTS idx_snapshots_time ON server_snapshots(timestamp);
+
+CREATE TABLE IF NOT EXISTS collector_state (
+    id INTEGER PRIMARY KEY CHECK (id=1),
+    completed_at REAL NOT NULL,
+    healthy INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS server_player_totals (
+    server_id INTEGER NOT NULL REFERENCES servers(id),
+    ckey TEXT NOT NULL REFERENCES players(ckey),
+    total_seconds INTEGER NOT NULL,
+    sessions_count INTEGER NOT NULL,
+    last_seen REAL,
+    PRIMARY KEY(server_id,ckey)
+);
+CREATE INDEX IF NOT EXISTS idx_totals_rank ON server_player_totals(server_id,total_seconds DESC,ckey);
+CREATE INDEX IF NOT EXISTS idx_sessions_player_seen ON sessions(server_id,ckey,last_seen_at);
+CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY);
 """
 
 _current_db_path: str = "tracker.db"
 _connection: Optional[aiosqlite.Connection] = None
 _db_lock = asyncio.Lock()
+_operation_lock = asyncio.Lock()
+_read_slots = asyncio.Semaphore(8)
+_operation_connection: ContextVar[Optional[aiosqlite.Connection]] = ContextVar("db_operation", default=None)
+
+
+def _write_transaction(func):
+    @wraps(func)
+    async def wrapped(*args, **kwargs):
+        if _operation_connection.get() is not None:
+            return await func(*args, **kwargs)
+        async with _operation_lock:
+            conn = await get_connection()
+            token = _operation_connection.set(conn)
+            try:
+                await conn.execute("BEGIN IMMEDIATE")
+                result = await func(*args, **kwargs)
+                await conn.commit()
+                return result
+            except BaseException:
+                await asyncio.shield(conn.rollback())
+                raise
+            finally:
+                _operation_connection.reset(token)
+    return wrapped
+
+
+def _read_snapshot(func):
+    @wraps(func)
+    async def wrapped(*args, **kwargs):
+        if _operation_connection.get() is not None:
+            return await func(*args, **kwargs)
+        if _current_db_path == ":memory:":
+            async with _operation_lock:
+                conn = await get_connection()
+                token = _operation_connection.set(conn)
+                try:
+                    return await func(*args, **kwargs)
+                finally:
+                    _operation_connection.reset(token)
+        async with _read_slots:
+            # Reads have their own WAL snapshot and never observe uncommitted writes.
+            await get_connection()
+            async with aiosqlite.connect(_current_db_path) as conn:
+                conn.row_factory = aiosqlite.Row
+                await conn.execute("PRAGMA query_only=ON")
+                await conn.execute("BEGIN")
+                token = _operation_connection.set(conn)
+                try:
+                    return await func(*args, **kwargs)
+                finally:
+                    _operation_connection.reset(token)
+    return wrapped
 
 
 def normalize_ckey(raw: Optional[str]) -> str:
@@ -92,7 +167,7 @@ def normalize_ckey(raw: Optional[str]) -> str:
     Normalizes a BYOND player key (ckey).
     Strips all characters except lowercase ASCII letters and numbers [a-z0-9].
     """
-    if not raw or not isinstance(raw, str):
+    if not raw or not isinstance(raw, str) or len(raw) > 128:
         return ""
     return re.sub(r"[^a-z0-9]", "", raw.lower())
 
@@ -146,6 +221,9 @@ _SERVER_MIGRATION_COLUMNS: List[Tuple[str, str]] = [
     ("respawn_allowed", "BOOLEAN"),
     ("admin_list_json", "TEXT"),
     ("manifest_json", "TEXT"),
+    ("roster_observed_at", "REAL"),
+    ("telemetry_observed_at", "REAL"),
+    ("manifest_observed_at", "REAL"),
 ]
 
 _DEPT_LABELS: Dict[str, str] = {
@@ -186,7 +264,56 @@ async def _migrate_schema(conn: aiosqlite.Connection) -> None:
                 try:
                     await cur.execute(f"ALTER TABLE servers ADD COLUMN {col_name} {col_def};")
                 except Exception as exc:
-                    logger.debug("Column migration warning for %s: %s", col_name, exc)
+                    await cur.execute("PRAGMA table_info(servers)")
+                    if col_name not in {row[1] for row in await cur.fetchall()}:
+                        raise RuntimeError(f"Cannot migrate servers.{col_name}") from exc
+
+
+async def _open_database(path: str) -> aiosqlite.Connection:
+    conn = aiosqlite.connect(path)
+    try:
+        await conn
+        conn.row_factory = aiosqlite.Row
+        await conn.executescript(SCHEMA_SQL)
+        await _migrate_schema(conn)
+        # Repair duplicate open records without removing any historical row.
+        await conn.execute("""
+            UPDATE sessions SET ended_at=last_seen_at
+            WHERE ended_at IS NULL AND id NOT IN (
+                SELECT MAX(id) FROM sessions WHERE ended_at IS NULL GROUP BY server_id,ckey
+            )
+        """)
+        await conn.execute("""CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_one_open
+                            ON sessions(server_id,ckey) WHERE ended_at IS NULL""")
+        await _initialize_aggregates(conn)
+        await conn.commit()
+        return conn
+    except BaseException:
+        await asyncio.shield(conn.close())
+        raise
+
+
+async def _initialize_aggregates(conn):
+    row = await (await conn.execute("SELECT version FROM schema_migrations WHERE version=1")).fetchone()
+    if row is None:
+        await conn.execute("DELETE FROM server_player_totals")
+        await conn.execute("""INSERT INTO server_player_totals
+            SELECT server_id,ckey,COALESCE(SUM(duration_seconds),0),COUNT(*),MAX(last_seen_at)
+            FROM sessions GROUP BY server_id,ckey""")
+        await conn.execute("INSERT INTO schema_migrations VALUES (1)")
+    insert = """INSERT INTO server_player_totals VALUES
+        (NEW.server_id,NEW.ckey,COALESCE(NEW.duration_seconds,0),1,NEW.last_seen_at)
+        ON CONFLICT(server_id,ckey) DO UPDATE SET
+        total_seconds=total_seconds+COALESCE(NEW.duration_seconds,0),
+        sessions_count=sessions_count+1,last_seen=MAX(last_seen,NEW.last_seen_at);"""
+    remove = """UPDATE server_player_totals SET
+        total_seconds=total_seconds-COALESCE(OLD.duration_seconds,0),sessions_count=sessions_count-1,
+        last_seen=(SELECT MAX(last_seen_at) FROM sessions WHERE server_id=OLD.server_id AND ckey=OLD.ckey)
+        WHERE server_id=OLD.server_id AND ckey=OLD.ckey;
+        DELETE FROM server_player_totals WHERE server_id=OLD.server_id AND ckey=OLD.ckey AND sessions_count=0;"""
+    for name, event, body in (("insert", "INSERT", insert), ("update", "UPDATE", remove + insert),
+                              ("delete", "DELETE", remove)):
+        await conn.execute(f"CREATE TRIGGER IF NOT EXISTS totals_{name} AFTER {event} ON sessions BEGIN {body} END")
 
 
 async def init_db(db_path: str = "tracker.db") -> None:
@@ -195,9 +322,18 @@ async def init_db(db_path: str = "tracker.db") -> None:
     Safely closes any existing connection and opens a new connection with foreign keys
     and busy_timeout enabled.
     """
-    global _current_db_path, _connection
+    global _current_db_path, _connection, _operation_lock, _read_slots
 
-    async with _db_lock:
+    # Reinitialization after an event loop has shut down must recreate its gates.
+    loop = asyncio.get_running_loop()
+    old_loop = getattr(_operation_lock, "_loop", None)
+    if old_loop is not None and old_loop is not loop and old_loop.is_closed():
+        _operation_lock = asyncio.Lock()
+    old_loop = getattr(_read_slots, "_loop", None)
+    if old_loop is not None and old_loop is not loop and old_loop.is_closed():
+        _read_slots = asyncio.Semaphore(8)
+
+    async with _operation_lock, _db_lock:
         if _connection is not None:
             try:
                 await _connection.close()
@@ -210,26 +346,14 @@ async def init_db(db_path: str = "tracker.db") -> None:
         if path_obj.parent and not path_obj.parent.exists():
             path_obj.parent.mkdir(parents=True, exist_ok=True)
 
-        conn = await aiosqlite.connect(_current_db_path)
-        conn.row_factory = aiosqlite.Row
-
-        await conn.execute("PRAGMA journal_mode=WAL;")
-        await conn.execute("PRAGMA synchronous=NORMAL;")
-        await conn.execute("PRAGMA foreign_keys=ON;")
-        await conn.execute("PRAGMA busy_timeout=5000;")
-
-        await conn.executescript(SCHEMA_SQL)
-        await _migrate_schema(conn)
-        await conn.commit()
-
-        _connection = conn
+        _connection = await _open_database(_current_db_path)
         logger.info("Initialized database at '%s' with WAL mode.", _current_db_path)
 
 
 async def close_db() -> None:
     """Cleanly closes open database connection."""
     global _connection
-    async with _db_lock:
+    async with _operation_lock, _db_lock:
         if _connection is not None:
             try:
                 await _connection.close()
@@ -241,25 +365,19 @@ async def close_db() -> None:
 async def get_connection() -> aiosqlite.Connection:
     """Retrieves or establishes the active aiosqlite connection."""
     global _connection, _current_db_path
+    if _operation_connection.get() is not None:
+        return _operation_connection.get()
     if _connection is None:
         async with _db_lock:
             if _connection is None:
                 path_obj = Path(_current_db_path)
                 if path_obj.parent and not path_obj.parent.exists():
                     path_obj.parent.mkdir(parents=True, exist_ok=True)
-                conn = await aiosqlite.connect(_current_db_path)
-                conn.row_factory = aiosqlite.Row
-                await conn.execute("PRAGMA journal_mode=WAL;")
-                await conn.execute("PRAGMA synchronous=NORMAL;")
-                await conn.execute("PRAGMA foreign_keys=ON;")
-                await conn.execute("PRAGMA busy_timeout=5000;")
-                await conn.executescript(SCHEMA_SQL)
-                await _migrate_schema(conn)
-                await conn.commit()
-                _connection = conn
+                _connection = await _open_database(_current_db_path)
     return _connection
 
 
+@_write_transaction
 async def upsert_server(
     identifier: str,
     title: str,
@@ -285,9 +403,9 @@ async def upsert_server(
     Updates title, ip, port, last_seen, is_active, and round metrics on identifier conflict.
     """
     ts = time.time() if now_ts is None else float(now_ts)
-    ins_players = int(current_players) if current_players is not None else 0
-    ins_round_dur = int(round_duration) if round_duration is not None else 0
-    ins_admins = int(admins_count) if admins_count is not None else 0
+    ins_players = int(current_players) if current_players is not None else None
+    ins_round_dur = int(round_duration) if round_duration is not None else None
+    ins_admins = int(admins_count) if admins_count is not None else None
     ins_active_players = int(active_players) if active_players is not None else None
     ins_enter = (1 if enter_allowed else 0) if enter_allowed is not None else None
     ins_respawn = (1 if respawn_allowed else 0) if respawn_allowed is not None else None
@@ -308,7 +426,7 @@ async def upsert_server(
                 title = excluded.title,
                 ip = excluded.ip,
                 port = excluded.port,
-                last_seen = excluded.last_seen,
+                last_seen = MAX(servers.last_seen, excluded.last_seen),
                 is_active = excluded.is_active,
                 current_players = CASE WHEN ? IS NOT NULL THEN excluded.current_players ELSE servers.current_players END,
                 map_name = CASE WHEN ? IS NOT NULL THEN excluded.map_name ELSE servers.map_name END,
@@ -356,15 +474,69 @@ async def upsert_server(
                 ins_manifest_json,
             ),
         )
-        await conn.commit()
-
         await cur.execute("SELECT id FROM servers WHERE identifier = ?;", (identifier,))
         row = await cur.fetchone()
         if row is None:
             raise RuntimeError(f"Failed to retrieve id for upserted server '{identifier}'")
+        if manifest is not None:
+            await cur.execute("UPDATE servers SET manifest_observed_at=? WHERE id=?", (ts, row["id"]))
         return int(row["id"])
 
 
+@_write_transaction
+async def save_observation(server: Dict[str, Any], roster: Optional[Set[str]],
+                           grace_period_seconds: int, topic_received: bool,
+                           roster_complete: bool = True) -> int:
+    """Persist one observation atomically; an unknown roster never signals logout."""
+    sid = await upsert_server(**server)
+    ts = server["now_ts"]
+    if topic_received:
+        conn = await get_connection()
+        await conn.execute("UPDATE servers SET telemetry_observed_at=? WHERE id=?", (ts, sid))
+    if roster is not None:
+        await update_player_sessions(sid, roster, ts, grace_period_seconds, complete_roster=roster_complete)
+        conn = await get_connection()
+        if roster_complete:
+            await conn.execute("UPDATE servers SET roster_observed_at=? WHERE id=?", (ts, sid))
+    if server.get("current_players") is not None:
+        await record_server_snapshot(sid, server["current_players"],
+                                     server.get("round_duration"), server.get("map_name"), ts)
+    return sid
+
+
+@_write_transaction
+async def expire_stale_servers(now_ts: float, max_age: int) -> None:
+    """End observation windows at last confirmation, without crediting the outage."""
+    conn = await get_connection()
+    await conn.execute("UPDATE servers SET is_active=0 WHERE last_seen < ?", (now_ts - max_age,))
+    await conn.execute("""UPDATE sessions SET ended_at=last_seen_at
+                          WHERE ended_at IS NULL AND (last_seen_at < ? OR server_id IN
+                          (SELECT id FROM servers WHERE is_active=0))""", (now_ts - max_age,))
+
+
+@_write_transaction
+async def record_collector_cycle(completed_at: float, healthy: bool) -> None:
+    conn = await get_connection()
+    await conn.execute("""INSERT INTO collector_state VALUES (1,?,?) ON CONFLICT(id)
+                          DO UPDATE SET completed_at=excluded.completed_at, healthy=excluded.healthy""",
+                       (completed_at, int(healthy)))
+
+
+@_write_transaction
+async def save_manifest(server_id: int, manifest: Dict[str, Any], ts: float) -> None:
+    conn = await get_connection()
+    await conn.execute("UPDATE servers SET manifest_json=?,manifest_observed_at=? WHERE id=?",
+                       (json.dumps(manifest, ensure_ascii=False), ts, server_id))
+
+
+@_read_snapshot
+async def get_collector_state() -> Optional[Dict[str, Any]]:
+    conn = await get_connection()
+    row = await (await conn.execute("SELECT completed_at,healthy FROM collector_state WHERE id=1")).fetchone()
+    return dict(row) if row else None
+
+
+@_write_transaction
 async def record_server_snapshot(
     server_id: int,
     player_count: int,
@@ -385,14 +557,14 @@ async def record_server_snapshot(
                 int(server_id),
                 snap_ts,
                 int(max(0, player_count)),
-                int(max(0, round_duration or 0)),
+                int(max(0, round_duration)) if round_duration is not None else None,
                 map_name,
             ),
         )
-        await conn.commit()
         return int(cur.lastrowid or 0)
 
 
+@_write_transaction
 async def prune_server_snapshots(
     max_age_days: int = 7,
     now_ts: Optional[float] = None,
@@ -407,10 +579,10 @@ async def prune_server_snapshots(
             (cutoff_ts,),
         )
         deleted = cur.rowcount if cur.rowcount is not None and cur.rowcount >= 0 else 0
-        await conn.commit()
         return int(deleted)
 
 
+@_read_snapshot
 async def get_active_servers() -> List[Dict[str, Any]]:
     """Returns list of active monitored servers."""
     conn = await get_connection()
@@ -436,12 +608,12 @@ async def get_active_servers() -> List[Dict[str, Any]]:
                 "port": r["port"],
                 "last_seen": r["last_seen"],
                 "is_active": bool(r["is_active"]),
-                "current_players": int(r["current_players"] or 0),
+                "current_players": r["current_players"],
                 "map_name": r["map_name"],
-                "round_duration": int(r["round_duration"] or 0),
-                "round_duration_str": format_hms(int(r["round_duration"] or 0)),
+                "round_duration": r["round_duration"],
+                "round_duration_str": format_hms(r["round_duration"]) if r["round_duration"] is not None else "Unknown",
                 "gamemode": r["gamemode"],
-                "admins_count": int(r["admins_count"] or 0),
+                "admins_count": r["admins_count"],
                 "version": r["version"],
                 "active_players": int(r["active_players"]) if r["active_players"] is not None else None,
                 "station_time": r["station_time"],
@@ -452,11 +624,13 @@ async def get_active_servers() -> List[Dict[str, Any]]:
         ]
 
 
+@_write_transaction
 async def update_player_sessions(
     server_id: int,
     online_ckeys: Set[str],
     now_ts: Optional[float] = None,
     grace_period_seconds: int = 300,
+    complete_roster: bool = True,
 ) -> None:
     """
     Executes sessionization step for a single server:
@@ -485,7 +659,7 @@ async def update_player_sessions(
                 """
                 INSERT INTO players (ckey, first_seen, last_seen)
                 VALUES (?, ?, ?)
-                ON CONFLICT(ckey) DO UPDATE SET last_seen = excluded.last_seen;
+                ON CONFLICT(ckey) DO UPDATE SET last_seen = MAX(players.last_seen, excluded.last_seen);
                 """,
                 (ckey, ts, ts),
             )
@@ -507,16 +681,9 @@ async def update_player_sessions(
                 prev_last_seen = float(open_sess["last_seen_at"])
                 absence_gap = ts - prev_last_seen
 
-                is_expired_gap = (
-                    absence_gap >= grace_period_seconds
-                    and (
-                        absence_gap <= 600
-                        or "gap" in ckey
-                        or "reconnect" in ckey
-                        or "boundary" in ckey
-                        or "expired" in ckey
-                    )
-                )
+                if absence_gap < 0:
+                    continue  # Late or backwards observations cannot rewrite chronology.
+                is_expired_gap = absence_gap >= grace_period_seconds
 
                 if is_expired_gap:
                     # Absence exceeded grace period: finalize expired session at previous last_seen
@@ -570,7 +737,7 @@ async def update_player_sessions(
 
         for s_row in active_server_sessions:
             ckey = s_row["ckey"]
-            if ckey not in normalized_online:
+            if complete_roster and ckey not in normalized_online:
                 last_seen_at = float(s_row["last_seen_at"])
                 started_at = float(s_row["started_at"])
                 delta = ts - last_seen_at
@@ -590,9 +757,7 @@ async def update_player_sessions(
                     # Grace period active: retain open state
                     pass
 
-        await conn.commit()
-
-
+@_read_snapshot
 async def get_player_dossier(ckey: str) -> Optional[Dict[str, Any]]:
     """
     Returns tactical player dossier dictionary or None if player does not exist.
@@ -762,7 +927,7 @@ async def get_player_dossier(ckey: str) -> Optional[Dict[str, Any]]:
     return dossier
 
 
-def _build_chart_24h(points: List[Dict[str, Any]]) -> Dict[str, Any]:
+def _build_chart_24h(points: List[Dict[str, Any]], window_start=None, window_end=None) -> Dict[str, Any]:
     """Builds lightweight SVG polyline coordinates (viewBox 0 0 600 120) and summary metrics."""
     if not points:
         return {
@@ -774,6 +939,7 @@ def _build_chart_24h(points: List[Dict[str, Any]]) -> Dict[str, Any]:
             "count": 0,
             "start_label": None,
             "end_label": None,
+            "segments": [],
         }
 
     counts = [int(p["player_count"]) for p in points]
@@ -794,14 +960,25 @@ def _build_chart_24h(points: List[Dict[str, Any]]) -> Dict[str, Any]:
 
     coords: List[Tuple[float, float]] = []
     n = len(points)
-    if n == 1:
-        y_val = _calc_y(counts[0])
-        coords = [(x_min, y_val), (x_max, y_val)]
-    else:
-        for i, c in enumerate(counts):
-            x_val = round(x_min + (i / float(n - 1)) * (x_max - x_min), 1)
-            y_val = _calc_y(c)
-            coords.append((x_val, y_val))
+    start = window_start if window_start is not None else points[0]["timestamp"]
+    end = window_end if window_end is not None else points[-1]["timestamp"]
+    segments = []
+    segment = []
+    for i, c in enumerate(counts):
+        x_val = round(x_min + ((points[i]["timestamp"] - start) / max(1, end - start)) * (x_max - x_min), 1)
+        coord = (x_val, _calc_y(c))
+        coords.append(coord)
+        if i and points[i].get("gap_before"):
+            segments.append(segment)
+            segment = []
+        segment.append(coord)
+    segments.append(segment)
+
+    def segment_data(segment):
+        line = " ".join(f"{x},{y}" for x, y in segment)
+        return {"points_str": line,
+                "area_points_str": f"{segment[0][0]},{y_bottom} {line} {segment[-1][0]},{y_bottom}",
+                "x": segment[0][0], "y": segment[0][1], "single": len(segment) == 1}
 
     points_str = " ".join(f"{x},{y}" for x, y in coords)
     area_points_str = f"{coords[0][0]},{y_bottom} {points_str} {coords[-1][0]},{y_bottom}"
@@ -815,9 +992,11 @@ def _build_chart_24h(points: List[Dict[str, Any]]) -> Dict[str, Any]:
         "count": n,
         "start_label": points[0].get("time_str"),
         "end_label": points[-1].get("time_str"),
+        "segments": [segment_data(s) for s in segments],
     }
 
 
+@_read_snapshot
 async def get_server_details(
     server_id: int,
     now_ts: Optional[float] = None,
@@ -834,7 +1013,8 @@ async def get_server_details(
             SELECT
                 id, identifier, title, ip, port, last_seen, is_active,
                 current_players, map_name, round_duration, gamemode, admins_count, version,
-                active_players, station_time, enter_allowed, respawn_allowed, admin_list_json, manifest_json
+                active_players, station_time, enter_allowed, respawn_allowed, admin_list_json, manifest_json,
+                roster_observed_at, telemetry_observed_at, manifest_observed_at
             FROM servers
             WHERE id = ?;
             """,
@@ -851,8 +1031,7 @@ async def get_server_details(
                 ckey,
                 started_at,
                 last_seen_at,
-                duration_seconds,
-                (unixepoch() - started_at) AS live_duration_seconds
+                duration_seconds
             FROM sessions
             WHERE server_id = ? AND ended_at IS NULL
             ORDER BY started_at ASC;
@@ -866,14 +1045,7 @@ async def get_server_details(
             started_ts = float(r["started_at"])
             last_seen_ts = float(r["last_seen_at"])
             stored_dur = int(r["duration_seconds"] or 0)
-            if now_ts is not None:
-                dur = max(0, int(round(float(now_ts) - started_ts)))
-            elif stored_dur > 0:
-                dur = stored_dur
-            elif 0 <= (current_wall_ts - started_ts) < 86400 * 7:
-                dur = max(0, int(round(current_wall_ts - started_ts)))
-            else:
-                dur = max(0, int(round(last_seen_ts - started_ts)))
+            dur = stored_dur
 
             online_players.append(
                 {
@@ -890,11 +1062,10 @@ async def get_server_details(
             """
             SELECT
                 ckey,
-                COALESCE(SUM(duration_seconds), 0) AS total_seconds,
-                MAX(last_seen_at) AS last_seen
-            FROM sessions
+                total_seconds,
+                last_seen
+            FROM server_player_totals
             WHERE server_id = ?
-            GROUP BY ckey
             ORDER BY total_seconds DESC, ckey ASC
             LIMIT 20;
             """,
@@ -922,9 +1093,9 @@ async def get_server_details(
         await cur.execute(
             """
             SELECT
-                COUNT(DISTINCT ckey) AS unique_players,
-                COALESCE(SUM(duration_seconds), 0) AS total_playtime_seconds
-            FROM sessions
+                COUNT(*) AS unique_players,
+                COALESCE(SUM(total_seconds), 0) AS total_playtime_seconds
+            FROM server_player_totals
             WHERE server_id = ?;
             """,
             (int(server_id),),
@@ -935,78 +1106,48 @@ async def get_server_details(
         total_hours = round(total_playtime_seconds / 3600.0, 1)
 
         # 24-hour online history points
-        if now_ts is not None:
-            ref_snap_ts = float(now_ts)
-        else:
-            await cur.execute(
-                "SELECT MAX(timestamp) AS max_ts FROM server_snapshots WHERE server_id = ?;",
-                (int(server_id),),
-            )
-            max_row = await cur.fetchone()
-            max_ts = float(max_row["max_ts"]) if (max_row and max_row["max_ts"] is not None) else None
-            if max_ts is not None and abs(current_wall_ts - max_ts) > 86400 * 30:
-                ref_snap_ts = max_ts
-            else:
-                ref_snap_ts = current_wall_ts
+        ref_snap_ts = float(now_ts) if now_ts is not None else current_wall_ts
 
         cutoff_24h = ref_snap_ts - 86400.0
         await cur.execute(
             """
             SELECT id, timestamp, player_count, round_duration, map_name
             FROM server_snapshots
-            WHERE server_id = ? AND timestamp >= ?
+            WHERE server_id = ? AND timestamp >= ? AND timestamp <= ?
             ORDER BY timestamp ASC;
             """,
-            (int(server_id), cutoff_24h),
+            (int(server_id), cutoff_24h, ref_snap_ts),
         )
         snap_rows = await cur.fetchall()
 
+        # Preserve gaps before reducing dense observations into minute maxima.
         snapshots_24h: List[Dict[str, Any]] = []
-        if len(snap_rows) <= 48:
-            for sr in snap_rows:
-                snapshots_24h.append(
-                    {
-                        "timestamp": float(sr["timestamp"]),
-                        "time_str": format_timestamp(sr["timestamp"]),
-                        "player_count": int(sr["player_count"]),
-                        "round_duration": int(sr["round_duration"] or 0),
-                        "map_name": sr["map_name"],
-                    }
-                )
-        else:
-            # Downsample into hourly buckets when more than 48 snapshots exist in 24h
-            await cur.execute(
-                """
-                SELECT
-                    CAST(timestamp / 3600 AS INTEGER) * 3600 AS bucket_ts,
-                    MAX(player_count) AS player_count,
-                    MAX(round_duration) AS round_duration,
-                    MAX(map_name) AS map_name
-                FROM server_snapshots
-                WHERE server_id = ? AND timestamp >= ?
-                GROUP BY CAST(timestamp / 3600 AS INTEGER)
-                ORDER BY bucket_ts ASC;
-                """,
-                (int(server_id), cutoff_24h),
-            )
-            hourly_rows = await cur.fetchall()
-            for hr in hourly_rows:
-                snapshots_24h.append(
-                    {
-                        "timestamp": float(hr["bucket_ts"]),
-                        "time_str": format_timestamp(hr["bucket_ts"]),
-                        "player_count": int(hr["player_count"]),
-                        "round_duration": int(hr["round_duration"] or 0),
-                        "map_name": hr["map_name"],
-                    }
-                )
+        previous_ts = None
+        for sr in snap_rows:
+            ts = float(sr["timestamp"])
+            gap = previous_ts is not None and ts - previous_ts > 600
+            point = dict(timestamp=ts, time_str=format_timestamp(ts),
+                         player_count=int(sr["player_count"]),
+                         round_duration=sr["round_duration"], map_name=sr["map_name"],
+                         gap_before=gap)
+            if snapshots_24h and not gap and int(ts // 60) == int(snapshots_24h[-1]["timestamp"] // 60):
+                if point["player_count"] >= snapshots_24h[-1]["player_count"]:
+                    point["gap_before"] = snapshots_24h[-1]["gap_before"]
+                    snapshots_24h[-1] = point
+            else:
+                snapshots_24h.append(point)
+            previous_ts = ts
 
-    chart_24h = _build_chart_24h(snapshots_24h)
+    chart_24h = _build_chart_24h(snapshots_24h, cutoff_24h, ref_snap_ts)
+    if snap_rows:
+        counts = [int(row["player_count"]) for row in snap_rows]
+        chart_24h.update(min_players=min(counts), max_players=max(counts),
+                         avg_players=round(sum(counts) / len(counts), 1))
 
-    raw_current_players = int(srv_row["current_players"] or 0)
-    effective_current_players = max(raw_current_players, len(online_players))
-    round_dur_sec = int(srv_row["round_duration"] or 0)
-    round_dur_str = format_hms(round_dur_sec)
+    raw_current_players = srv_row["current_players"]
+    effective_current_players = raw_current_players
+    round_dur_sec = srv_row["round_duration"]
+    round_dur_str = format_hms(round_dur_sec) if round_dur_sec is not None else "Unknown"
     last_seen_str = format_timestamp(srv_row["last_seen"])
     is_active = bool(srv_row["is_active"])
     active_players_val = int(srv_row["active_players"]) if srv_row["active_players"] is not None else None
@@ -1049,6 +1190,8 @@ async def get_server_details(
         "id": int(srv_row["id"]),
         "server_id": int(srv_row["id"]),
         "identifier": srv_row["identifier"],
+        "connect_uri": (f"byond://[{srv_row['ip']}]:{srv_row['port']}" if ":" in srv_row["ip"]
+                        else f"byond://{srv_row['ip']}:{srv_row['port']}") if srv_row["port"] else srv_row["identifier"],
         "title": srv_row["title"],
         "ip": srv_row["ip"],
         "port": int(srv_row["port"]),
@@ -1064,11 +1207,16 @@ async def get_server_details(
         "manifest": manifest_parsed,
         "manifest_sections": manifest_sections,
         "manifest_total_crew": manifest_total_crew,
+        "manifest_observed_at": format_timestamp(srv_row["manifest_observed_at"]),
+        "telemetry_observed_at": format_timestamp(srv_row["telemetry_observed_at"]),
+        "roster_observed_at": format_timestamp(srv_row["roster_observed_at"]),
+        "telemetry_stale": srv_row["telemetry_observed_at"] is None or ref_snap_ts - srv_row["telemetry_observed_at"] > 300,
+        "topic_available": bool(srv_row["port"]),
         "map_name": srv_row["map_name"],
         "round_duration": round_dur_sec,
         "round_duration_str": round_dur_str,
         "gamemode": srv_row["gamemode"],
-        "admins_count": int(srv_row["admins_count"] or 0),
+        "admins_count": srv_row["admins_count"],
         "version": srv_row["version"],
         "unique_players": unique_players,
         "total_playtime_seconds": total_playtime_seconds,
@@ -1095,7 +1243,7 @@ async def get_server_details(
             "round_duration": round_dur_sec,
             "round_duration_str": round_dur_str,
             "gamemode": srv_row["gamemode"],
-            "admins_count": int(srv_row["admins_count"] or 0),
+            "admins_count": srv_row["admins_count"],
             "version": srv_row["version"],
         },
         "round": {
@@ -1108,7 +1256,7 @@ async def get_server_details(
             "round_duration": round_dur_sec,
             "round_duration_str": round_dur_str,
             "gamemode": srv_row["gamemode"],
-            "admins_count": int(srv_row["admins_count"] or 0),
+            "admins_count": srv_row["admins_count"],
             "version": srv_row["version"],
         },
         "summary": {

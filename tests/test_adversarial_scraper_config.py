@@ -653,41 +653,41 @@ class TestAdversarialConfig:
         assert cfg.topic_concurrency == 30
         assert len(cfg.custom_servers) > 0
 
-    def test_empty_config_file_returns_defaults(self):
-        """Empty config file returns default AppConfig."""
+    def test_empty_config_file_reports_error(self):
+        """Empty existing config is rejected."""
         with tempfile.NamedTemporaryFile("w", delete=False, suffix=".json", encoding="utf-8") as f:
             f.write("")
             path = Path(f.name)
         try:
-            cfg = load_config(path)
-            assert cfg.poll_interval == 120
+            with pytest.raises(ValueError, match="Invalid configuration"):
+                load_config(path)
         finally:
             path.unlink()
 
-    def test_malformed_json_config_file_returns_defaults(self):
-        """Corrupted JSON file returns default AppConfig without raising unhandled exception."""
+    def test_malformed_json_config_file_reports_error(self):
+        """Corrupted JSON file produces an actionable configuration error."""
         with tempfile.NamedTemporaryFile("w", delete=False, suffix=".json", encoding="utf-8") as f:
             f.write("{invalid: json, broken: [}")
             path = Path(f.name)
         try:
-            cfg = load_config(path)
-            assert cfg.poll_interval == 120
+            with pytest.raises(ValueError, match="Invalid configuration"):
+                load_config(path)
         finally:
             path.unlink()
 
-    def test_root_is_not_dict_returns_defaults(self):
-        """Config file whose root is an array or string returns defaults."""
+    def test_root_is_not_dict_reports_error(self):
+        """Config file root must be an object."""
         with tempfile.NamedTemporaryFile("w", delete=False, suffix=".json", encoding="utf-8") as f:
             f.write('["item1", "item2"]')
             path = Path(f.name)
         try:
-            cfg = load_config(path)
-            assert cfg.poll_interval == 120
+            with pytest.raises(ValueError, match="Invalid configuration"):
+                load_config(path)
         finally:
             path.unlink()
 
-    def test_invalid_field_types_fallback_to_defaults(self):
-        """Config file with invalid field types triggers validation failure and falls back to defaults."""
+    def test_invalid_field_types_reports_error(self):
+        """Invalid field types stop startup instead of discarding valid settings."""
         data = {
             "poll_interval": "not_an_int",
             "socket_timeout": "fast",
@@ -697,10 +697,8 @@ class TestAdversarialConfig:
             json.dump(data, f)
             path = Path(f.name)
         try:
-            cfg = load_config(path)
-            assert cfg.poll_interval == 120
-            assert cfg.socket_timeout == 3.0
-            assert cfg.topic_concurrency == 30
+            with pytest.raises(ValueError, match="Invalid configuration"):
+                load_config(path)
         finally:
             path.unlink()
 

@@ -103,7 +103,7 @@
               <div class="sector-top-row">
                 <div class="sector-title">{{ s.title or s.identifier }}</div>
                 <span class="sector-players-badge mono-val" title="Players online{% if s.active_players is not none %} ({{ s.active_players }} in round){% endif %}">
-                  {{ s.current_players or 0 }}{% if s.active_players is not none %} <span class="sector-living-sub">({{ s.active_players }})</span>{% endif %}
+                  {{ s.current_players if s.current_players is not none else 'Unknown' }}{% if s.active_players is not none %} <span class="sector-living-sub">({{ s.active_players }})</span>{% endif %}
                 </span>
               </div>
               <div class="sector-meta-row">

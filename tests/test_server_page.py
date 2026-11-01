@@ -4,6 +4,7 @@ REST Endpoint (/api/v1/server/{server_id}), Round Metadata Storage,
 and Timeseries Online Snapshots.
 """
 
+import time
 import aiosqlite
 import pytest
 
@@ -182,7 +183,7 @@ async def test_get_server_details_query(test_db):
 
     # Player 1: veteranskipper plays 7200s (2.0h) then logs off
     await core_db.update_player_sessions(server_id, {"veteranskipper"}, now_ts=1000.0)
-    await core_db.update_player_sessions(server_id, {"veteranskipper"}, now_ts=8200.0)
+    await core_db.update_player_sessions(server_id, {"veteranskipper"}, now_ts=8200.0, grace_period_seconds=86400)
     await core_db.update_player_sessions(server_id, set(), now_ts=9000.0, grace_period_seconds=300)
 
     # Player 2 & 3: currently online at T=10000.0 (polled within 300s grace window)
@@ -246,7 +247,7 @@ async def test_api_get_server_200_and_404(async_client):
     )
     await core_db.update_player_sessions(server_id, {"honkmaster"}, now_ts=4400.0)
     await core_db.update_player_sessions(server_id, {"honkmaster"}, now_ts=5000.0)
-    await core_db.record_server_snapshot(server_id, player_count=18, round_duration=1800, map_name="BoxStation", ts=5000.0)
+    await core_db.record_server_snapshot(server_id, player_count=18, round_duration=1800, map_name="BoxStation", ts=time.time())
 
     resp_200 = await async_client.get(f"/api/v1/server/{server_id}")
     assert resp_200.status_code == 200
@@ -290,8 +291,8 @@ async def test_web_server_page_html(async_client):
     )
     await core_db.update_player_sessions(server_id, {"captain_fox"}, now_ts=1400.0)
     await core_db.update_player_sessions(server_id, {"captain_fox"}, now_ts=2000.0)
-    await core_db.record_server_snapshot(server_id, player_count=20, round_duration=3000, map_name="Cyberiad", ts=1400.0)
-    await core_db.record_server_snapshot(server_id, player_count=35, round_duration=3661, map_name="Cyberiad", ts=2000.0)
+    await core_db.record_server_snapshot(server_id, player_count=20, round_duration=3000, map_name="Cyberiad", ts=time.time()-600)
+    await core_db.record_server_snapshot(server_id, player_count=35, round_duration=3661, map_name="Cyberiad", ts=time.time())
 
     resp = await async_client.get(f"/server/{server_id}")
     assert resp.status_code == 200
@@ -444,12 +445,13 @@ async def test_sierrabay_world_topic_status2_and_legacy_parsing(test_db, mock_to
 
 
 @pytest.mark.asyncio
-async def test_sierrabay_manifest_endpoint(async_client, mock_topic_server):
+async def test_sierrabay_manifest_endpoint(async_client, mock_topic_server, monkeypatch):
     """
     Verifies POST /server/{server_id}/manifest queries ?manifest from a SierraBay server,
     parses nested list2params departments & crew ranks, stores them in SQLite, and renders HTML.
     """
     port = mock_topic_server.port
+    monkeypatch.setattr("core.tracker._GLOBAL_TRACKER", Tracker(config={"custom_servers": [{"ip": "127.0.0.1", "port": port}]}))
     server_id = await core_db.upsert_server(
         identifier=f"byond://127.0.0.1:{port}",
         title="SierraBay SEV Torch",
