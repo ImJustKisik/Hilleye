@@ -7,6 +7,7 @@ grace period state machine and tactical player dossier aggregations.
 
 import asyncio
 from datetime import datetime, timezone
+import json
 import logging
 from pathlib import Path
 import re
@@ -37,7 +38,13 @@ CREATE TABLE IF NOT EXISTS servers (
     round_duration INTEGER DEFAULT 0,
     gamemode TEXT,
     admins_count INTEGER DEFAULT 0,
-    version TEXT
+    version TEXT,
+    active_players INTEGER,
+    station_time TEXT,
+    enter_allowed BOOLEAN,
+    respawn_allowed BOOLEAN,
+    admin_list_json TEXT,
+    manifest_json TEXT
 );
 
 -- Server Online History Snapshots (Timeseries)
@@ -133,7 +140,38 @@ _SERVER_MIGRATION_COLUMNS: List[Tuple[str, str]] = [
     ("gamemode", "TEXT"),
     ("admins_count", "INTEGER DEFAULT 0"),
     ("version", "TEXT"),
+    ("active_players", "INTEGER"),
+    ("station_time", "TEXT"),
+    ("enter_allowed", "BOOLEAN"),
+    ("respawn_allowed", "BOOLEAN"),
+    ("admin_list_json", "TEXT"),
+    ("manifest_json", "TEXT"),
 ]
+
+_DEPT_LABELS: Dict[str, str] = {
+    "command": "Command",
+    "com": "Command",
+    "sec": "Security",
+    "security": "Security",
+    "eng": "Engineering",
+    "engineering": "Engineering",
+    "med": "Medical",
+    "medical": "Medical",
+    "sci": "Science / Research",
+    "science": "Science / Research",
+    "car": "Supply / Cargo",
+    "cargo": "Supply / Cargo",
+    "sup": "Supply / Cargo",
+    "exp": "Exploration",
+    "exploration": "Exploration",
+    "srv": "Service / Civilian",
+    "civ": "Civilian",
+    "civilian": "Civilian",
+    "msc": "Miscellaneous",
+    "misc": "Miscellaneous",
+    "bot": "Synthetics / Silicons",
+    "sil": "Synthetics / Silicons",
+}
 
 
 async def _migrate_schema(conn: aiosqlite.Connection) -> None:
@@ -235,6 +273,12 @@ async def upsert_server(
     gamemode: Optional[str] = None,
     admins_count: Optional[int] = None,
     version: Optional[str] = None,
+    active_players: Optional[int] = None,
+    station_time: Optional[str] = None,
+    enter_allowed: Optional[bool] = None,
+    respawn_allowed: Optional[bool] = None,
+    admin_list: Optional[List[Dict[str, str]]] = None,
+    manifest: Optional[Dict[str, List[Dict[str, str]]]] = None,
 ) -> int:
     """
     Upserts server record and returns its database ID.
@@ -244,6 +288,11 @@ async def upsert_server(
     ins_players = int(current_players) if current_players is not None else 0
     ins_round_dur = int(round_duration) if round_duration is not None else 0
     ins_admins = int(admins_count) if admins_count is not None else 0
+    ins_active_players = int(active_players) if active_players is not None else None
+    ins_enter = (1 if enter_allowed else 0) if enter_allowed is not None else None
+    ins_respawn = (1 if respawn_allowed else 0) if respawn_allowed is not None else None
+    ins_admin_json = json.dumps(admin_list, ensure_ascii=False) if admin_list is not None else None
+    ins_manifest_json = json.dumps(manifest, ensure_ascii=False) if manifest is not None else None
 
     conn = await get_connection()
     async with conn.cursor() as cur:
@@ -251,9 +300,10 @@ async def upsert_server(
             """
             INSERT INTO servers (
                 identifier, title, ip, port, last_seen, is_active,
-                current_players, map_name, round_duration, gamemode, admins_count, version
+                current_players, map_name, round_duration, gamemode, admins_count, version,
+                active_players, station_time, enter_allowed, respawn_allowed, admin_list_json, manifest_json
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(identifier) DO UPDATE SET
                 title = excluded.title,
                 ip = excluded.ip,
@@ -265,7 +315,13 @@ async def upsert_server(
                 round_duration = CASE WHEN ? IS NOT NULL THEN excluded.round_duration ELSE servers.round_duration END,
                 gamemode = CASE WHEN ? IS NOT NULL THEN excluded.gamemode ELSE servers.gamemode END,
                 admins_count = CASE WHEN ? IS NOT NULL THEN excluded.admins_count ELSE servers.admins_count END,
-                version = CASE WHEN ? IS NOT NULL THEN excluded.version ELSE servers.version END;
+                version = CASE WHEN ? IS NOT NULL THEN excluded.version ELSE servers.version END,
+                active_players = CASE WHEN ? IS NOT NULL THEN excluded.active_players ELSE servers.active_players END,
+                station_time = CASE WHEN ? IS NOT NULL THEN excluded.station_time ELSE servers.station_time END,
+                enter_allowed = CASE WHEN ? IS NOT NULL THEN excluded.enter_allowed ELSE servers.enter_allowed END,
+                respawn_allowed = CASE WHEN ? IS NOT NULL THEN excluded.respawn_allowed ELSE servers.respawn_allowed END,
+                admin_list_json = CASE WHEN ? IS NOT NULL THEN excluded.admin_list_json ELSE servers.admin_list_json END,
+                manifest_json = CASE WHEN ? IS NOT NULL THEN excluded.manifest_json ELSE servers.manifest_json END;
             """,
             (
                 identifier,
@@ -280,12 +336,24 @@ async def upsert_server(
                 gamemode,
                 ins_admins,
                 version,
+                ins_active_players,
+                station_time,
+                ins_enter,
+                ins_respawn,
+                ins_admin_json,
+                ins_manifest_json,
                 current_players,
                 map_name,
                 round_duration,
                 gamemode,
                 admins_count,
                 version,
+                ins_active_players,
+                station_time,
+                ins_enter,
+                ins_respawn,
+                ins_admin_json,
+                ins_manifest_json,
             ),
         )
         await conn.commit()
@@ -351,10 +419,11 @@ async def get_active_servers() -> List[Dict[str, Any]]:
             """
             SELECT
                 id, identifier, title, ip, port, last_seen, is_active,
-                current_players, map_name, round_duration, gamemode, admins_count, version
+                current_players, map_name, round_duration, gamemode, admins_count, version,
+                active_players, station_time, enter_allowed, respawn_allowed
             FROM servers
             WHERE is_active = 1
-            ORDER BY title ASC;
+            ORDER BY current_players DESC, title ASC;
             """
         )
         rows = await cur.fetchall()
@@ -370,9 +439,14 @@ async def get_active_servers() -> List[Dict[str, Any]]:
                 "current_players": int(r["current_players"] or 0),
                 "map_name": r["map_name"],
                 "round_duration": int(r["round_duration"] or 0),
+                "round_duration_str": format_hms(int(r["round_duration"] or 0)),
                 "gamemode": r["gamemode"],
                 "admins_count": int(r["admins_count"] or 0),
                 "version": r["version"],
+                "active_players": int(r["active_players"]) if r["active_players"] is not None else None,
+                "station_time": r["station_time"],
+                "enter_allowed": bool(r["enter_allowed"]) if r["enter_allowed"] is not None else None,
+                "respawn_allowed": bool(r["respawn_allowed"]) if r["respawn_allowed"] is not None else None,
             }
             for r in rows
         ]
@@ -759,7 +833,8 @@ async def get_server_details(
             """
             SELECT
                 id, identifier, title, ip, port, last_seen, is_active,
-                current_players, map_name, round_duration, gamemode, admins_count, version
+                current_players, map_name, round_duration, gamemode, admins_count, version,
+                active_players, station_time, enter_allowed, respawn_allowed, admin_list_json, manifest_json
             FROM servers
             WHERE id = ?;
             """,
@@ -934,6 +1009,41 @@ async def get_server_details(
     round_dur_str = format_hms(round_dur_sec)
     last_seen_str = format_timestamp(srv_row["last_seen"])
     is_active = bool(srv_row["is_active"])
+    active_players_val = int(srv_row["active_players"]) if srv_row["active_players"] is not None else None
+    station_time_val = srv_row["station_time"]
+    enter_allowed_val = bool(srv_row["enter_allowed"]) if srv_row["enter_allowed"] is not None else None
+    respawn_allowed_val = bool(srv_row["respawn_allowed"]) if srv_row["respawn_allowed"] is not None else None
+
+    admin_list_parsed: List[Dict[str, str]] = []
+    if srv_row["admin_list_json"]:
+        try:
+            loaded_admins = json.loads(srv_row["admin_list_json"])
+            if isinstance(loaded_admins, list):
+                admin_list_parsed = loaded_admins
+        except Exception:
+            pass
+
+    manifest_parsed: Dict[str, List[Dict[str, str]]] = {}
+    manifest_sections: List[Dict[str, Any]] = []
+    manifest_total_crew = 0
+    if srv_row["manifest_json"]:
+        try:
+            loaded_manifest = json.loads(srv_row["manifest_json"])
+            if isinstance(loaded_manifest, dict):
+                manifest_parsed = loaded_manifest
+                for dept_key, crew_list in loaded_manifest.items():
+                    if isinstance(crew_list, list) and crew_list:
+                        manifest_total_crew += len(crew_list)
+                        manifest_sections.append(
+                            {
+                                "key": dept_key,
+                                "label": _DEPT_LABELS.get(dept_key.lower(), dept_key.upper()),
+                                "crew": crew_list,
+                                "count": len(crew_list),
+                            }
+                        )
+        except Exception:
+            pass
 
     details: Dict[str, Any] = {
         "id": int(srv_row["id"]),
@@ -946,6 +1056,14 @@ async def get_server_details(
         "last_seen": last_seen_str,
         "last_seen_ts": float(srv_row["last_seen"]),
         "current_players": effective_current_players,
+        "active_players": active_players_val,
+        "station_time": station_time_val,
+        "enter_allowed": enter_allowed_val,
+        "respawn_allowed": respawn_allowed_val,
+        "admin_list": admin_list_parsed,
+        "manifest": manifest_parsed,
+        "manifest_sections": manifest_sections,
+        "manifest_total_crew": manifest_total_crew,
         "map_name": srv_row["map_name"],
         "round_duration": round_dur_sec,
         "round_duration_str": round_dur_str,
@@ -969,6 +1087,10 @@ async def get_server_details(
             "is_active": is_active,
             "last_seen": last_seen_str,
             "current_players": effective_current_players,
+            "active_players": active_players_val,
+            "station_time": station_time_val,
+            "enter_allowed": enter_allowed_val,
+            "respawn_allowed": respawn_allowed_val,
             "map_name": srv_row["map_name"],
             "round_duration": round_dur_sec,
             "round_duration_str": round_dur_str,
@@ -978,6 +1100,10 @@ async def get_server_details(
         },
         "round": {
             "current_players": effective_current_players,
+            "active_players": active_players_val,
+            "station_time": station_time_val,
+            "enter_allowed": enter_allowed_val,
+            "respawn_allowed": respawn_allowed_val,
             "map_name": srv_row["map_name"],
             "round_duration": round_dur_sec,
             "round_duration_str": round_dur_str,
@@ -1020,6 +1146,12 @@ class Database:
         gamemode: Optional[str] = None,
         admins_count: Optional[int] = None,
         version: Optional[str] = None,
+        active_players: Optional[int] = None,
+        station_time: Optional[str] = None,
+        enter_allowed: Optional[bool] = None,
+        respawn_allowed: Optional[bool] = None,
+        admin_list: Optional[List[Dict[str, str]]] = None,
+        manifest: Optional[Dict[str, List[Dict[str, str]]]] = None,
     ) -> int:
         return await upsert_server(
             identifier,
@@ -1034,6 +1166,12 @@ class Database:
             gamemode=gamemode,
             admins_count=admins_count,
             version=version,
+            active_players=active_players,
+            station_time=station_time,
+            enter_allowed=enter_allowed,
+            respawn_allowed=respawn_allowed,
+            admin_list=admin_list,
+            manifest=manifest,
         )
 
     async def record_server_snapshot(

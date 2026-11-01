@@ -367,3 +367,116 @@ async def test_tracker_collects_round_metrics_and_snapshots(test_db, mock_topic_
     assert details["version"] == "516.1650"
     assert len(details["snapshots_24h"]) == 1
     assert details["snapshots_24h"][0]["player_count"] == 24
+
+
+@pytest.mark.asyncio
+async def test_sierrabay_world_topic_status2_and_legacy_parsing(test_db, mock_topic_server):
+    """
+    Verifies full compatibility with Baystation12 / SierraBay / Polaris / Aurora
+    world/Topic() formats:
+      - ?status=2 response with nested list2params playerlist (Alice&Bob),
+        adminlist (AdminOne=Game+Master&ModTwo=Moderator), roundduration (HH:MM),
+        stationtime (13:45), active_players, enter, respawn, and map.
+      - Legacy ?status response with indexed player0..playerN keys.
+    """
+    port = mock_topic_server.port
+    ident = f"byond://127.0.0.1:{port}"
+    # Exact format returned by SierraBay /world/Topic("status=2") via list2params(s)
+    mock_topic_server.set_string_response(
+        "version=SierraBay-2.0&mode=Extended&respawn=1&enter=1&vote=1&ai=1&host=SierraHost"
+        "&players=3&stationtime=13%3A45&roundduration=01%3A24&map=SEV+Torch"
+        "&admins=2&playerlist=Captain_Fox%26Chief_Wolf%26Doc_Bear"
+        "&adminlist=Captain_Fox%3DGame%2BMaster%26Mod_Hawk%3DModerator&active_players=2"
+    )
+
+    tracker = Tracker(
+        config={
+            "poll_interval": 120,
+            "grace_period_seconds": 300,
+            "socket_timeout": 1.0,
+            "custom_servers": [
+                {
+                    "identifier": ident,
+                    "title": "SEV Torch — SierraBay",
+                    "ip": "127.0.0.1",
+                    "port": port,
+                }
+            ],
+        }
+    )
+
+    await tracker.poll_once(now_ts=60000.0)
+
+    servers = await core_db.get_active_servers()
+    target = next((s for s in servers if s["identifier"] == ident), None)
+    assert target is not None
+    assert target["active_players"] == 2
+    assert target["station_time"] == "13:45"
+    assert target["round_duration"] == 5040  # 01:24 -> 1h 24m = 5040s
+
+    details = await core_db.get_server_details(target["id"], now_ts=60000.0)
+    assert details is not None
+    assert details["map_name"] == "SEV Torch"
+    assert details["round_duration"] == 5040
+    assert details["round_duration_str"] == "01:24:00"
+    assert details["active_players"] == 2
+    assert details["station_time"] == "13:45"
+    assert details["enter_allowed"] is True
+    assert details["respawn_allowed"] is True
+    assert len(details["admin_list"]) == 2
+    assert details["admin_list"][0]["key"] == "Captain_Fox"
+    assert details["admin_list"][0]["rank"] == "Game Master"
+
+    online_ckeys = {p["ckey"] for p in details["online_players"]}
+    assert online_ckeys == {"captainfox", "chiefwolf", "docbear"}
+
+    # Now test Legacy Baystation response with player0, player1, player2
+    mock_topic_server.set_string_response(
+        "version=Bay12&mode=Secret&players=2&roundduration=02:15&map=Exodus&player0=Legacy_One&player1=Legacy_Two"
+    )
+    await tracker.poll_once(now_ts=60120.0)
+    details_legacy = await core_db.get_server_details(target["id"], now_ts=60120.0)
+    assert details_legacy is not None
+    assert details_legacy["round_duration"] == (2 * 3600 + 15 * 60)
+    legacy_ckeys = {p["ckey"] for p in details_legacy["online_players"]}
+    assert "legacyone" in legacy_ckeys
+    assert "legacytwo" in legacy_ckeys
+
+
+@pytest.mark.asyncio
+async def test_sierrabay_manifest_endpoint(async_client, mock_topic_server):
+    """
+    Verifies POST /server/{server_id}/manifest queries ?manifest from a SierraBay server,
+    parses nested list2params departments & crew ranks, stores them in SQLite, and renders HTML.
+    """
+    port = mock_topic_server.port
+    server_id = await core_db.upsert_server(
+        identifier=f"byond://127.0.0.1:{port}",
+        title="SierraBay SEV Torch",
+        ip="127.0.0.1",
+        port=port,
+        now_ts=70000.0,
+    )
+
+    # SierraBay ?manifest response format: positions[dept] = list2params(list("Name"="Rank"))
+    mock_topic_server.set_string_response(
+        "command=Ivan+Petrov%3DCaptain%26 Elena+Vance%3DHead+of+Personnel"
+        "&sec=Marcus+Reed%3DHead+of+Security"
+        "&eng=Isaac+Clarke%3DChief+Engineer"
+    )
+
+    resp = await async_client.post(f"/server/{server_id}/manifest")
+    assert resp.status_code == 200
+    html = resp.text
+    assert "Command" in html
+    assert "Ivan Petrov" in html
+    assert "Captain" in html
+    assert "Security" in html
+    assert "Marcus Reed" in html
+    assert "Isaac Clarke" in html
+
+    # Verify manifest is also persisted in get_server_details
+    details = await core_db.get_server_details(server_id, now_ts=70000.0)
+    assert details is not None
+    assert details["manifest_total_crew"] == 4
+    assert "command" in details["manifest"]

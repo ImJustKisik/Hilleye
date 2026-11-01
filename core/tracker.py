@@ -12,7 +12,12 @@ from typing import Any, Dict, List, Optional, Set, Union
 
 import httpx
 
-from core.byond_topic import query_topic
+from core.byond_topic import (
+    parse_adminlist_value,
+    parse_manifest_response,
+    parse_round_duration,
+    query_topic,
+)
 from core.config import AppConfig, get_config
 from core.db import (
     get_active_servers,
@@ -193,6 +198,11 @@ class Tracker:
             gamemode: Optional[str] = None
             admins_count: Optional[int] = None
             version: Optional[str] = None
+            active_players: Optional[int] = None
+            station_time: Optional[str] = None
+            enter_allowed: Optional[bool] = None
+            respawn_allowed: Optional[bool] = None
+            admin_list: Optional[List[Dict[str, str]]] = None
 
             # Pre-populate with ckeys parsed directly from hub (if present)
             if srv.players:
@@ -207,7 +217,7 @@ class Tracker:
                     topic_data = await query_topic(
                         ip=srv.ip,
                         port=srv.port,
-                        query="?status",
+                        query="?status=2",
                         timeout=self.socket_timeout,
                         semaphore=self.semaphore,
                     )
@@ -223,8 +233,16 @@ class Tracker:
                                 if c:
                                     server_ckeys.add(c)
                         elif isinstance(plist, str):
-                            for p in plist.split(","):
+                            for p in plist.replace("&", ",").split(","):
                                 c = normalize_ckey(p)
+                                if c:
+                                    server_ckeys.add(c)
+
+                        # Also scan any player0..playerN keys if present directly in dict
+                        for k, v in topic_data.items():
+                            k_str = str(k).lower()
+                            if k_str.startswith("player") and k_str[6:].isdigit() and v:
+                                c = normalize_ckey(str(v))
                                 if c:
                                     server_ckeys.add(c)
 
@@ -237,6 +255,37 @@ class Tracker:
                         elif isinstance(raw_pcount, str) and raw_pcount.strip().isdigit():
                             topic_players_count = int(raw_pcount.strip())
 
+                        # Parse active_players (living players in round on Baystation / SierraBay)
+                        raw_active = topic_data.get("active_players")
+                        if raw_active is not None:
+                            try:
+                                active_players = max(0, int(float(str(raw_active).strip())))
+                            except (ValueError, TypeError):
+                                pass
+
+                        # Parse stationtime / station_time
+                        raw_stime = (
+                            topic_data.get("stationtime")
+                            or topic_data.get("station_time")
+                        )
+                        if raw_stime is not None:
+                            stime_str = str(raw_stime).strip()
+                            if stime_str:
+                                station_time = stime_str
+
+                        # Parse enter / respawn flags
+                        raw_enter = topic_data.get("enter")
+                        if raw_enter is None:
+                            raw_enter = topic_data.get("enter_allowed")
+                        if raw_enter is not None:
+                            enter_allowed = str(raw_enter).strip().lower() not in ("0", "false", "no", "")
+
+                        raw_respawn = topic_data.get("respawn")
+                        if raw_respawn is None:
+                            raw_respawn = topic_data.get("respawn_allowed")
+                        if raw_respawn is not None:
+                            respawn_allowed = str(raw_respawn).strip().lower() not in ("0", "false", "no", "")
+
                         # Parse map_name
                         raw_map = topic_data.get("map_name") or topic_data.get("map")
                         if raw_map is not None:
@@ -244,17 +293,15 @@ class Tracker:
                             if map_str:
                                 map_name = map_str
 
-                        # Parse round_duration (in seconds)
-                        raw_dur = (
-                            topic_data.get("round_duration")
-                            if topic_data.get("round_duration") is not None
-                            else topic_data.get("round_time")
-                        )
+                        # Parse round_duration / roundduration / round_time (supports seconds or "HH:MM" / "HH:MM:SS")
+                        raw_dur = None
+                        for dur_key in ("round_duration", "roundduration", "round_time", "roundtime"):
+                            if topic_data.get(dur_key) is not None:
+                                raw_dur = topic_data.get(dur_key)
+                                break
                         if raw_dur is not None:
-                            try:
-                                round_duration = max(0, int(float(str(raw_dur).strip())))
-                            except (ValueError, TypeError):
-                                round_duration = 0
+                            parsed_dur = parse_round_duration(raw_dur)
+                            round_duration = parsed_dur if parsed_dur is not None else 0
 
                         # Parse gamemode / mode
                         raw_mode = (
@@ -266,6 +313,12 @@ class Tracker:
                             mode_str = str(raw_mode).strip()
                             if mode_str:
                                 gamemode = mode_str
+
+                        # Parse adminlist (Baystation / SierraBay ?status=2)
+                        raw_adminlist = topic_data.get("adminlist")
+                        if raw_adminlist is not None:
+                            parsed_admins = parse_adminlist_value(raw_adminlist)
+                            admin_list = parsed_admins
 
                         # Parse admins count
                         raw_admins = (
@@ -280,7 +333,9 @@ class Tracker:
                                 try:
                                     admins_count = max(0, int(float(str(raw_admins).strip())))
                                 except (ValueError, TypeError):
-                                    admins_count = 0
+                                    admins_count = len(admin_list) if admin_list else 0
+                        elif admin_list is not None:
+                            admins_count = len(admin_list)
 
                         # Parse version
                         raw_ver = topic_data.get("version")
@@ -316,6 +371,11 @@ class Tracker:
                     gamemode=gamemode,
                     admins_count=admins_count if admins_count is not None else 0,
                     version=version,
+                    active_players=active_players,
+                    station_time=station_time,
+                    enter_allowed=enter_allowed,
+                    respawn_allowed=respawn_allowed,
+                    admin_list=admin_list,
                 )
 
                 # Record online history snapshot

@@ -64,19 +64,33 @@
       <div class="telemetry-cell">
         <div class="cell-label">Current Players</div>
         <div class="cell-value">{{ server.current_players }}</div>
-        <div class="cell-sub mono-val">{{ server.online_players|length }} tracked sessions</div>
+        <div class="cell-sub mono-val">
+          {% if server.active_players is not none %}
+          {{ server.active_players }} in round &bull; {{ server.online_players|length }} tracked
+          {% else %}
+          {{ server.online_players|length }} tracked sessions
+          {% endif %}
+        </div>
       </div>
 
       <div class="telemetry-cell">
         <div class="cell-label">Map</div>
         <div class="cell-value server-text-val">{{ server.map_name or 'N/A' }}</div>
-        <div class="cell-sub">Active sector map</div>
+        <div class="cell-sub">
+          {% if server.enter_allowed is not none %}
+          Joining: {{ 'Open' if server.enter_allowed else 'Closed' }}{% if server.respawn_allowed is not none %} &bull; Respawn: {{ 'On' if server.respawn_allowed else 'Off' }}{% endif %}
+          {% else %}
+          Active sector map
+          {% endif %}
+        </div>
       </div>
 
       <div class="telemetry-cell">
         <div class="cell-label">Round Duration</div>
         <div class="cell-value">{{ server.round_duration_str }}</div>
-        <div class="cell-sub mono-val">{{ server.round_duration }}s elapsed</div>
+        <div class="cell-sub mono-val">
+          {{ server.round_duration }}s elapsed{% if server.station_time %} &bull; Station: {{ server.station_time }}{% endif %}
+        </div>
       </div>
 
       <div class="telemetry-cell">
@@ -88,7 +102,13 @@
       <div class="telemetry-cell">
         <div class="cell-label">Admins</div>
         <div class="cell-value">{{ server.admins_count }}</div>
-        <div class="cell-sub">Staff online</div>
+        <div class="cell-sub">
+          {% if server.admin_list %}
+          {% for adm in server.admin_list[:3] %}{{ adm.key }} ({{ adm.rank }}){% if not loop.last %}, {% endif %}{% endfor %}
+          {% else %}
+          Staff online
+          {% endif %}
+        </div>
       </div>
 
       <div class="telemetry-cell">
@@ -170,6 +190,34 @@
       {% else %}
       <div class="block-empty">No players currently online</div>
       {% endif %}
+    </section>
+
+    <!-- 4b. Station Crew Manifest (?manifest World Topic) -->
+    <section class="dossier-block" aria-label="Station Crew Manifest">
+      <div class="block-header">
+        <div>
+          <h2 class="block-title">Station Crew Manifest</h2>
+          <span class="block-meta mono-val">BYOND Topic <code>?manifest</code> (SierraBay / Baystation12 / Polaris)</span>
+        </div>
+        <button type="button"
+                class="raw-json-link manifest-fetch-btn"
+                hx-post="/server/{{ server.id }}/manifest"
+                hx-target="#manifest-viewport"
+                hx-swap="innerHTML"
+                hx-indicator="#manifest-spinner">
+          <span class="htmx-indicator" id="manifest-spinner" aria-hidden="true">
+            <svg class="spinner-svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <circle cx="12" cy="12" r="9" stroke-opacity="0.25"></circle>
+              <path d="M12 3a9 9 0 0 1 9 9" stroke-linecap="square"></path>
+            </svg>
+          </span>
+          <span>Query Live Manifest</span>
+        </button>
+      </div>
+
+      <div id="manifest-viewport">
+        {% include "partials/server_manifest.html" %}
+      </div>
     </section>
 
     <!-- 5. Top-20 Players by Total Playtime on Server -->

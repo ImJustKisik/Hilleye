@@ -1,0 +1,30 @@
+<div class="manifest-partial">
+  {% if query_error %}
+  <div class="manifest-notice">{{ query_error }}</div>
+  {% endif %}
+
+  {% if server and server.manifest_sections %}
+  <div class="manifest-grid">
+    {% for dept in server.manifest_sections %}
+    <div class="manifest-dept-card">
+      <div class="manifest-dept-header">
+        <span class="manifest-dept-title">{{ dept.label }}</span>
+        <span class="manifest-dept-count mono-val">{{ dept.count }}</span>
+      </div>
+      <ul class="manifest-crew-list">
+        {% for member in dept.crew %}
+        <li class="manifest-crew-row">
+          <span class="manifest-char-name">{{ member.name }}</span>
+          <span class="manifest-char-rank">{{ member.rank }}</span>
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="block-empty">
+    No active crew manifest available (server may be in lobby, does not expose <code>?manifest</code>, or has no crew spawned).
+  </div>
+  {% endif %}
+</div>

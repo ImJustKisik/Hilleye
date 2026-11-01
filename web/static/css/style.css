@@ -1460,3 +1460,131 @@ code,
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+
+/* ==========================================================================
+   Baystation / SierraBay Telemetry & Crew Manifest Styles
+   ========================================================================== */
+
+.sector-top-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.sector-players-badge {
+  flex-shrink: 0;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  background: var(--bg-recessed);
+  border: 1px solid var(--border-strong);
+  padding: 1px 7px;
+  border-radius: var(--radius-sm);
+}
+
+.sector-living-sub {
+  color: var(--status-online);
+  font-weight: 500;
+}
+
+.sector-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 2px;
+}
+
+.sector-tag {
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  padding: 0 5px;
+  border-radius: 2px;
+}
+
+.manifest-fetch-btn {
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 11px;
+  font-size: 0.78rem;
+}
+
+.manifest-notice {
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  background: var(--bg-recessed);
+  border: 1px solid var(--border-strong);
+  border-left: 3px solid var(--accent-red);
+  border-radius: var(--radius-sm);
+}
+
+.manifest-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+}
+
+.manifest-dept-card {
+  background: var(--bg-recessed);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.manifest-dept-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.manifest-dept-title {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.manifest-dept-count {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+.manifest-crew-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.manifest-crew-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: 0.82rem;
+}
+
+.manifest-crew-row:last-child {
+  border-bottom: none;
+}
+
+.manifest-char-name {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.manifest-char-rank {
+  color: var(--text-secondary);
+  font-size: 0.76rem;
+  text-align: right;
+}

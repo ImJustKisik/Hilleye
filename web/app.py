@@ -15,7 +15,11 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from core.byond_topic import normalize_ckey
+from core.byond_topic import (
+    normalize_ckey,
+    parse_manifest_response,
+    query_topic,
+)
 from core.card_renderer import render_player_card
 from core import db as core_db
 from core.tracker import get_tracker
@@ -319,6 +323,55 @@ async def server_page(request: Request, server_id: int):
             "not_found": False,
             "servers": servers,
             "tracker_stats": tracker_stats,
+        },
+        status_code=200,
+    )
+
+
+@app.post("/server/{server_id}/manifest")
+async def fetch_server_manifest_htmx(request: Request, server_id: int):
+    """
+    Queries live BYOND World Topic `?manifest` for a Baystation / SierraBay compatible server,
+    caches the structured crew manifest in SQLite, and renders the HTML partial.
+    """
+    server_details = await core_db.get_server_details(server_id)
+    if server_details is None:
+        return HTMLResponse(
+            content='<div class="block-empty">Server not found.</div>',
+            status_code=404,
+        )
+
+    ip = server_details.get("ip")
+    port = int(server_details.get("port") or 0)
+    manifest_data: Dict[str, Any] = {}
+    query_error: Optional[str] = None
+
+    if ip and port > 0:
+        raw_resp = await query_topic(ip=ip, port=port, query="?manifest", timeout=3.0)
+        if isinstance(raw_resp, dict):
+            manifest_data = parse_manifest_response(raw_resp)
+            if manifest_data:
+                await core_db.upsert_server(
+                    identifier=server_details["identifier"],
+                    title=server_details["title"],
+                    ip=ip,
+                    port=port,
+                    is_active=server_details.get("is_active", True),
+                    manifest=manifest_data,
+                )
+                server_details = await core_db.get_server_details(server_id) or server_details
+            elif "raw" in raw_resp and "throttled" in str(raw_resp.get("raw", "")).lower():
+                query_error = "Server topic throttled (wait 3s and retry)."
+        elif raw_resp is None:
+            query_error = "Server did not respond to ?manifest topic query."
+
+    return templates.TemplateResponse(
+        request=request,
+        name="partials/server_manifest.html",
+        context={
+            "request": request,
+            "server": server_details,
+            "query_error": query_error,
         },
         status_code=200,
     )

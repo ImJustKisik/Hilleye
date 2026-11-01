@@ -8,10 +8,11 @@ binary communication (0x00 0x83 framing, 16-bit big-endian payload length,
 import asyncio
 import json
 import logging
+import re
 import socket
 import struct
 import urllib.parse
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 logger = logging.getLogger(__name__)
 
@@ -20,13 +21,211 @@ TYPE_STRING = 0x06
 TYPE_FLOAT = 0x2A
 TYPE_NULL = 0x00
 
+_LEGACY_PLAYER_KEY_RE = re.compile(r"^player(\d+)$", re.IGNORECASE)
+_DURATION_COLON_RE = re.compile(r"^(\d+):(\d{1,2})(?::(\d{1,2}))?$")
+
 
 def normalize_ckey(raw: Optional[str]) -> str:
     """Normalize a BYOND key/ckey by stripping punctuation and lowercasing."""
     if not raw:
         return ""
-    import re
     return re.sub(r"[^a-z0-9]", "", str(raw).lower())
+
+
+def parse_round_duration(raw: Any) -> Optional[int]:
+    """
+    Parses round duration from various SS13 topic formats into integer seconds:
+      - Integer / float seconds (e.g. 3725, "2450", "120.5")
+      - Baystation / SierraBay / Polaris roundduration2text() "HH:MM" (e.g. "01:24" -> 5040s)
+      - "HH:MM:SS" string (e.g. "01:24:05" -> 5045s)
+      - Deciseconds if explicitly tagged or numeric strings
+    Returns None if raw cannot be parsed.
+    """
+    if raw is None or isinstance(raw, (list, dict, bool)):
+        return None
+    if isinstance(raw, (int, float)):
+        return max(0, int(raw))
+
+    s = str(raw).strip()
+    if not s:
+        return None
+
+    # Check "HH:MM" or "HH:MM:SS" format (Baystation / SierraBay roundduration2text() outputs "hh:mm")
+    colon_match = _DURATION_COLON_RE.match(s)
+    if colon_match:
+        part1 = int(colon_match.group(1))
+        part2 = int(colon_match.group(2))
+        part3 = colon_match.group(3)
+        if part3 is not None:
+            return max(0, part1 * 3600 + part2 * 60 + int(part3))
+        # Baystation roundduration2text() is HH:MM (hours:minutes)
+        return max(0, part1 * 3600 + part2 * 60)
+
+    # Check human-readable "1h 24m" or "45m"
+    hm_match = re.match(r"^(?:(\d+)\s*h)?\s*(?:(\d+)\s*m)?\s*(?:(\d+)\s*s)?$", s, re.IGNORECASE)
+    if hm_match and any(hm_match.groups()):
+        h = int(hm_match.group(1) or 0)
+        m = int(hm_match.group(2) or 0)
+        sec = int(hm_match.group(3) or 0)
+        return max(0, h * 3600 + m * 60 + sec)
+
+    try:
+        return max(0, int(float(s)))
+    except (ValueError, TypeError):
+        return None
+
+
+def _split_byond_sublist(val: str) -> List[str]:
+    """
+    Splits a BYOND list value encoded either as comma-separated ('a,b,c'),
+    semicolon-separated ('a;b;c'), or nested list2params ('a&b&c' or 'a=1&b=2').
+    """
+    v = val.strip()
+    if not v:
+        return []
+    # Nested list2params (e.g. status=2 playerlist="Alice&Bob&Charlie" or URL-encoded)
+    if "&" in v and "," not in v:
+        items: List[str] = []
+        for token in v.split("&"):
+            token = urllib.parse.unquote_plus(token).strip()
+            if not token:
+                continue
+            if "=" in token:
+                k_part, _ = token.split("=", 1)
+                if k_part.strip():
+                    items.append(k_part.strip())
+            else:
+                items.append(token)
+        return items
+    if "," in v:
+        return [p.strip() for p in v.split(",") if p.strip()]
+    if ";" in v:
+        return [p.strip() for p in v.split(";") if p.strip()]
+    return [v]
+
+
+def parse_adminlist_value(raw: Any) -> List[Dict[str, str]]:
+    """
+    Parses Baystation / SierraBay `adminlist` parameter from `?status=2`.
+    In SierraBay: `admins[C.key] = C.holder.rank; s["adminlist"] = list2params(admins)`
+    which decodes to `"AdminOne=Game+Master&AdminTwo=Moderator"` or a list/dict.
+    Returns list of `{"ckey": ..., "key": ..., "rank": ...}` dicts.
+    """
+    if not raw:
+        return []
+    result: List[Dict[str, str]] = []
+    if isinstance(raw, dict):
+        for k, v in raw.items():
+            ck = normalize_ckey(str(k))
+            if ck:
+                result.append({"ckey": ck, "key": str(k).strip(), "rank": str(v or "Admin").strip()})
+        return result
+    if isinstance(raw, list):
+        for item in raw:
+            if isinstance(item, dict):
+                k = item.get("key") or item.get("ckey") or ""
+                ck = normalize_ckey(str(k))
+                if ck:
+                    result.append({"ckey": ck, "key": str(k).strip(), "rank": str(item.get("rank") or "Admin").strip()})
+            elif isinstance(item, str):
+                if "=" in item:
+                    k, r = item.split("=", 1)
+                    ck = normalize_ckey(k)
+                    if ck:
+                        result.append({"ckey": ck, "key": k.strip(), "rank": urllib.parse.unquote_plus(r).strip() or "Admin"})
+                else:
+                    ck = normalize_ckey(item)
+                    if ck:
+                        result.append({"ckey": ck, "key": item.strip(), "rank": "Admin"})
+        return result
+    if isinstance(raw, str):
+        s = raw.strip()
+        if not s:
+            return []
+        if "&" in s or "=" in s:
+            for k, v in urllib.parse.parse_qsl(s, keep_blank_values=True):
+                ck = normalize_ckey(k)
+                if ck:
+                    result.append({"ckey": ck, "key": k.strip(), "rank": v.strip() or "Admin"})
+        else:
+            for item in _split_byond_sublist(s):
+                ck = normalize_ckey(item)
+                if ck:
+                    result.append({"ckey": ck, "key": item.strip(), "rank": "Admin"})
+    return result
+
+
+def parse_manifest_response(raw: Union[str, Dict[str, Any], None]) -> Dict[str, List[Dict[str, str]]]:
+    """
+    Parses a Baystation / SierraBay `?manifest` World Topic response.
+    In SierraBay (`world.dm`):
+      `positions[dept][person["name"]] = person["rank"]`
+      `for(var/k in positions) positions[k] = list2params(positions[k])`
+      `return list2params(positions)`
+    Example payload:
+      `command=Ivan+Petrov=Captain&sec=John+Doe=Security+Officer&eng=Alice=Chief+Engineer`
+    Returns a dict mapping department key (e.g. 'command', 'sec', 'eng', 'med', 'sci', 'car', 'civ', 'bot')
+    to a list of `{"name": ..., "rank": ...}` dictionaries.
+    """
+    if not raw:
+        return {}
+
+    dept_dict: Dict[str, Any] = {}
+    if isinstance(raw, str):
+        s = raw.strip()
+        if s.startswith("?"):
+            s = s[1:]
+        if not s or s.lower().startswith("throttled") or "=" not in s:
+            return {}
+        for k, v in urllib.parse.parse_qsl(s, keep_blank_values=True):
+            dept_key = k.strip().lower()
+            if dept_key and v:
+                dept_dict[dept_key] = v
+    elif isinstance(raw, dict):
+        dept_dict = raw
+    else:
+        return {}
+
+    manifest: Dict[str, List[Dict[str, str]]] = {}
+    for dept, encoded_members in dept_dict.items():
+        dept_name = str(dept).strip().lower()
+        if not dept_name or dept_name in ("raw", "status", "throttled"):
+            continue
+        entries: List[Dict[str, str]] = []
+        if isinstance(encoded_members, str):
+            for char_name, job_rank in urllib.parse.parse_qsl(encoded_members, keep_blank_values=True):
+                c_name = char_name.strip()
+                j_rank = job_rank.strip() or "Crew"
+                if c_name:
+                    entries.append({"name": c_name, "rank": j_rank})
+        elif isinstance(encoded_members, dict):
+            for char_name, job_rank in encoded_members.items():
+                c_name = str(char_name).strip()
+                j_rank = str(job_rank or "Crew").strip()
+                if c_name:
+                    entries.append({"name": c_name, "rank": j_rank})
+        elif isinstance(encoded_members, list):
+            for item in encoded_members:
+                if isinstance(item, dict) and item.get("name"):
+                    entries.append(
+                        {
+                            "name": str(item["name"]).strip(),
+                            "rank": str(item.get("rank") or "Crew").strip(),
+                        }
+                    )
+                elif isinstance(item, str) and "=" in item:
+                    c_name, j_rank = item.split("=", 1)
+                    if c_name.strip():
+                        entries.append(
+                            {
+                                "name": urllib.parse.unquote_plus(c_name).strip(),
+                                "rank": urllib.parse.unquote_plus(j_rank).strip() or "Crew",
+                            }
+                        )
+        if entries:
+            manifest[dept_name] = entries
+
+    return manifest
 
 
 
@@ -146,19 +345,22 @@ def parse_topic_query_string(raw: str) -> Union[Dict[str, Any], List[str], str]:
     # If key-value pairs are present
     if "=" in clean_str:
         result: Dict[str, Any] = {}
+        legacy_players: List[Tuple[int, str]] = []
         pairs = urllib.parse.parse_qsl(clean_str, keep_blank_values=True)
         for key, val in pairs:
             k = key.strip()
             v = val.strip()
+            k_low = k.lower()
 
-            if k.lower() in ("playerlist", "players_list", "player_list", "list"):
-                if "," in v:
-                    result[k] = [p.strip() for p in v.split(",") if p.strip()]
-                elif v:
-                    result[k] = [v]
-                else:
-                    result[k] = []
-            elif k.lower() in ("players", "player_count", "version", "round_duration", "admins"):
+            legacy_match = _LEGACY_PLAYER_KEY_RE.match(k)
+            if legacy_match and v:
+                legacy_players.append((int(legacy_match.group(1)), v))
+
+            if k_low in ("playerlist", "players_list", "player_list", "list"):
+                result[k] = _split_byond_sublist(v) if v else []
+            elif k_low == "adminlist":
+                result[k] = parse_adminlist_value(v)
+            elif k_low in ("players", "player_count", "version", "round_duration", "admins", "active_players"):
                 if v.isdigit():
                     result[k] = int(v)
                 elif "," in v:
@@ -172,6 +374,12 @@ def parse_topic_query_string(raw: str) -> Union[Dict[str, Any], List[str], str]:
                     result[k] = [p.strip() for p in v.split(",") if p.strip()]
                 else:
                     result[k] = v
+
+        # Synthesize playerlist from Baystation / SierraBay / TG legacy player0..playerN keys
+        if legacy_players and not result.get("playerlist"):
+            legacy_players.sort(key=lambda item: item[0])
+            result["playerlist"] = [p_name for _, p_name in legacy_players if p_name]
+
         return result
 
     # If comma-separated list of items (e.g. who / player list response)
