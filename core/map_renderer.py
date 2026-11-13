@@ -24,9 +24,9 @@ from core.config import AppConfig
 
 logger = logging.getLogger(__name__)
 
-GITHUB_ARCHIVE_TIMEOUT_SECONDS: float = 60.0
-MAX_GITHUB_ARCHIVE_BYTES: int = 250 * 1024 * 1024
-MAX_EXTRACTED_REPO_BYTES: int = 512 * 1024 * 1024
+GITHUB_ARCHIVE_TIMEOUT_SECONDS: float = 300.0
+MAX_GITHUB_ARCHIVE_BYTES: int = 1024 * 1024 * 1024
+MAX_EXTRACTED_REPO_BYTES: int = 1024 * 1024 * 1024
 
 _GITHUB_REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _GITHUB_BRANCH_RE = re.compile(r"^[A-Za-z0-9_./-]+$")
@@ -59,14 +59,23 @@ _SKIP_ATOM_PREFIXES: Tuple[str, ...] = (
 )
 
 _ALLOWED_EXTRACT_PREFIXES: Tuple[str, ...] = (
-    "code/__defines/",
     "code/",
-    "maps/",
+    "maps/sierra/",
     "mods/",
     "packs/",
     "icons/",
     "nano/images/sierra/",
 )
+
+
+def _should_extract_github_path(rel_str: str) -> bool:
+    """Only extract map/icon/DM assets needed for Sierra rendering."""
+    low = rel_str.lower()
+    if low.startswith(("maps/sierra/", "icons/", "nano/images/sierra/")):
+        return True
+    if low.startswith(("code/", "mods/", "packs/")):
+        return low.endswith((".dm", ".dmi", ".png"))
+    return False
 
 
 @dataclass(frozen=True)
@@ -138,10 +147,34 @@ SIERRA_Z_LEVELS: Tuple[SierraLevelSpec, ...] = (
 _LEVEL_BY_Z: Dict[int, SierraLevelSpec] = {spec.z: spec for spec in SIERRA_Z_LEVELS}
 
 _map_build_lock = asyncio.Lock()
+_background_build_task: Optional[asyncio.Task] = None
 _github_transport_factory: Optional[Callable[[], httpx.AsyncBaseTransport]] = None
 _area_cache_lock = threading.Lock()
 _area_cache_key: Optional[Tuple[str, float]] = None
 _area_grids: Dict[int, Tuple[int, int, List[str], List[int]]] = {}
+_status_lock = threading.Lock()
+_build_status: Dict[str, Any] = {
+    "state": "idle",
+    "phase": "",
+    "source": "",
+    "downloaded_mb": 0.0,
+    "total_mb": 0.0,
+    "detail": "",
+    "error": "",
+    "started_at": "",
+    "finished_at": "",
+}
+
+
+def _set_build_status(**updates: Any) -> None:
+    with _status_lock:
+        _build_status.update(updates)
+
+
+def get_map_build_status() -> Dict[str, Any]:
+    """Return a snapshot of the current/last station map build task."""
+    with _status_lock:
+        return dict(_build_status)
 
 
 def set_github_http_transport(factory: Optional[Callable[[], httpx.AsyncBaseTransport]]) -> None:
@@ -684,40 +717,10 @@ def _detect_local_git_commit(repo_dir: Path) -> str:
     return ""
 
 
-async def _download_github_repo_subset(
-    github_repo: str,
-    github_branch: str,
-    dest_dir: Path,
-) -> None:
-    """Safely download and selectively extract map/icon files from GitHub archive tarball."""
-    repo_clean = (github_repo or "").strip()
-    branch_clean = (github_branch or "").strip()
-    if not _GITHUB_REPO_RE.match(repo_clean):
-        raise ValueError("Некорректное имя GitHub-репозитория (ожидается owner/repo).")
-    if not _GITHUB_BRANCH_RE.match(branch_clean) or ".." in branch_clean:
-        raise ValueError("Некорректное имя ветки GitHub.")
-
-    url = f"https://github.com/{repo_clean}/archive/refs/heads/{branch_clean}.tar.gz"
-    transport = _github_transport_factory() if _github_transport_factory else None
-    client_kwargs: Dict[str, Any] = {
-        "timeout": GITHUB_ARCHIVE_TIMEOUT_SECONDS,
-        "follow_redirects": True,
-    }
-    if transport is not None:
-        client_kwargs["transport"] = transport
-
-    async with httpx.AsyncClient(**client_kwargs) as client:
-        resp = await client.get(url)
-        if resp.status_code != 200:
-            raise RuntimeError(f"GitHub вернул HTTP {resp.status_code} при загрузке {url}")
-        raw_bytes = resp.content
-
-    if len(raw_bytes) > MAX_GITHUB_ARCHIVE_BYTES:
-        raise ValueError("Архив GitHub превышает допустимый размер.")
-
+def _extract_tar_subset_sync(archive_path: Path, dest_dir: Path) -> None:
     dest_resolved = dest_dir.resolve()
     total_extracted = 0
-    with tarfile.open(fileobj=io.BytesIO(raw_bytes), mode="r:gz") as tf:
+    with tarfile.open(archive_path, mode="r:gz") as tf:
         for member in tf.getmembers():
             if not member.isreg():
                 continue
@@ -728,7 +731,7 @@ async def _download_github_repo_subset(
             if any(p in ("..", "") for p in rel_parts):
                 continue
             rel_str = "/".join(rel_parts)
-            if not any(rel_str.startswith(prefix) for prefix in _ALLOWED_EXTRACT_PREFIXES):
+            if not _should_extract_github_path(rel_str):
                 continue
             total_extracted += member.size
             if total_extracted > MAX_EXTRACTED_REPO_BYTES:
@@ -746,6 +749,71 @@ async def _download_github_repo_subset(
                     if not chunk:
                         break
                     dst.write(chunk)
+
+
+async def _download_github_repo_subset(
+    github_repo: str,
+    github_branch: str,
+    dest_dir: Path,
+) -> None:
+    """Safely stream and selectively extract map/icon files from GitHub archive tarball."""
+    repo_clean = (github_repo or "").strip()
+    branch_clean = (github_branch or "").strip()
+    if not _GITHUB_REPO_RE.match(repo_clean):
+        raise ValueError("Некорректное имя GitHub-репозитория (ожидается owner/repo).")
+    if not _GITHUB_BRANCH_RE.match(branch_clean) or ".." in branch_clean:
+        raise ValueError("Некорректное имя ветки GitHub.")
+
+    url = f"https://github.com/{repo_clean}/archive/refs/heads/{branch_clean}.tar.gz"
+    transport = _github_transport_factory() if _github_transport_factory else None
+    client_kwargs: Dict[str, Any] = {
+        "timeout": httpx.Timeout(
+            connect=15.0,
+            read=GITHUB_ARCHIVE_TIMEOUT_SECONDS,
+            write=30.0,
+            pool=15.0,
+        ),
+        "follow_redirects": True,
+    }
+    if transport is not None:
+        client_kwargs["transport"] = transport
+
+    archive_path = dest_dir / "_github_archive.tar.gz"
+    downloaded = 0
+    _set_build_status(
+        phase="downloading_github",
+        downloaded_mb=0.0,
+        total_mb=0.0,
+        detail=f"Скачивание {repo_clean}@{branch_clean} с GitHub...",
+    )
+    try:
+        async with httpx.AsyncClient(**client_kwargs) as client:
+            async with client.stream("GET", url) as resp:
+                if resp.status_code != 200:
+                    raise RuntimeError(f"GitHub вернул HTTP {resp.status_code} при загрузке {url}")
+                content_len = resp.headers.get("content-length")
+                total_mb = round(int(content_len) / (1024 * 1024), 1) if content_len and content_len.isdigit() else 0.0
+                _set_build_status(total_mb=total_mb)
+                with archive_path.open("wb") as fp:
+                    async for chunk in resp.aiter_bytes(chunk_size=262144):
+                        if not chunk:
+                            continue
+                        downloaded += len(chunk)
+                        if downloaded > MAX_GITHUB_ARCHIVE_BYTES:
+                            raise ValueError("Архив GitHub превышает допустимый размер.")
+                        fp.write(chunk)
+                        _set_build_status(
+                            downloaded_mb=round(downloaded / (1024 * 1024), 1),
+                            detail=f"Скачивание с GitHub: {downloaded / (1024 * 1024):.1f} МБ...",
+                        )
+
+        _set_build_status(
+            phase="extracting",
+            detail="Распаковка карт и спрайтов из архива GitHub...",
+        )
+        await asyncio.to_thread(_extract_tar_subset_sync, archive_path, dest_dir)
+    finally:
+        archive_path.unlink(missing_ok=True)
 
 
 def _render_maps_from_repo_sync(
@@ -984,33 +1052,90 @@ async def build_map_cache(
             and local_repo is not None
             and (local_repo / "maps" / "sierra").is_dir()
         )
-        if use_local and local_repo is not None:
-            commit_sha = await asyncio.to_thread(_detect_local_git_commit, local_repo)
-            return await asyncio.to_thread(
-                _render_maps_from_repo_sync,
-                local_repo,
-                cache_dir,
-                tile_px=config.maps_tile_px,
-                source_kind="local_git",
-                commit_sha=commit_sha,
-                github_repo=config.maps_github_repo,
-                github_branch=config.maps_github_branch,
+        _set_build_status(
+            state="running",
+            phase="rendering" if use_local else "downloading_github",
+            source="local_git" if use_local else "github",
+            downloaded_mb=0.0,
+            total_mb=0.0,
+            detail="Рендер палуб Z1–Z7 из локального Git..." if use_local else "Подготовка загрузки с GitHub...",
+            error="",
+            started_at=time.strftime("%Y-%m-%d %H:%M:%S"),
+            finished_at="",
+        )
+        try:
+            if use_local and local_repo is not None:
+                commit_sha = await asyncio.to_thread(_detect_local_git_commit, local_repo)
+                manifest = await asyncio.to_thread(
+                    _render_maps_from_repo_sync,
+                    local_repo,
+                    cache_dir,
+                    tile_px=config.maps_tile_px,
+                    source_kind="local_git",
+                    commit_sha=commit_sha,
+                    github_repo=config.maps_github_repo,
+                    github_branch=config.maps_github_branch,
+                )
+            else:
+                with tempfile.TemporaryDirectory(prefix="hilleye_maps_") as tmp_dir:
+                    tmp_path = Path(tmp_dir)
+                    await _download_github_repo_subset(
+                        config.maps_github_repo,
+                        config.maps_github_branch,
+                        tmp_path,
+                    )
+                    _set_build_status(
+                        phase="rendering",
+                        detail="Рендер палуб Z1–Z7 (.dmm + .dmi)...",
+                    )
+                    manifest = await asyncio.to_thread(
+                        _render_maps_from_repo_sync,
+                        tmp_path,
+                        cache_dir,
+                        tile_px=config.maps_tile_px,
+                        source_kind="github",
+                        commit_sha=config.maps_github_branch,
+                        github_repo=config.maps_github_repo,
+                        github_branch=config.maps_github_branch,
+                    )
+        except Exception as exc:
+            _set_build_status(
+                state="error",
+                phase="error",
+                detail="",
+                error=str(exc),
+                finished_at=time.strftime("%Y-%m-%d %H:%M:%S"),
             )
+            raise
 
-        with tempfile.TemporaryDirectory(prefix="hilleye_maps_") as tmp_dir:
-            tmp_path = Path(tmp_dir)
-            await _download_github_repo_subset(
-                config.maps_github_repo,
-                config.maps_github_branch,
-                tmp_path,
-            )
-            return await asyncio.to_thread(
-                _render_maps_from_repo_sync,
-                tmp_path,
-                cache_dir,
-                tile_px=config.maps_tile_px,
-                source_kind="github",
-                commit_sha=config.maps_github_branch,
-                github_repo=config.maps_github_repo,
-                github_branch=config.maps_github_branch,
-            )
+        _set_build_status(
+            state="ready",
+            phase="done",
+            detail=f"Собрано {len(manifest.get('levels', []))} палуб за {manifest.get('elapsed_seconds')}с",
+            error="",
+            finished_at=time.strftime("%Y-%m-%d %H:%M:%S"),
+        )
+        return manifest
+
+
+def start_map_rebuild_background(
+    config: AppConfig,
+    *,
+    force: bool = True,
+    prefer_github: bool = False,
+) -> bool:
+    """Launch station map build in the background; returns False if already running."""
+    global _background_build_task
+    if _background_build_task is not None and not _background_build_task.done():
+        return False
+
+    async def _runner() -> None:
+        try:
+            await build_map_cache(config, force=force, prefer_github=prefer_github)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("Background station map rebuild failed", exc_info=True)
+
+    _background_build_task = asyncio.create_task(_runner())
+    return True

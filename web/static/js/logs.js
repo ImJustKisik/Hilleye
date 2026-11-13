@@ -1185,6 +1185,34 @@
       });
   }
 
+  function initAdminMapBuildPolling() {
+    var banner = document.getElementById("logs-map-build-status");
+    if (!banner || banner.dataset.mapBuilding !== "1") return;
+    var detailEl = document.getElementById("logs-map-build-detail");
+    var timer = setInterval(function () {
+      fetch("/logs/maps/manifest", { credentials: "same-origin" })
+        .then(function (resp) {
+          if (!resp.ok) throw new Error("HTTP " + resp.status);
+          return resp.json();
+        })
+        .then(function (data) {
+          var bs = data && data.build_status;
+          if (!bs) return;
+          if (bs.state === "running") {
+            if (detailEl && bs.detail) {
+              detailEl.textContent = bs.detail;
+            }
+            return;
+          }
+          clearInterval(timer);
+          window.location.replace("/logs/admin");
+        })
+        .catch(function () {
+          // Keep polling quietly on transient error
+        });
+    }, 2000);
+  }
+
   function initAll() {
     initDragAndDropUpload();
     initRoundFilterHelpers();
@@ -1192,6 +1220,7 @@
     initCopyButtons();
     scrollFocusedLine();
     initRoundMapViewer();
+    initAdminMapBuildPolling();
   }
 
   document.addEventListener("DOMContentLoaded", initAll);

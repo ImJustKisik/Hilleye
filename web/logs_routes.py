@@ -836,6 +836,7 @@ def create_logs_router(
         stats["total_size_label"] = _fmt_bytes(stats["total_bytes"])
         stats["last_indexed_str"] = _fmt_ts_utc(stats.get("last_indexed_at"))
         map_manifest = map_renderer.get_map_manifest(config.resolved_maps_cache_dir())
+        map_build_status = map_renderer.get_map_build_status()
 
         return templates.TemplateResponse(
             request=request,
@@ -851,6 +852,7 @@ def create_logs_router(
                 "stats": stats,
                 "index_include_debug": config.logs_index_include_debug,
                 "map_manifest": map_manifest,
+                "map_build_status": map_build_status,
                 "maps_repo_dir": str(config.resolved_maps_repo_dir() or ""),
                 "maps_github_repo": config.maps_github_repo,
                 "maps_github_branch": config.maps_github_branch,
@@ -921,12 +923,40 @@ def create_logs_router(
     async def admin_rebuild_maps(
         request: Request,
         source: str = Form(default="auto"),
+        background: str = Form(default="0"),
         csrf_token: str = Form(default=""),
     ):
         user = await _require_api_user(request, require_admin=True)
         discord_auth.verify_csrf(user, csrf_token or request.headers.get("x-csrf-token"))
         config = get_config_fn()
         prefer_gh = source.strip().lower() == "github"
+        run_bg = _parse_bool_flag(background, default=False)
+        if run_bg:
+            started = map_renderer.start_map_rebuild_background(
+                config,
+                force=True,
+                prefer_github=prefer_gh,
+            )
+            await logs_db.record_audit_event(
+                "rebuild_maps",
+                discord_id=user.discord_id,
+                discord_username=user.username,
+                ip_address=discord_auth.get_client_ip(request),
+                details=f"background=1, prefer_github={prefer_gh}, started={started}",
+            )
+            if _prefers_json(request):
+                return {
+                    "ok": True,
+                    "started": started,
+                    "build_status": map_renderer.get_map_build_status(),
+                }
+            msg = quote(
+                "Запущена фоновая сборка карты. Прогресс отображается ниже."
+                if started
+                else "Сборка карты уже выполняется в фоне."
+            )
+            return RedirectResponse(f"/logs/admin?notice={msg}", status_code=303)
+
         try:
             manifest = await map_renderer.build_map_cache(
                 config,
@@ -1364,7 +1394,8 @@ def create_logs_router(
     async def logs_maps_manifest(request: Request):
         await _require_api_user(request)
         config = get_config_fn()
-        return map_renderer.get_map_manifest(config.resolved_maps_cache_dir())
+        manifest = map_renderer.get_map_manifest(config.resolved_maps_cache_dir())
+        return {**manifest, "build_status": map_renderer.get_map_build_status()}
 
     @router.get("/logs/maps/z/{z_level}.png")
     async def logs_map_tile_image(request: Request, z_level: int):
