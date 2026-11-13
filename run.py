@@ -1,6 +1,6 @@
 """
-CYBERSYN INTEL // Application Launcher
-Entry point for starting the monolithic CyberSyn Intel server.
+Hilleye // Application Launcher
+Entry point for starting the monolithic Hilleye server.
 """
 
 import sys

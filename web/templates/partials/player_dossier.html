@@ -5,6 +5,8 @@
       <div class="subject-meta-row">
         <span class="subject-label">Player Dossier</span>
         <a href="/api/v1/player/{{ dossier.ckey }}" target="_blank" rel="noopener" class="raw-json-link" title="View raw machine-readable JSON dossier">Raw JSON</a>
+        <a href="/api/v1/player/{{ dossier.ckey }}/card.png" target="_blank" rel="noopener" class="raw-json-link" title="Open shareable PNG dossier card">Card PNG</a>
+        <button type="button" class="raw-json-link copy-link-btn" data-copy-path="/player/{{ dossier.ckey }}" title="Copy dossier permalink">Copy Link</button>
       </div>
       <h2 class="subject-ckey">{{ dossier.ckey }}</h2>
     </div>
@@ -17,7 +19,11 @@
           <span class="status-state">Online — Active Session</span>
         </div>
         <div class="status-detail">
+          {% if dossier.current_server_id %}
+          <a href="/server/{{ dossier.current_server_id }}" class="status-server server-link">{{ dossier.current_server }}</a>
+          {% else %}
           <span class="status-server">{{ dossier.current_server }}</span>
+          {% endif %}
           <span class="status-sep">&bull;</span>
           <span class="status-dur mono-val">{{ dossier.current_session_duration }}</span>
         </div>
@@ -41,7 +47,7 @@
     <div class="telemetry-cell">
       <div class="cell-label">Total Playtime</div>
       <div class="cell-value">{{ dossier.total_hours }}<span class="unit">h</span></div>
-      <div class="cell-sub mono-val">{{ dossier.total_playtime_seconds }}s recorded</div>
+      <div class="cell-sub mono-val">{{ dossier.sessions_count }} {{ 'session' if dossier.sessions_count == 1 else 'sessions' }} &bull; {{ "{:,}".format(dossier.total_playtime_seconds) }}s</div>
     </div>
     <div class="telemetry-cell">
       <div class="cell-label">Servers Visited</div>
@@ -81,9 +87,7 @@
             <span class="dist-last">Last seen: {{ srv.last_visit }} UTC</span>
           </div>
         </div>
-        <div class="meter-track" role="progressbar" aria-valuenow="{{ srv.percentage }}" aria-valuemin="0" aria-valuemax="100" aria-label="{{ srv.title }} playtime share">
-          <div class="meter-fill" style="width: {{ srv.percentage }}%;"></div>
-        </div>
+        <progress class="meter-progress" value="{{ srv.percentage }}" max="100" aria-label="{{ srv.title }} playtime share">{{ srv.percentage }}%</progress>
       </div>
       {% endfor %}
     </div>
@@ -96,7 +100,7 @@
   <section class="dossier-block">
     <div class="block-header">
       <h3 class="block-title">Recent Sessions</h3>
-      <span class="block-meta mono-val">Last {{ dossier.recent_sessions|length }}</span>
+      <span class="block-meta mono-val">{{ dossier.sessions_count }} {{ 'session' if dossier.sessions_count == 1 else 'sessions' }} total</span>
     </div>
 
     <div class="data-table-wrapper">
@@ -111,31 +115,11 @@
           </tr>
         </thead>
         <tbody>
-          {% for sess in dossier.recent_sessions %}
-          <tr class="{% if sess.is_active %}row-active{% endif %}">
-            <td class="col-idx">{{ loop.index }}</td>
-            <td class="col-server">
-              {% if sess.server_id %}
-              <a href="/server/{{ sess.server_id }}" class="server-link">{{ sess.server_title }}</a>
-              {% else %}
-              {{ sess.server_title }}
-              {% endif %}
-            </td>
-            <td class="col-time">{{ sess.started_at }}</td>
-            <td class="col-num col-dur">{{ sess.duration_str }}</td>
-            <td class="col-state">
-              {% if sess.is_active %}
-              <span class="session-state active">
-                <span class="status-dot online" aria-hidden="true"></span>
-                <span>Active</span>
-              </span>
-              {% else %}
-              <span class="session-state closed">Completed</span>
-              {% endif %}
-            </td>
-          </tr>
-          {% endfor %}
-          {% if not dossier.recent_sessions %}
+          {% if dossier.recent_sessions %}
+            {% set sessions_offset = dossier.sessions_offset | default(0) %}
+            {% set sessions_limit = dossier.sessions_limit | default(10) %}
+            {% include "partials/player_sessions_rows.html" %}
+          {% else %}
           <tr>
             <td colspan="5" class="table-empty-cell">No session history available.</td>
           </tr>

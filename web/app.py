@@ -1,5 +1,5 @@
 """
-CYBERSYN INTEL // Web Application
+Hilleye // Web Application
 FastAPI application, Lifespan manager, REST endpoints, and HTMX SSR views.
 """
 
@@ -11,12 +11,13 @@ from pathlib import Path
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
-from fastapi import FastAPI, Form, HTTPException, Request
+from fastapi import FastAPI, Form, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exception_handlers import http_exception_handler, request_validation_exception_handler
 from fastapi.responses import HTMLResponse, JSONResponse, Response, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from core.byond_topic import (
     normalize_ckey,
@@ -122,12 +123,48 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 
+_CSP_HEADER = (
+    "default-src 'self'; "
+    "script-src 'self'; "
+    "style-src 'self'; "
+    "img-src 'self' data:; "
+    "object-src 'none'; "
+    "base-uri 'self'; "
+    "frame-ancestors 'self'; "
+    "form-action 'self'"
+)
+
+
+def _prefers_html(request: Request) -> bool:
+    return "text/html" in request.headers.get("accept", "").lower()
+
+
+async def _get_shell_context() -> Dict[str, Any]:
+    """Safely fetches header/footer status context for SSR templates, including error pages."""
+    servers: List[Dict[str, Any]] = []
+    tracker_stats: Dict[str, Any] = {}
+    try:
+        if core_db._connection is not None:
+            servers = await core_db.get_active_servers()
+    except Exception:
+        logger.debug("Failed to load active servers for shell context", exc_info=True)
+    try:
+        tracker = get_tracker()
+        if tracker is not None:
+            tracker_stats = tracker.get_stats()
+    except Exception:
+        logger.debug("Failed to load tracker stats for shell context", exc_info=True)
+    return {"servers": servers, "tracker_stats": tracker_stats}
+
+
 @app.middleware("http")
 async def response_headers(request: Request, call_next):
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "SAMEORIGIN"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    if not request.url.path.startswith(("/docs", "/redoc", "/openapi.json")):
+        response.headers["Content-Security-Policy"] = _CSP_HEADER
     if request.url.path.startswith("/static/") and response.status_code in (200, 206, 304):
         response.headers["Cache-Control"] = "public, max-age=86400, stale-while-revalidate=3600"
     return response
@@ -135,13 +172,63 @@ async def response_headers(request: Request, call_next):
 
 @app.exception_handler(RequestValidationError)
 async def validation_error(request: Request, exc: RequestValidationError):
-    if "text/html" in request.headers.get("accept", "").lower():
+    if _prefers_html(request):
+        shell = await _get_shell_context()
         return templates.TemplateResponse(
-            request=request, name="error.html",
-            context={"status_code": 422, "message": "Invalid request parameters. Check the address or form values and try again."},
+            request=request,
+            name="error.html",
+            context={
+                **shell,
+                "status_code": 422,
+                "heading": "Invalid request",
+                "message": "Invalid request parameters. Check the address or form values and try again.",
+            },
             status_code=422,
         )
     return await request_validation_exception_handler(request, exc)
+
+
+@app.exception_handler(StarletteHTTPException)
+async def http_error_handler(request: Request, exc: StarletteHTTPException):
+    if _prefers_html(request):
+        shell = await _get_shell_context()
+        if exc.status_code == 404:
+            heading = "Page not found"
+            message = "The requested page or resource could not be found."
+        else:
+            heading = "Request error"
+            message = "The server could not complete this request."
+        return templates.TemplateResponse(
+            request=request,
+            name="error.html",
+            context={
+                **shell,
+                "status_code": exc.status_code,
+                "heading": heading,
+                "message": message,
+            },
+            status_code=exc.status_code,
+        )
+    return await http_exception_handler(request, exc)
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    logger.exception("Unhandled error handling %s %s", request.method, request.url.path)
+    if _prefers_html(request):
+        shell = await _get_shell_context()
+        return templates.TemplateResponse(
+            request=request,
+            name="error.html",
+            context={
+                **shell,
+                "status_code": 500,
+                "heading": "Internal server error",
+                "message": "An unexpected internal error occurred. Please try again shortly.",
+            },
+            status_code=500,
+        )
+    return JSONResponse(status_code=500, content={"detail": "Internal Server Error"})
 
 
 @app.get("/health")
@@ -304,8 +391,7 @@ async def search_player(request: Request, ckey: str = Form(default="")):
         context={"dossier": dossier, "ckey": norm_ckey},
         status_code=200,
     )
-    if "hx-request" in request.headers:
-        response.headers["HX-Push-Url"] = f"/player/{norm_ckey}"
+    response.headers["HX-Push-Url"] = f"/player/{norm_ckey}"
     return response
 
 
@@ -315,12 +401,19 @@ async def dashboard_page(request: Request):
     Renders main tactical search console and monitored sector overview.
     """
     servers = await core_db.get_active_servers()
+    overview = await core_db.get_network_overview()
     tracker = get_tracker()
     tracker_stats = tracker.get_stats() if tracker else {}
     return templates.TemplateResponse(
         request=request,
         name="index.html",
-        context={"request": request, "servers": servers, "tracker_stats": tracker_stats},
+        context={
+            "request": request,
+            "servers": servers,
+            "overview": overview,
+            "tracker_stats": tracker_stats,
+            "base_url": str(request.base_url).rstrip("/"),
+        },
     )
 
 
@@ -346,8 +439,41 @@ async def player_page(request: Request, ckey: str):
             "not_found": (dossier is None),
             "servers": servers,
             "tracker_stats": tracker_stats,
+            "base_url": str(request.base_url).rstrip("/"),
         },
         status_code=404 if dossier is None else 200,
+    )
+
+
+@app.get("/player/{ckey}/sessions")
+async def player_sessions_partial(
+    request: Request,
+    ckey: str,
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=10, ge=1, le=50),
+):
+    """
+    HTMX pagination partial for player recent sessions table rows.
+    """
+    norm_ckey = normalize_ckey(ckey.strip()) if ckey else ""
+    dossier = (
+        await core_db.get_player_dossier(norm_ckey, sessions_limit=limit, sessions_offset=offset)
+        if norm_ckey
+        else None
+    )
+    if dossier is None:
+        return HTMLResponse(content="", status_code=404)
+
+    return templates.TemplateResponse(
+        request=request,
+        name="partials/player_sessions_rows.html",
+        context={
+            "request": request,
+            "dossier": dossier,
+            "sessions_offset": offset,
+            "sessions_limit": limit,
+        },
+        status_code=200,
     )
 
 
@@ -371,11 +497,16 @@ async def server_page(request: Request, server_id: int):
                 "server": None,
                 "server_id": server_id,
                 "not_found": True,
+                "manifest_supported": False,
                 "servers": servers,
                 "tracker_stats": tracker_stats,
+                "base_url": str(request.base_url).rstrip("/"),
             },
             status_code=404,
         )
+
+    ident = server_details.get("identifier") or ""
+    manifest_supported = bool(server_details.get("topic_available") or ident in KNOWN_PAGER_ENDPOINTS)
 
     return templates.TemplateResponse(
         request=request,
@@ -385,8 +516,10 @@ async def server_page(request: Request, server_id: int):
             "server": server_details,
             "server_id": server_id,
             "not_found": False,
+            "manifest_supported": manifest_supported,
             "servers": servers,
             "tracker_stats": tracker_stats,
+            "base_url": str(request.base_url).rstrip("/"),
         },
         status_code=200,
     )

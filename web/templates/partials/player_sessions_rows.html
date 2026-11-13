@@ -1,0 +1,48 @@
+{% set base_offset = sessions_offset | default(0) %}
+{% set page_limit = sessions_limit | default(10) %}
+{% for sess in dossier.recent_sessions %}
+<tr class="{% if sess.is_active %}row-active{% endif %}">
+  <td class="col-idx">{{ base_offset + loop.index }}</td>
+  <td class="col-server">
+    {% if sess.server_id %}
+    <a href="/server/{{ sess.server_id }}" class="server-link">{{ sess.server_title }}</a>
+    {% else %}
+    {{ sess.server_title }}
+    {% endif %}
+  </td>
+  <td class="col-time">{{ sess.started_at }}</td>
+  <td class="col-num col-dur">{{ sess.duration_str }}</td>
+  <td class="col-state">
+    {% if sess.is_active %}
+    <span class="session-state active">
+      <span class="status-dot online" aria-hidden="true"></span>
+      <span>Active</span>
+    </span>
+    {% else %}
+    <span class="session-state closed">Completed</span>
+    {% endif %}
+  </td>
+</tr>
+{% endfor %}
+{% if dossier.has_more_sessions %}
+{% set next_offset = base_offset + (dossier.recent_sessions|length) %}
+{% set remaining = dossier.sessions_count - next_offset %}
+<tr id="load-more-sessions-row">
+  <td colspan="5" class="table-load-more-cell">
+    <button type="button"
+            class="raw-json-link load-more-btn"
+            hx-get="/player/{{ dossier.ckey }}/sessions?offset={{ next_offset }}&amp;limit={{ page_limit }}"
+            hx-target="#load-more-sessions-row"
+            hx-swap="outerHTML"
+            hx-indicator="#sessions-load-spinner">
+      <span class="htmx-indicator" id="sessions-load-spinner" aria-hidden="true">
+        <svg class="spinner-svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <circle cx="12" cy="12" r="9" stroke-opacity="0.25"></circle>
+          <path d="M12 3a9 9 0 0 1 9 9" stroke-linecap="square"></path>
+        </svg>
+      </span>
+      <span>Load more sessions ({{ remaining }} remaining)</span>
+    </button>
+  </td>
+</tr>
+{% endif %}

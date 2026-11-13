@@ -3,11 +3,20 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="htmx-config" content='{"includeIndicatorStyles": false, "allowEval": false}'>
   <meta name="description" content="Hilleye — Space Station 13 Player Dossier &amp; Server Monitoring Registry">
+  {% block head_meta %}
+  <meta property="og:site_name" content="Hilleye">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Hilleye — SS13 Player Dossier &amp; Server Monitor">
+  <meta property="og:description" content="Space Station 13 player playtime dossiers, live server telemetry, and crew manifests.">
+  <meta name="twitter:card" content="summary">
+  {% endblock %}
   <title>{% block title %}Hilleye — SS13 Player Dossier &amp; Server Monitor{% endblock %}</title>
-  <link rel="icon" type="image/svg+xml" href="/static/img/favicon.svg">
+  <link rel="icon" type="image/svg+xml" href="/static/img/logo.svg">
   <link rel="stylesheet" href="/static/css/style.css">
-  <script src="/static/js/htmx.min.js"></script>
+  <script src="/static/js/htmx.min.js" defer></script>
+  <script src="/static/js/app.js" defer></script>
 </head>
 <body>
   <div class="app-shell">
@@ -22,11 +31,11 @@
 
       <nav class="header-nav" aria-label="System status and links">
         <div class="status-pill" title="Active monitored BYOND servers">
-          <span class="status-dot online" aria-hidden="true"></span>
+          <span class="status-dot {{ 'online' if servers else 'offline' }}" aria-hidden="true"></span>
           <span class="status-pill-label">Monitored servers:</span>
-          <span class="status-pill-value">{% if servers %}{{ servers|length }}{% else %}Active{% endif %}</span>
+          <span class="status-pill-value">{{ servers|length if servers is defined else 0 }}</span>
         </div>
-        {% if tracker_stats and tracker_stats.tracked_players %}
+        {% if tracker_stats is defined and tracker_stats and tracker_stats.tracked_players is not none %}
         <div class="status-pill hide-mobile" title="Players currently online across monitored servers">
           <span class="status-pill-label">Players online:</span>
           <span class="status-pill-value">{{ tracker_stats.tracked_players }}</span>
@@ -52,6 +61,8 @@
         <span>{{ (tracker_stats.poll_interval if tracker_stats and tracker_stats.poll_interval else 120) }}s poll / {{ (tracker_stats.grace_period_seconds if tracker_stats and tracker_stats.grace_period_seconds else 300) }}s grace</span>
         <span class="sep">&bull;</span>
         <a href="/api/v1/servers">Servers API</a>
+        <span class="sep">&bull;</span>
+        <a href="/docs">API Docs</a>
         <span class="sep">&bull;</span>
         <a href="/health">Health</a>
       </div>

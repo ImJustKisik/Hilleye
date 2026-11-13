@@ -1,9 +1,9 @@
 {% extends "base.html" %}
-{% block title %}{{ status_code }} — Invalid Request — Hilleye{% endblock %}
+{% block title %}{{ status_code }} — {{ heading or 'Invalid Request' }} — Hilleye{% endblock %}
 {% block content %}
 <div class="panel not-found-panel" role="status">
   <div class="not-found-body">
-    <h1 class="not-found-heading">{{ status_code }} — Invalid request</h1>
+    <h1 class="not-found-heading">{{ status_code }} — {{ heading or 'Invalid request' }}</h1>
     <p class="not-found-desc">{{ message }}</p>
     <p class="not-found-meta">Return to the <a href="/" class="server-link">main directory</a>.</p>
   </div>

@@ -1,5 +1,28 @@
 {% extends "base.html" %}
 
+{% block title %}
+  {% if dossier %}{{ dossier.ckey }} — Player Dossier — Hilleye{% elif not_found and ckey %}{{ ckey }} — Not Found — Hilleye{% else %}Hilleye — SS13 Player Dossier &amp; Server Monitor{% endif %}
+{% endblock %}
+
+{% block head_meta %}
+  <meta property="og:site_name" content="Hilleye">
+  {% if dossier %}
+  <meta property="og:type" content="profile">
+  <meta property="og:title" content="{{ dossier.ckey }} — Hilleye Player Dossier">
+  <meta property="og:description" content="Playtime: {{ dossier.total_hours }}h across {{ dossier.servers_count }} servers ({{ dossier.sessions_count }} sessions). {{ 'Online now on ' ~ dossier.current_server if dossier.is_online else 'Offline — Last seen ' ~ dossier.last_seen ~ ' UTC' }}.">
+  <meta property="og:url" content="{{ base_url }}/player/{{ dossier.ckey }}">
+  <meta property="og:image" content="{{ base_url }}/api/v1/player/{{ dossier.ckey }}/card.png">
+  <meta property="og:image:width" content="720">
+  <meta property="og:image:height" content="360">
+  <meta name="twitter:card" content="summary_large_image">
+  {% else %}
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Hilleye — SS13 Player Dossier &amp; Server Monitor">
+  <meta property="og:description" content="Space Station 13 player playtime dossiers, live server telemetry, and crew manifests.">
+  <meta name="twitter:card" content="summary">
+  {% endif %}
+{% endblock %}
+
 {% block content %}
 <div class="workbench-grid">
   <!-- Primary Workspace: Player Search & Dossier Result -->
@@ -50,56 +73,140 @@
         {% include "partials/player_dossier.html" %}
       {% elif not_found %}
         {% include "partials/not_found.html" %}
+      {% else %}
+        <section class="panel overview-panel" aria-label="Network Overview">
+          <div class="panel-header">
+            <h2 class="panel-title">Network Overview</h2>
+            <span class="block-meta mono-val">Live BYOND Telemetry</span>
+          </div>
+
+          <div class="telemetry-strip">
+            <div class="telemetry-cell">
+              <div class="cell-label">Active Servers</div>
+              <div class="cell-value">{{ servers|length }}</div>
+              <div class="cell-sub">Monitored sectors</div>
+            </div>
+            <div class="telemetry-cell">
+              <div class="cell-label">Tracked Players</div>
+              <div class="cell-value">{{ overview.total_players if overview else 0 }}</div>
+              <div class="cell-sub">Unique ckeys</div>
+            </div>
+            <div class="telemetry-cell">
+              <div class="cell-label">Active Sessions</div>
+              <div class="cell-value">{{ overview.active_sessions if overview else 0 }}</div>
+              <div class="cell-sub">Currently in-game</div>
+            </div>
+            <div class="telemetry-cell">
+              <div class="cell-label">Recorded Playtime</div>
+              <div class="cell-value">{{ overview.total_hours if overview else 0.0 }}<span class="unit">h</span></div>
+              <div class="cell-sub mono-val">{{ overview.total_sessions if overview else 0 }} sessions</div>
+            </div>
+          </div>
+
+          <div class="overview-body">
+            {% if overview and overview.recent_players %}
+            <div class="overview-section">
+              <div class="overview-section-header">
+                <h3 class="block-title">Recently Observed Players</h3>
+                <span class="block-meta">Click any key to open dossier</span>
+              </div>
+              <div class="quick-player-list">
+                {% for p in overview.recent_players %}
+                <a href="/player/{{ p.ckey }}" class="quick-player-chip">
+                  <span class="status-dot {{ 'online' if p.is_online else 'offline' }}" aria-hidden="true"></span>
+                  <span class="mono-val">{{ p.ckey }}</span>
+                  <span class="quick-player-state">{{ 'Online' if p.is_online else p.last_seen }}</span>
+                </a>
+                {% endfor %}
+              </div>
+            </div>
+            {% else %}
+            <div class="overview-section">
+              <h3 class="block-title">Getting Started</h3>
+              <p class="overview-copy">
+                Enter any BYOND key above to inspect cross-server playtime, session history, and online status.
+                Keys are automatically normalized to lowercase alphanumeric characters (<code>[a-z0-9]</code>), so
+                <code>Honk_Master</code> and <code>honkmaster</code> resolve to the same dossier.
+              </p>
+            </div>
+            {% endif %}
+          </div>
+        </section>
       {% endif %}
     </div>
   </section>
 
   <!-- Secondary Sidebar: Monitored Servers Directory -->
-  {% if servers %}
   <aside class="secondary-pane" aria-label="Monitored Servers Directory">
     <div class="panel directory-panel">
       <div class="panel-header directory-header">
         <div class="directory-title-wrap">
           <h2 class="panel-title">Monitored Servers</h2>
-          <span class="directory-status">
-            <span class="status-dot online" aria-hidden="true"></span>
+          <span class="directory-status {{ 'is-empty' if not servers else '' }}">
+            <span class="status-dot {{ 'online' if servers else 'offline' }}" aria-hidden="true"></span>
             <span class="mono-val">{{ servers|length }} online</span>
           </span>
         </div>
+        {% if servers %}
         <button type="button"
                 class="mobile-directory-toggle"
                 id="servers-toggle-btn"
-                aria-expanded="false"
-                aria-controls="servers-directory-body"
-                onclick="toggleServersDirectory()">
-          <span id="servers-toggle-label">Show servers</span>
+                aria-expanded="true"
+                aria-controls="servers-directory-body">
+          <span id="servers-toggle-label">Hide servers</span>
         </button>
+        {% endif %}
       </div>
 
-      <div class="directory-body" id="servers-directory-body">
+      {% if servers %}
+      <div class="directory-body is-open" id="servers-directory-body">
         <div class="directory-filter-bar">
           <label for="server-filter-input" class="sr-only">Filter monitored servers by name or address</label>
           <input type="text"
                  id="server-filter-input"
                  class="directory-filter-input"
-                 placeholder="Filter by server name or address..."
+                 placeholder="Filter by server, map, or address..."
                  autocomplete="off"
-                 spellcheck="false"
-                 oninput="filterServers(this.value)">
+                 spellcheck="false">
           <div class="filter-meta">
             <button type="button"
                     id="server-filter-clear"
                     class="filter-clear-btn"
                     aria-label="Clear server filter"
-                    onclick="clearServerFilter()"
                     hidden>Clear</button>
             <span class="filter-counter" id="server-visible-count" aria-live="polite">{{ servers|length }} / {{ servers|length }}</span>
           </div>
         </div>
 
+        <div class="directory-controls-row">
+          <label class="directory-check-label">
+            <input type="checkbox" id="server-populated-only">
+            <span>Populated only</span>
+          </label>
+          <div class="directory-sort-wrap">
+            <label for="server-sort-select" class="sr-only">Sort servers</label>
+            <select id="server-sort-select" class="directory-sort-select">
+              <option value="players">Players (High&ndash;Low)</option>
+              <option value="name">Name (A&ndash;Z)</option>
+              <option value="duration">Round Time</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="directory-legend">
+          <span>Click a server for live round telemetry</span>
+          <span class="mono-val">Badge: Total <span class="sector-living-sub">(In-round)</span></span>
+        </div>
+
         <ul class="sector-list" id="servers-grid-container" role="list" tabindex="0" aria-label="Active Space Station 13 servers">
           {% for s in servers %}
-          <li><a href="/server/{{ s.id }}" class="sector-row" data-search="{{ (s.title or '')|lower }} {{ (s.identifier or '')|lower }} {{ (s.map_name or '')|lower }} {{ (s.gamemode or '')|lower }}">
+          <li><a href="/server/{{ s.id }}"
+                 class="sector-row"
+                 data-index="{{ loop.index0 }}"
+                 data-players="{{ s.current_players if s.current_players is not none else -1 }}"
+                 data-duration="{{ s.round_duration if s.round_duration is not none else -1 }}"
+                 data-title="{{ s.title or s.identifier }}"
+                 data-search="{{ (s.title or '')|lower }} {{ (s.identifier or '')|lower }} {{ (s.map_name or '')|lower }} {{ (s.gamemode or '')|lower }}">
             <span class="status-dot online" aria-hidden="true" title="Server active"></span>
             <div class="sector-info">
               <div class="sector-top-row">
@@ -126,62 +233,12 @@
           No monitored servers match that filter.
         </div>
       </div>
+      {% else %}
+      <div class="directory-empty">
+        No active servers monitored right now. The tracker will populate this list after the next poll cycle.
+      </div>
+      {% endif %}
     </div>
   </aside>
-  {% endif %}
 </div>
-
-{% if servers %}
-<script>
-  const TOTAL_SERVERS = {{ servers|length }};
-
-  function toggleServersDirectory() {
-    const body = document.getElementById('servers-directory-body');
-    const btn = document.getElementById('servers-toggle-btn');
-    const label = document.getElementById('servers-toggle-label');
-    if (!body || !btn) return;
-    const isExpanded = body.classList.toggle('is-open');
-    btn.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
-    if (label) {
-      label.textContent = isExpanded ? 'Hide servers' : 'Show servers';
-    }
-  }
-
-  function filterServers(query) {
-    const raw = query || '';
-    const q = raw.trim().toLowerCase();
-    const rows = document.querySelectorAll('#servers-grid-container .sector-row');
-    let visible = 0;
-    rows.forEach(row => {
-      const hay = row.getAttribute('data-search') || row.textContent.toLowerCase();
-      const match = !q || hay.includes(q);
-      row.parentElement.hidden = !match;
-      if (match) visible++;
-    });
-
-    const counter = document.getElementById('server-visible-count');
-    if (counter) {
-      counter.textContent = q ? (visible + ' / ' + TOTAL_SERVERS) : (TOTAL_SERVERS + ' / ' + TOTAL_SERVERS);
-    }
-
-    const clearBtn = document.getElementById('server-filter-clear');
-    if (clearBtn) {
-      clearBtn.hidden = !raw.length;
-    }
-
-    const emptyState = document.getElementById('server-filter-empty');
-    if (emptyState) {
-      emptyState.hidden = visible > 0;
-    }
-  }
-
-  function clearServerFilter() {
-    const input = document.getElementById('server-filter-input');
-    if (!input) return;
-    input.value = '';
-    filterServers('');
-    input.focus();
-  }
-</script>
-{% endif %}
 {% endblock %}

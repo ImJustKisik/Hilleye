@@ -758,7 +758,11 @@ async def update_player_sessions(
                     pass
 
 @_read_snapshot
-async def get_player_dossier(ckey: str) -> Optional[Dict[str, Any]]:
+async def get_player_dossier(
+    ckey: str,
+    sessions_limit: int = 10,
+    sessions_offset: int = 0,
+) -> Optional[Dict[str, Any]]:
     """
     Returns tactical player dossier dictionary or None if player does not exist.
 
@@ -766,11 +770,13 @@ async def get_player_dossier(ckey: str) -> Optional[Dict[str, Any]]:
     - Target status (online/offline, current sector, current duration)
     - Summary metrics (total playtime seconds, total hours, count of distinct servers visited, first and last seen)
     - Server breakdown with percentage and last visit timestamps
-    - Recent sessions log (up to 10 entries)
+    - Recent sessions log (paginated via sessions_limit and sessions_offset)
     """
     norm_ckey = normalize_ckey(ckey)
     if not norm_ckey:
         return None
+    limit = max(1, min(100, int(sessions_limit)))
+    offset = max(0, int(sessions_offset))
 
     conn = await get_connection()
     async with conn.cursor() as cur:
@@ -799,10 +805,12 @@ async def get_player_dossier(ckey: str) -> Optional[Dict[str, Any]]:
 
         if active_sess is not None:
             is_online = True
+            current_server_id: Optional[int] = int(active_sess["server_id"])
             current_server = active_sess["server_title"] or f"Sector #{active_sess['server_id']}"
             current_duration_str = format_duration(active_sess["duration_seconds"])
         else:
             is_online = False
+            current_server_id = None
             current_server = None
             current_duration_str = None
 
@@ -859,7 +867,7 @@ async def get_player_dossier(ckey: str) -> Optional[Dict[str, Any]]:
                 }
             )
 
-        # Recent sessions (up to 10 entries)
+        # Recent sessions (paginated)
         await cur.execute(
             """
             SELECT 
@@ -874,9 +882,9 @@ async def get_player_dossier(ckey: str) -> Optional[Dict[str, Any]]:
             LEFT JOIN servers srv ON s.server_id = srv.id
             WHERE s.ckey = ?
             ORDER BY s.started_at DESC, s.id DESC
-            LIMIT 10;
+            LIMIT ? OFFSET ?;
             """,
-            (norm_ckey,),
+            (norm_ckey, limit, offset),
         )
         sess_rows = await cur.fetchall()
         recent_sessions: List[Dict[str, Any]] = []
@@ -898,6 +906,7 @@ async def get_player_dossier(ckey: str) -> Optional[Dict[str, Any]]:
         "ckey": norm_ckey,
         "is_online": is_online,
         "current_server": current_server,
+        "current_server_id": current_server_id,
         "current_session_duration": current_duration_str,
         "first_seen": first_seen_str,
         "last_seen": last_seen_str,
@@ -905,10 +914,14 @@ async def get_player_dossier(ckey: str) -> Optional[Dict[str, Any]]:
         "total_hours": total_hours,
         "servers_count": servers_count,
         "sessions_count": sessions_count,
+        "sessions_limit": limit,
+        "sessions_offset": offset,
+        "has_more_sessions": (offset + len(recent_sessions)) < sessions_count,
         "status": {
             "online": is_online,
             "is_online": is_online,
             "current_server": current_server,
+            "current_server_id": current_server_id,
             "current_session_duration": current_duration_str,
             "last_seen": last_seen_str,
         },
@@ -939,6 +952,8 @@ def _build_chart_24h(points: List[Dict[str, Any]], window_start=None, window_end
             "count": 0,
             "start_label": None,
             "end_label": None,
+            "window_start_label": format_timestamp(window_start) if window_start is not None else None,
+            "window_end_label": format_timestamp(window_end) if window_end is not None else None,
             "segments": [],
         }
 
@@ -992,7 +1007,66 @@ def _build_chart_24h(points: List[Dict[str, Any]], window_start=None, window_end
         "count": n,
         "start_label": points[0].get("time_str"),
         "end_label": points[-1].get("time_str"),
+        "window_start_label": format_timestamp(window_start) if window_start is not None else points[0].get("time_str"),
+        "window_end_label": format_timestamp(window_end) if window_end is not None else points[-1].get("time_str"),
         "segments": [segment_data(s) for s in segments],
+    }
+
+
+@_read_snapshot
+async def get_network_overview(recent_players_limit: int = 8) -> Dict[str, Any]:
+    """Returns network-wide player/session totals and recently seen players for the dashboard."""
+    limit = max(1, min(32, int(recent_players_limit)))
+    conn = await get_connection()
+    async with conn.cursor() as cur:
+        await cur.execute("SELECT COUNT(*) AS total_players FROM players;")
+        total_players = int((await cur.fetchone())["total_players"] or 0)
+
+        await cur.execute(
+            """
+            SELECT
+                COUNT(*) AS total_sessions,
+                COALESCE(SUM(CASE WHEN ended_at IS NULL THEN 1 ELSE 0 END), 0) AS active_sessions
+            FROM sessions;
+            """
+        )
+        sess_row = await cur.fetchone()
+        total_sessions = int(sess_row["total_sessions"] or 0) if sess_row else 0
+        active_sessions = int(sess_row["active_sessions"] or 0) if sess_row else 0
+
+        await cur.execute("SELECT COALESCE(SUM(total_seconds), 0) AS total_seconds FROM server_player_totals;")
+        total_seconds = int((await cur.fetchone())["total_seconds"] or 0)
+
+        await cur.execute(
+            """
+            SELECT
+                p.ckey,
+                p.last_seen,
+                EXISTS(
+                    SELECT 1 FROM sessions s
+                    WHERE s.ckey = p.ckey AND s.ended_at IS NULL
+                ) AS is_online
+            FROM players p
+            ORDER BY is_online DESC, p.last_seen DESC, p.ckey ASC
+            LIMIT ?;
+            """,
+            (limit,),
+        )
+        recent_rows = await cur.fetchall()
+
+    return {
+        "total_players": total_players,
+        "total_sessions": total_sessions,
+        "active_sessions": active_sessions,
+        "total_hours": round(total_seconds / 3600.0, 1),
+        "recent_players": [
+            {
+                "ckey": r["ckey"],
+                "last_seen": format_timestamp(r["last_seen"]),
+                "is_online": bool(r["is_online"]),
+            }
+            for r in recent_rows
+        ],
     }
 
 
@@ -1354,5 +1428,10 @@ class Database:
     ) -> None:
         await update_player_sessions(server_id, online_ckeys, now_ts, grace_period_seconds)
 
-    async def get_player_dossier(self, ckey: str) -> Optional[Dict[str, Any]]:
-        return await get_player_dossier(ckey)
+    async def get_player_dossier(
+        self, ckey: str, sessions_limit: int = 10, sessions_offset: int = 0
+    ) -> Optional[Dict[str, Any]]:
+        return await get_player_dossier(ckey, sessions_limit=sessions_limit, sessions_offset=sessions_offset)
+
+    async def get_network_overview(self, recent_players_limit: int = 8) -> Dict[str, Any]:
+        return await get_network_overview(recent_players_limit=recent_players_limit)
