@@ -10,19 +10,25 @@ import tarfile
 import time
 import zipfile
 
+import aiosqlite
 from httpx import ASGITransport, AsyncClient
 import httpx
+from PIL import Image, PngImagePlugin
 import pytest
 
 from core import db as core_db
 from core import discord_auth
 from core import logs_db
+from core import map_renderer
 from core.config import AppConfig
 from core.log_parser import (
+    collect_round_map_events,
     extract_ckeys_from_text,
+    extract_coords_from_text,
     filter_game_log_file,
     mask_sensitive_text,
     parse_qdel_log_file,
+    primary_coord_from_text,
     read_context_lines,
     sanitize_byond_html,
 )
@@ -189,6 +195,9 @@ async def logs_env(tmp_path, monkeypatch):
         logs_max_extracted_mb=3,
         logs_max_archive_files=10,
         logs_auto_scan_on_startup=False,
+        maps_repo_dir=str(tmp_path / "missing_repo"),
+        maps_cache_dir=str(tmp_path / "map_cache"),
+        maps_auto_build_on_startup=False,
     )
 
     await core_db.init_db(tracker_db_path)
@@ -488,6 +497,9 @@ async def test_unconfigured_oauth_fails_closed(tmp_path, monkeypatch):
         logs_db_path=str(tmp_path / "l.db"),
         logs_uploads_dir=str(tmp_path / "up"),
         logs_auto_scan_on_startup=False,
+        maps_repo_dir=str(tmp_path / "missing_repo"),
+        maps_cache_dir=str(tmp_path / "map_cache"),
+        maps_auto_build_on_startup=False,
     )
     await core_db.init_db(cfg.resolved_db_path())
     await logs_db.init_logs_db(cfg.resolved_logs_db_path())
@@ -502,3 +514,301 @@ async def test_unconfigured_oauth_fails_closed(tmp_path, monkeypatch):
     finally:
         await logs_db.close_logs_db()
         await core_db.close_db()
+
+
+# ---------------------------------------------------------------------------
+# Tier 3: Coordinate Extraction, Map Rendering (DMM/TGM/GitHub), & Map UI
+# ---------------------------------------------------------------------------
+
+def test_extract_coords_all_formats_and_filters():
+    assert extract_coords_from_text(
+        "(<a href='byond://?_src_=holder;adminplayerobservecoodjump=1;X=82;Y=104;Z=3'>LOC</a>)"
+    ) == [(82, 104, 3)]
+    assert extract_coords_from_text("Explosion at 91, 130, 1 caused by bomb") == [(91, 130, 1)]
+    assert extract_coords_from_text("Shot fired from (45, 78, 2) toward [120, 44, 4]") == [
+        (45, 78, 2),
+        (120, 44, 4),
+    ]
+    assert extract_coords_from_text("Ghost/player - 55-66-2") == [(55, 66, 2)]
+
+    # Reject nullspace (0, 0, 0) and CSS rgb/rgba color tuples
+    assert extract_coords_from_text("Spawned in nullspace at (0, 0, 0)") == []
+    assert extract_coords_from_text("<span style='color: rgb(10, 20, 3)'>hi</span> rgba(12, 34, 5, 1)") == []
+    assert primary_coord_from_text("Text (12, 34, 2) and X=55;Y=66;Z=3") == (12, 34, 2)
+
+
+def _create_synthetic_dmi(path: Path, state_name: str, color: tuple[int, int, int, int]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    img = Image.new("RGBA", (32, 32), color)
+    meta = PngImagePlugin.PngInfo()
+    meta.add_text(
+        "Description",
+        f"# BEGIN DMI\nversion = 4.0\n\twidth = 32\n\theight = 32\nstate = \"{state_name}\"\n\tdirs = 1\n\tframes = 1\n# END DMI\n",
+        zip=True,
+    )
+    img.save(path, format="PNG", pnginfo=meta)
+
+
+def _create_synthetic_sierra_repo(repo_dir: Path) -> None:
+    _create_synthetic_dmi(repo_dir / "icons" / "turf" / "floors.dmi", "plating", (90, 100, 120, 255))
+    _create_synthetic_dmi(repo_dir / "icons" / "turf" / "walls.dmi", "wall", (160, 170, 185, 255))
+
+    dm_code = repo_dir / "code" / "game" / "objects.dm"
+    dm_code.parent.mkdir(parents=True, exist_ok=True)
+    dm_code.write_text(
+        """
+/area/bridge
+\tname = "Мостик (Bridge)"
+
+/area/hallway
+\tname = "Коридор"
+
+/turf/simulated/floor/plating
+\ticon = 'icons/turf/floors.dmi'
+\ticon_state = "plating"
+
+/turf/simulated/wall
+\ticon = 'icons/turf/walls.dmi'
+\ticon_state = "wall"
+\tlayer = 3
+""",
+        encoding="utf-8",
+    )
+
+    # Compact single-line DMM (4x4, Z1..Z4)
+    maps_dir = repo_dir / "maps" / "sierra"
+    maps_dir.mkdir(parents=True, exist_ok=True)
+    (maps_dir / "z1-z4_sierra.dmm").write_text(
+        '"a" = (/turf/simulated/floor/plating,/area/bridge)\n'
+        '"b" = (/turf/simulated/wall,/area/hallway)\n\n'
+        '(1,1,1) = {"\n'
+        'aaaa\n'
+        'abba\n'
+        'abba\n'
+        'aaaa\n'
+        '"}\n'
+        '(1,1,2) = {"\n'
+        'bbbb\n'
+        'baab\n'
+        'baab\n'
+        'bbbb\n'
+        '"}\n',
+        encoding="utf-8",
+    )
+
+    # Multi-line TGM format (z6_admin -> Z5)
+    (maps_dir / "z6_admin.dmm").write_text(
+        "//MAP CONVERTED BY dmm2tgm.py THIS HEADER COMMENT PREVENTS RECONVERSION, DO NOT REMOVE\n"
+        '"aa" = (\n'
+        '/turf/simulated/floor/plating,\n'
+        '/area/bridge)\n'
+        '"bb" = (\n'
+        '/turf/simulated/wall,\n'
+        '/area/hallway)\n\n'
+        '(1,1,1) = {"\n'
+        'aa\n'
+        'aa\n'
+        'bb\n'
+        'bb\n'
+        '"}\n'
+        '(3,1,1) = {"\n'
+        'aa\n'
+        'bb\n'
+        'aa\n'
+        'bb\n'
+        '"}\n',
+        encoding="utf-8",
+    )
+
+
+async def test_map_renderer_dmm_tgm_and_github_fallback(tmp_path):
+    repo_dir = tmp_path / "SierraBay12"
+    cache_dir = tmp_path / "map_cache"
+    _create_synthetic_sierra_repo(repo_dir)
+
+    cfg = AppConfig(
+        maps_repo_dir=str(repo_dir),
+        maps_cache_dir=str(cache_dir),
+        maps_tile_px=16,
+        maps_github_repo="ImJustKisik/SierraBay12",
+        maps_github_branch="dev-sierra",
+        maps_auto_build_on_startup=False,
+    )
+    manifest = await map_renderer.build_map_cache(cfg, force=True, prefer_github=False)
+    assert manifest["ready"] is True
+    assert manifest["source_kind"] == "local_git"
+    assert any(lv["z"] == 1 for lv in manifest["levels"])
+    assert any(lv["z"] == 5 for lv in manifest["levels"])
+
+    z1_png = map_renderer.get_map_image_path(cache_dir, 1)
+    assert z1_png is not None and z1_png.is_file()
+    with Image.open(z1_png) as im:
+        assert im.size == (4 * 16, 4 * 16)
+
+    assert map_renderer.lookup_area_name(cache_dir, 1, 2, 2) == "Коридор"
+    assert map_renderer.lookup_area_name(cache_dir, 1, 1, 1) == "Мостик (Bridge)"
+    assert map_renderer.lookup_area_name(cache_dir, 5, 1, 1) == "Коридор"
+
+    # Build .tar.gz archive in memory and verify GitHub download fallback
+    tar_buf = io.BytesIO()
+    with tarfile.open(fileobj=tar_buf, mode="w:gz") as tf:
+        for file_path in repo_dir.rglob("*"):
+            if file_path.is_file():
+                rel = file_path.relative_to(repo_dir).as_posix()
+                tf.add(file_path, arcname=f"SierraBay12-dev-sierra/{rel}")
+    tar_bytes = tar_buf.getvalue()
+
+    def _fake_transport(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=tar_bytes)
+
+    map_renderer.set_github_http_transport(lambda: httpx.MockTransport(_fake_transport))
+    try:
+        gh_cache = tmp_path / "gh_cache"
+        gh_cfg = AppConfig(
+            maps_repo_dir=str(tmp_path / "does_not_exist"),
+            maps_cache_dir=str(gh_cache),
+            maps_tile_px=16,
+            maps_github_repo="ImJustKisik/SierraBay12",
+            maps_github_branch="dev-sierra",
+            maps_auto_build_on_startup=False,
+        )
+        gh_manifest = await map_renderer.build_map_cache(gh_cfg, force=True, prefer_github=True)
+        assert gh_manifest["ready"] is True
+        assert gh_manifest["source_kind"] == "github"
+        assert map_renderer.lookup_area_name(gh_cache, 1, 1, 1) == "Мостик (Bridge)"
+    finally:
+        map_renderer.set_github_http_transport(None)
+
+
+async def test_logs_db_coords_and_migration(tmp_path):
+    legacy_db = str(tmp_path / "legacy.db")
+    async with aiosqlite.connect(legacy_db) as db:
+        await db.executescript(
+            """
+            CREATE TABLE log_rounds (
+                round_uid TEXT PRIMARY KEY,
+                source_type TEXT NOT NULL,
+                round_id TEXT NOT NULL,
+                round_date TEXT NOT NULL,
+                dir_path TEXT NOT NULL,
+                started_at TEXT,
+                ended_at TEXT,
+                has_game_log INTEGER NOT NULL DEFAULT 0,
+                indexed_at REAL
+            );
+            CREATE TABLE log_entries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                round_uid TEXT NOT NULL,
+                file_name TEXT NOT NULL DEFAULT 'game.log',
+                line_no INTEGER NOT NULL,
+                timestamp TEXT NOT NULL DEFAULT '',
+                category TEXT NOT NULL DEFAULT 'SYSTEM',
+                ckeys_space TEXT NOT NULL DEFAULT '',
+                message TEXT NOT NULL
+            );
+            INSERT INTO log_rounds (round_uid, source_type, round_id, round_date, dir_path, has_game_log, indexed_at)
+            VALUES ('d-test1', 'disk', 'test1', '2026-11-08', 'x', 1, 123456);
+            """
+        )
+        await db.commit()
+
+    await logs_db.init_logs_db(legacy_db)
+    try:
+        # Migration adds coord_x/y/z and resets indexed_at so rounds re-index coordinates
+        async with aiosqlite.connect(legacy_db) as db:
+            cur = await db.execute("PRAGMA table_info(log_entries)")
+            cols = {row[1] for row in await cur.fetchall()}
+            assert {"coord_x", "coord_y", "coord_z"}.issubset(cols)
+            cur = await db.execute("SELECT indexed_at FROM log_rounds WHERE round_uid = 'd-test1'")
+            row = await cur.fetchone()
+            assert row[0] is None
+    finally:
+        await logs_db.close_logs_db()
+
+    # Now index real round and filter by z_level / only_coords
+    db_path = str(tmp_path / "fresh.db")
+    logs_root = tmp_path / "roots"
+    r_dir = logs_root / "2026" / "11" / "08" / "round-0fd7d409"
+    r_dir.mkdir(parents=True)
+    (r_dir / "game.log").write_text(SAMPLE_GAME_LOG, encoding="utf-8")
+    await logs_db.init_logs_db(db_path)
+    try:
+        await logs_db.sync_and_index_rounds(logs_root, tmp_path / "up")
+        hits, total = await logs_db.search_logs_fts(z_level=3, only_coords=True)
+        assert total == 1
+        assert hits[0]["coord_x"] == 82
+        assert hits[0]["coord_y"] == 104
+        assert hits[0]["coord_z"] == 3
+    finally:
+        await logs_db.close_logs_db()
+
+
+async def test_web_map_viewer_and_admin_rebuild(tmp_path, logs_env, monkeypatch):
+    cfg: AppConfig = logs_env["cfg"]
+    repo_dir = tmp_path / "repo_sierra"
+    _create_synthetic_sierra_repo(repo_dir)
+    monkeypatch.setattr(cfg, "maps_repo_dir", str(repo_dir))
+
+    await logs_db.sync_and_index_rounds(cfg.resolved_logs_root_dir(), cfg.resolved_logs_uploads_dir())
+
+    try:
+        async with AsyncClient(transport=ASGITransport(app=web_app.app), base_url="http://test") as client:
+            await _login_via_discord(client, "111111111111111111", "admin_user")
+
+            rounds, _ = await logs_db.list_rounds()
+            uid = rounds[0]["round_uid"]
+
+            # Stream view contains clickable coordinate badge
+            round_resp = await client.get(f"/logs/round/{uid}")
+            assert round_resp.status_code == 200
+            assert "log-coord-badge" in round_resp.text
+            assert "view=map&z=3&tx=82&ty=104" in round_resp.text or "view=map&amp;z=3&amp;tx=82&amp;ty=104" in round_resp.text
+
+            # Map view & map-events JSON API
+            map_page = await client.get(f"/logs/round/{uid}?view=map&z=3&tx=82&ty=104&focus=9")
+            assert map_page.status_code == 200
+            assert 'id="logs-map-root"' in map_page.text
+
+            ev_resp = await client.get(f"/api/v1/logs/rounds/{uid}/map-events")
+            assert ev_resp.status_code == 200
+            ev_json = ev_resp.json()
+            assert ev_json["total_with_coords"] == 1
+            assert ev_json["z_counts"]["3"] == 1
+            assert ev_json["events"][0]["x"] == 82
+            assert ev_json["events"][0]["y"] == 104
+            assert ev_json["events"][0]["z"] == 3
+
+            # Global search filtered by z_level and only_coords
+            search_resp = await client.get("/logs/search?only_coords=1&z_level=3")
+            assert search_resp.status_code == 200
+            assert "Найдено совпадений: 1" in search_resp.text
+            assert "На карте" in search_resp.text
+
+            # Admin map rebuild (CSRF checked) + tile/area endpoints
+            admin_page = await client.get("/logs/admin")
+            csrf = re.search(r'name="csrf_token" value="([^"]+)"', admin_page.text).group(1)
+
+            bad_rebuild = await client.post("/logs/admin/maps/rebuild", data={"source": "auto"})
+            assert bad_rebuild.status_code == 403
+
+            ok_rebuild = await client.post(
+                "/logs/admin/maps/rebuild",
+                data={"source": "auto", "csrf_token": csrf},
+                follow_redirects=False,
+            )
+            assert ok_rebuild.status_code == 303
+
+            man_resp = await client.get("/logs/maps/manifest")
+            assert man_resp.status_code == 200
+            assert man_resp.json()["ready"] is True
+
+            png_resp = await client.get("/logs/maps/z/1.png")
+            assert png_resp.status_code == 200
+            assert png_resp.headers["content-type"].startswith("image/png")
+
+            areas_resp = await client.get("/logs/maps/areas/1.json")
+            assert areas_resp.status_code == 200
+            assert "palette" in areas_resp.json()
+    finally:
+        discord_auth.set_discord_http_transport(None)
+

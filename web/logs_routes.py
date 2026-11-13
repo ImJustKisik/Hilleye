@@ -10,16 +10,18 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 from urllib.parse import quote, urlencode
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 
 from core import discord_auth
 from core import logs_db
+from core import map_renderer
 from core.config import AppConfig
 from core.log_parser import (
     CATEGORY_META,
     LOG_PRESETS,
     category_info,
+    collect_round_map_events,
     export_filtered_game_log,
     filter_game_log_file,
     mask_sensitive_text,
@@ -61,8 +63,24 @@ def _audit_action_label(action: str) -> str:
         "whitelist_remove": "Удаление из вайтлиста",
         "refresh": "Обновление списка логов",
         "reindex": "Переиндексация логов",
+        "rebuild_maps": "Пересборка карты из Git",
     }
     return labels.get(action, action)
+
+
+def _coord_vm(coords: Optional[Tuple[int, int, int]], cache_dir: Path) -> Optional[Dict[str, Any]]:
+    if not coords:
+        return None
+    x, y, z = int(coords[0]), int(coords[1]), int(coords[2])
+    if x < 1 or y < 1 or z < 1:
+        return None
+    return {
+        "x": x,
+        "y": y,
+        "z": z,
+        "z_label": map_renderer.deck_short_label(z),
+        "area": map_renderer.lookup_area_name(cache_dir, z, x, y),
+    }
 
 
 def _prefers_json(request: Request) -> bool:
@@ -385,6 +403,10 @@ def create_logs_router(
         focus: Optional[int] = Query(default=None, ge=1),
         mask_ips: str = "0",
         html: str = "1",
+        view: str = "stream",
+        z: Optional[int] = Query(default=None, ge=1, le=99),
+        tx: Optional[int] = Query(default=None, ge=1, le=255),
+        ty: Optional[int] = Query(default=None, ge=1, le=255),
         qdel_view: str = "table",
         sort_by: str = "destroy_cost_ms",
         sort_dir: str = "desc",
@@ -456,8 +478,11 @@ def create_logs_router(
         use_regex = _parse_bool_flag(regex, default=False)
         mask_flag = _parse_bool_flag(mask_ips, default=False)
         render_html = _parse_bool_flag(html, default=True)
+        view_mode = "map" if view == "map" else "stream"
         selected_cats = [c.strip().upper() for c in cat if c and c.strip()]
         active_preset = preset if preset in LOG_PRESETS else "gameplay"
+        cache_dir = config.resolved_maps_cache_dir()
+        map_manifest = map_renderer.get_map_manifest(cache_dir)
 
         result = await asyncio.to_thread(
             filter_game_log_file,
@@ -488,6 +513,7 @@ def create_logs_router(
                     "cat_css": meta["css"],
                     "safe_html": entry.safe_html,
                     "ckeys": entry.ckeys,
+                    "coords": _coord_vm(entry.coords, cache_dir),
                     "is_continuation": entry.is_continuation,
                     "is_focused": focus is not None and entry.line_no == focus,
                 }
@@ -540,6 +566,11 @@ def create_logs_router(
                 "focus_line": focus,
                 "mask_ips": mask_flag,
                 "render_html": render_html,
+                "view_mode": view_mode,
+                "target_z": z,
+                "target_x": tx,
+                "target_y": ty,
+                "map_manifest": map_manifest,
                 "base_query_str": base_query_str,
             },
         )
@@ -578,6 +609,7 @@ def create_logs_router(
             mask_ips=mask_flag,
             render_html=render_html,
         )
+        cache_dir = config.resolved_maps_cache_dir()
         rows = []
         for entry in context_entries:
             meta = category_info(entry.category)
@@ -590,6 +622,7 @@ def create_logs_router(
                     "cat_css": meta["css"],
                     "safe_html": entry.safe_html,
                     "ckeys": entry.ckeys,
+                    "coords": _coord_vm(entry.coords, cache_dir),
                     "is_target": entry.line_no == line,
                 }
             )
@@ -616,6 +649,8 @@ def create_logs_router(
         date_from: str = "",
         date_to: str = "",
         round_uid: str = "",
+        z_level: str = "",
+        only_coords: str = "0",
         scan_debug: str = "0",
         mask_ips: str = "0",
         page: int = Query(default=1, ge=1),
@@ -624,15 +659,34 @@ def create_logs_router(
         if err_resp is not None:
             return err_resp
 
+        config = get_config_fn()
         shell = await get_shell_context_fn()
         active_preset = preset if preset in LOG_PRESETS else "gameplay"
         selected_cats = [c.strip().upper() for c in cat if c and c.strip()]
         scan_debug_flag = _parse_bool_flag(scan_debug, default=False)
+        only_coords_flag = _parse_bool_flag(only_coords, default=False)
         mask_flag = _parse_bool_flag(mask_ips, default=False)
+        z_val: Optional[int] = None
+        if z_level.strip():
+            try:
+                parsed_z = int(z_level.strip())
+                if 1 <= parsed_z <= 99:
+                    z_val = parsed_z
+            except ValueError:
+                z_val = None
         per_page = 100
         offset = (page - 1) * per_page
 
-        has_query = bool(q.strip() or ckey.strip() or selected_cats or round_uid.strip() or date_from.strip() or date_to.strip())
+        has_query = bool(
+            q.strip()
+            or ckey.strip()
+            or selected_cats
+            or round_uid.strip()
+            or date_from.strip()
+            or date_to.strip()
+            or z_val is not None
+            or only_coords_flag
+        )
         hits: List[Dict[str, Any]] = []
         total_hits = 0
 
@@ -643,7 +697,7 @@ def create_logs_router(
                 discord_username=user.username,
                 target=(q or ckey or round_uid)[:160],
                 ip_address=discord_auth.get_client_ip(request),
-                details=f"preset={active_preset}, scan_debug={scan_debug_flag}",
+                details=f"preset={active_preset}, scan_debug={scan_debug_flag}, z={z_val or ''}",
             )
             if scan_debug_flag:
                 all_rounds, _ = await logs_db.list_rounds(limit=5000, offset=0)
@@ -658,10 +712,14 @@ def create_logs_router(
                     categories=selected_cats or None,
                     date_from=date_from,
                     date_to=date_to,
-                    limit=per_page,
+                    limit=per_page if (z_val is None and not only_coords_flag) else 500,
                 )
-                hits = raw_hits
-                total_hits = len(raw_hits)
+                if z_val is not None:
+                    raw_hits = [h for h in raw_hits if h.get("coord_z") == z_val]
+                elif only_coords_flag:
+                    raw_hits = [h for h in raw_hits if h.get("coord_z")]
+                hits = raw_hits[:per_page]
+                total_hits = len(hits)
             else:
                 hits, total_hits = await logs_db.search_logs_fts(
                     query=q,
@@ -671,20 +729,26 @@ def create_logs_router(
                     date_from=date_from,
                     date_to=date_to,
                     round_uid=round_uid,
+                    z_level=z_val,
+                    only_coords=only_coords_flag,
                     limit=per_page,
                     offset=offset,
                 )
 
+        cache_dir = config.resolved_maps_cache_dir()
         hits_vm = []
         for h in hits:
             msg = mask_sensitive_text(h["message"]) if mask_flag else h["message"]
             safe_html, _ = sanitize_byond_html(msg)
             meta = category_info(h["category"])
+            cx, cy, cz = h.get("coord_x"), h.get("coord_y"), h.get("coord_z")
+            coord_tuple = (int(cx), int(cy), int(cz)) if (cx and cy and cz) else None
             hits_vm.append(
                 {
                     **h,
                     "cat_css": meta["css"],
                     "safe_html": safe_html,
+                    "coords": _coord_vm(coord_tuple, cache_dir),
                 }
             )
 
@@ -702,6 +766,10 @@ def create_logs_router(
             search_pairs.append(("date_to", date_to))
         if round_uid:
             search_pairs.append(("round_uid", round_uid))
+        if z_val is not None:
+            search_pairs.append(("z_level", str(z_val)))
+        if only_coords_flag:
+            search_pairs.append(("only_coords", "1"))
         if scan_debug_flag:
             search_pairs.append(("scan_debug", "1"))
         if mask_flag:
@@ -726,6 +794,9 @@ def create_logs_router(
                 "date_from": date_from,
                 "date_to": date_to,
                 "round_uid": round_uid,
+                "z_level": z_val,
+                "z_levels": map_renderer.SIERRA_Z_LEVELS,
+                "only_coords": only_coords_flag,
                 "scan_debug": scan_debug_flag,
                 "mask_ips": mask_flag,
                 "page": page,
@@ -764,6 +835,7 @@ def create_logs_router(
         stats = await logs_db.get_logs_stats()
         stats["total_size_label"] = _fmt_bytes(stats["total_bytes"])
         stats["last_indexed_str"] = _fmt_ts_utc(stats.get("last_indexed_at"))
+        map_manifest = map_renderer.get_map_manifest(config.resolved_maps_cache_dir())
 
         return templates.TemplateResponse(
             request=request,
@@ -778,6 +850,10 @@ def create_logs_router(
                 "uploaded_rounds": uploaded_rounds,
                 "stats": stats,
                 "index_include_debug": config.logs_index_include_debug,
+                "map_manifest": map_manifest,
+                "maps_repo_dir": str(config.resolved_maps_repo_dir() or ""),
+                "maps_github_repo": config.maps_github_repo,
+                "maps_github_branch": config.maps_github_branch,
                 "notice": notice,
                 "error": error,
             },
@@ -839,6 +915,44 @@ def create_logs_router(
         if _prefers_json(request):
             return {"ok": True, **summary}
         msg = quote(f"Переиндексация завершена: {summary['indexed_rounds']} раундов, {summary['indexed_lines']} строк ({summary['elapsed_seconds']}с)")
+        return RedirectResponse(f"/logs/admin?notice={msg}", status_code=303)
+
+    @router.post("/logs/admin/maps/rebuild")
+    async def admin_rebuild_maps(
+        request: Request,
+        source: str = Form(default="auto"),
+        csrf_token: str = Form(default=""),
+    ):
+        user = await _require_api_user(request, require_admin=True)
+        discord_auth.verify_csrf(user, csrf_token or request.headers.get("x-csrf-token"))
+        config = get_config_fn()
+        prefer_gh = source.strip().lower() == "github"
+        try:
+            manifest = await map_renderer.build_map_cache(
+                config,
+                force=True,
+                prefer_github=prefer_gh,
+            )
+        except Exception as exc:
+            logger.warning("Map cache rebuild failed: %s", exc)
+            if _prefers_json(request):
+                raise HTTPException(status_code=502, detail=str(exc)) from exc
+            err = quote(f"Ошибка пересборки карты: {exc}")
+            return RedirectResponse(f"/logs/admin?error={err}", status_code=303)
+
+        await logs_db.record_audit_event(
+            "rebuild_maps",
+            discord_id=user.discord_id,
+            discord_username=user.username,
+            ip_address=discord_auth.get_client_ip(request),
+            details=f"source={manifest.get('source_kind')}, levels={len(manifest.get('levels', []))}",
+        )
+        if _prefers_json(request):
+            return {"ok": True, **manifest}
+        msg = quote(
+            f"Карта пересобрана ({manifest.get('source_kind')}, "
+            f"{len(manifest.get('levels', []))} Z-уровней за {manifest.get('elapsed_seconds')}с)"
+        )
         return RedirectResponse(f"/logs/admin?notice={msg}", status_code=303)
 
     @router.post("/logs/upload")
@@ -1246,6 +1360,110 @@ def create_logs_router(
             },
         )
 
+    @router.get("/logs/maps/manifest")
+    async def logs_maps_manifest(request: Request):
+        await _require_api_user(request)
+        config = get_config_fn()
+        return map_renderer.get_map_manifest(config.resolved_maps_cache_dir())
+
+    @router.get("/logs/maps/z/{z_level}.png")
+    async def logs_map_tile_image(request: Request, z_level: int):
+        await _require_api_user(request)
+        config = get_config_fn()
+        img_path = map_renderer.get_map_image_path(config.resolved_maps_cache_dir(), z_level)
+        if img_path is None:
+            raise HTTPException(status_code=404, detail="Изображение карты для этого Z-уровня не найдено.")
+        return FileResponse(
+            img_path,
+            media_type="image/png",
+            headers={
+                "Cache-Control": "private, max-age=3600",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+
+    @router.get("/logs/maps/areas/{z_level}.json")
+    async def logs_map_areas_json(request: Request, z_level: int):
+        await _require_api_user(request)
+        config = get_config_fn()
+        areas_path = map_renderer.get_map_areas_path(config.resolved_maps_cache_dir(), z_level)
+        if areas_path is None:
+            raise HTTPException(status_code=404, detail="Данные отсеков для этого Z-уровня не найдены.")
+        return FileResponse(
+            areas_path,
+            media_type="application/json; charset=utf-8",
+            headers={
+                "Cache-Control": "private, max-age=3600",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+
+    @router.get("/api/v1/logs/rounds/{round_uid}/map-events")
+    async def api_logs_round_map_events(
+        request: Request,
+        round_uid: str,
+        file: str = "game.log",
+        preset: str = "gameplay",
+        cat: List[str] = Query(default=[]),
+        ckey: str = "",
+        q: str = "",
+        regex: bool = False,
+        time_from: str = "",
+        time_to: str = "",
+        mask_ips: bool = False,
+        z: Optional[int] = Query(default=None, ge=1, le=99),
+        limit: int = Query(default=5000, ge=1, le=10000),
+    ):
+        await _require_api_user(request)
+        config = get_config_fn()
+        rnd = await logs_db.get_round_by_uid(round_uid)
+        if rnd is None:
+            raise HTTPException(status_code=404, detail="Раунд не найден.")
+        file_path = logs_db.resolve_round_file_path(
+            rnd,
+            file,
+            root_dir=config.resolved_logs_root_dir(),
+            uploads_dir=config.resolved_logs_uploads_dir(),
+        )
+        if file_path is None:
+            raise HTTPException(status_code=404, detail="Файл лога не найден.")
+        if file == "qdel.log":
+            raise HTTPException(status_code=400, detail="Координаты карты поддерживаются только для game.log / initialize.log.")
+
+        selected_cats = [c.strip().upper() for c in cat if c and c.strip()]
+        active_preset = preset if preset in LOG_PRESETS else "gameplay"
+        payload = await asyncio.to_thread(
+            collect_round_map_events,
+            file_path,
+            preset=active_preset,
+            categories=selected_cats or None,
+            ckey=ckey,
+            q=q,
+            use_regex=regex,
+            time_from=time_from,
+            time_to=time_to,
+            mask_ips=mask_ips,
+            render_html=True,
+            z_filter=z,
+            limit=limit,
+        )
+        if payload.get("regex_error"):
+            raise HTTPException(status_code=400, detail=payload["regex_error"])
+
+        cache_dir = config.resolved_maps_cache_dir()
+        for ev in payload["events"]:
+            ev["area"] = map_renderer.lookup_area_name(cache_dir, ev["z"], ev["x"], ev["y"])
+            ev["z_label"] = map_renderer.deck_short_label(ev["z"])
+
+        manifest = map_renderer.get_map_manifest(cache_dir)
+        return {
+            "round_uid": round_uid,
+            "round_id": rnd["round_id"],
+            "file": file,
+            "manifest": manifest,
+            **payload,
+        }
+
     @router.get("/api/v1/logs/search")
     async def api_logs_search(
         request: Request,
@@ -1256,10 +1474,14 @@ def create_logs_router(
         date_from: str = "",
         date_to: str = "",
         round_uid: str = "",
+        z_level: Optional[int] = Query(default=None, ge=1, le=99),
+        only_coords: bool = False,
         limit: int = Query(default=100, ge=1, le=200),
         offset: int = Query(default=0, ge=0),
     ):
         await _require_api_user(request)
+        config = get_config_fn()
+        cache_dir = config.resolved_maps_cache_dir()
         hits, total = await logs_db.search_logs_fts(
             query=q,
             ckey=ckey,
@@ -1268,9 +1490,15 @@ def create_logs_router(
             date_from=date_from,
             date_to=date_to,
             round_uid=round_uid,
+            z_level=z_level,
+            only_coords=only_coords,
             limit=limit,
             offset=offset,
         )
+        for h in hits:
+            cx, cy, cz = h.get("coord_x"), h.get("coord_y"), h.get("coord_z")
+            if cx and cy and cz:
+                h["area"] = map_renderer.lookup_area_name(cache_dir, int(cz), int(cx), int(cy))
         return {"total": total, "hits": hits}
 
     return router

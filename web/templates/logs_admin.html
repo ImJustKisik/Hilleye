@@ -161,6 +161,45 @@
     </section>
   </div>
 
+  <!-- Station Map Cache (SierraBay12 Git / DMM) -->
+  <section class="panel" aria-label="Карта станции из Git">
+    <div class="panel-header">
+      <h2 class="panel-title">Карта станции из Git (SierraBay12)</h2>
+      <span class="mono-val cell-sub">
+        {% if map_manifest.ready %}
+        Готова &bull; {{ map_manifest.levels|length }} палуб &bull; {{ map_manifest.tile_px }}px/тайл
+        {% else %}
+        Не собрана (используется координатная сетка)
+        {% endif %}
+      </span>
+    </div>
+    <div class="logs-panel-body">
+      <p class="logs-auth-copy">
+        {% if map_manifest.ready %}
+        Источник: <strong>{{ map_manifest.source_kind }}</strong>
+        {% if map_manifest.commit %}(<span class="mono-val">{{ map_manifest.commit[:12] }}</span>){% endif %}
+        &bull; Собрана: <span class="mono-val">{{ map_manifest.generated_at or '—' }}</span>
+        {% if map_manifest.elapsed_seconds %}({{ map_manifest.elapsed_seconds }}с){% endif %}.
+        Палубы: {% for lv in map_manifest.levels %}<span class="mono-val">{{ lv.short_label }}</span>{% if not loop.last %}, {% endif %}{% endfor %}.
+        {% else %}
+        Тайлы карты (<code>.dmm</code> + <code>.dmi</code>) и зоны <code>/area</code> ещё не сгенерированы в кеш. Нажмите «Пересобрать», чтобы отрендерить палубы Z1–Z7.
+        {% endif %}
+      </p>
+      <div class="logs-form-grid">
+        <form action="/logs/admin/maps/rebuild" method="post">
+          <input type="hidden" name="csrf_token" value="{{ user.csrf_token }}">
+          <input type="hidden" name="source" value="auto">
+          <button type="submit" class="logs-btn logs-btn-primary">Пересобрать (локальный Git / auto)</button>
+        </form>
+        <form action="/logs/admin/maps/rebuild" method="post">
+          <input type="hidden" name="csrf_token" value="{{ user.csrf_token }}">
+          <input type="hidden" name="source" value="github">
+          <button type="submit" class="logs-btn">Загрузить с GitHub (dev-sierra)</button>
+        </form>
+      </div>
+    </div>
+  </section>
+
   <!-- Audit Log -->
   <section class="panel" aria-label="Журнал аудита">
     <div class="panel-header">

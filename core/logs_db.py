@@ -28,6 +28,7 @@ from core.log_parser import (
     extract_ckeys_from_text,
     inspect_game_log_summary,
     iter_parsed_file_lines,
+    primary_coord_from_text,
     sanitize_byond_html,
 )
 
@@ -102,10 +103,14 @@ CREATE TABLE IF NOT EXISTS log_entries (
     timestamp TEXT NOT NULL DEFAULT '',
     category TEXT NOT NULL DEFAULT 'SYSTEM',
     ckeys_space TEXT NOT NULL DEFAULT '',
-    message TEXT NOT NULL
+    message TEXT NOT NULL,
+    coord_x INTEGER,
+    coord_y INTEGER,
+    coord_z INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_log_entries_round_line ON log_entries(round_uid, file_name, line_no);
 CREATE INDEX IF NOT EXISTS idx_log_entries_round_cat ON log_entries(round_uid, category);
+CREATE INDEX IF NOT EXISTS idx_log_entries_coords ON log_entries(round_uid, coord_z, coord_x, coord_y);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS log_entries_fts USING fts5(
     message,
@@ -153,6 +158,25 @@ async def init_logs_db(db_path: str = "logs.db") -> None:
 
         conn = await aiosqlite.connect(db_path, timeout=10.0)
         conn.row_factory = aiosqlite.Row
+        # Safely migrate pre-coordinate log_entries schemas if upgrading an existing logs.db
+        existing_tables = {
+            r[0]
+            for r in await (
+                await conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            ).fetchall()
+        }
+        if "log_entries" in existing_tables:
+            cols = {
+                r[1]
+                for r in await (await conn.execute("PRAGMA table_info(log_entries)")).fetchall()
+            }
+            migrated_coords = False
+            for col_name in ("coord_x", "coord_y", "coord_z"):
+                if col_name not in cols:
+                    await conn.execute(f"ALTER TABLE log_entries ADD COLUMN {col_name} INTEGER")
+                    migrated_coords = True
+            if migrated_coords and "log_rounds" in existing_tables:
+                await conn.execute("UPDATE log_rounds SET indexed_at = NULL")
         await conn.executescript(LOGS_SCHEMA_SQL)
         await conn.commit()
         _connection = conn
@@ -452,7 +476,7 @@ def _build_index_rows_for_game_log(
     round_id: Optional[str] = None
     started_at: Optional[str] = None
     ended_at: Optional[str] = None
-    rows: List[Tuple[str, str, int, str, str, str, str]] = []
+    rows: List[Tuple[str, str, int, str, str, str, str, Optional[int], Optional[int], Optional[int]]] = []
 
     for line_no, ts, cat, raw_msg, is_cont in iter_parsed_file_lines(game_log_path):
         total_lines += 1
@@ -474,7 +498,9 @@ def _build_index_rows_for_game_log(
         _, plain_msg = sanitize_byond_html(raw_msg)
         ckeys = extract_ckeys_from_text(plain_msg)
         ckeys_space = " ".join(ckeys)
-        rows.append((round_uid, "game.log", line_no, ts, cat, ckeys_space, plain_msg))
+        coords = primary_coord_from_text(raw_msg)
+        cx, cy, cz = coords if coords else (None, None, None)
+        rows.append((round_uid, "game.log", line_no, ts, cat, ckeys_space, plain_msg, cx, cy, cz))
 
     meta = {
         "total_lines": total_lines,
@@ -670,8 +696,10 @@ def _sync_rounds_sync(
                     if fts_rows:
                         conn.executemany(
                             """
-                            INSERT INTO log_entries (round_uid, file_name, line_no, timestamp, category, ckeys_space, message)
-                            VALUES (?, ?, ?, ?, ?, ?, ?)
+                            INSERT INTO log_entries (
+                                round_uid, file_name, line_no, timestamp, category,
+                                ckeys_space, message, coord_x, coord_y, coord_z
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                             """,
                             fts_rows,
                         )
@@ -765,7 +793,7 @@ async def sync_and_index_rounds(
                 await conn.execute("DELETE FROM log_entries WHERE round_uid = ?", (uid,))
                 if fts_rows:
                     await conn.executemany(
-                        "INSERT INTO log_entries (round_uid, file_name, line_no, timestamp, category, ckeys_space, message) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        "INSERT INTO log_entries (round_uid, file_name, line_no, timestamp, category, ckeys_space, message, coord_x, coord_y, coord_z) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         fts_rows,
                     )
                 indexed_rounds += 1
@@ -931,6 +959,8 @@ async def search_logs_fts(
     date_from: str = "",
     date_to: str = "",
     round_uid: str = "",
+    z_level: Optional[int] = None,
+    only_coords: bool = False,
     limit: int = 100,
     offset: int = 0,
 ) -> Tuple[List[Dict[str, Any]], int]:
@@ -964,6 +994,11 @@ async def search_logs_fts(
     if date_to.strip():
         where_clauses.append("r.round_date <= ?")
         params.append(date_to.strip())
+    if z_level is not None and int(z_level) > 0:
+        where_clauses.append("e.coord_z = ?")
+        params.append(int(z_level))
+    elif only_coords:
+        where_clauses.append("e.coord_z IS NOT NULL")
 
     # Category / preset filter
     if categories:
@@ -1009,6 +1044,7 @@ async def search_logs_fts(
         f"""
         SELECT
             e.round_uid, e.file_name, e.line_no, e.timestamp, e.category, e.ckeys_space, e.message,
+            e.coord_x, e.coord_y, e.coord_z,
             r.round_id, r.round_date, r.source_type, r.label
         {from_sql}
         WHERE {where_sql}

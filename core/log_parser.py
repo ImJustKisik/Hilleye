@@ -32,6 +32,18 @@ _CKEY_TOKEN_RE = re.compile(
 _IP_CID_RE = re.compile(r"\b(\d{1,3}(?:\.\d{1,3}){3})-(\d{6,14})\b")
 _IPV4_RE = re.compile(r"\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b")
 
+# Coordinate extraction patterns across existing SierraBay12 logs:
+# 1) BYOND jump links: X=74;Y=99;Z=1
+# 2) Tuple/bracket coords: (142,104,3), (134, 115, 19), [82, 104, 3] (ignore rgb(...) / rgba(...))
+# 3) Plain 'at X, Y, Z': at 22, 102, 3 / loaded at 1,1,17
+# 4) Ghost hyphen format: - 120-88-2
+_COORD_PATTERNS: Tuple[Pattern[str], ...] = (
+    re.compile(r"(?:^|[;?&\s])X=(\d{1,3})\s*[;&]\s*Y=(\d{1,3})\s*[;&]\s*Z=(\d{1,2})\b", re.IGNORECASE),
+    re.compile(r"(?<!rgba)(?<!rgb)[\(\[]\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,2})\s*[\)\]]"),
+    re.compile(r"\bat\s+(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,2})(?!\s*,)\b", re.IGNORECASE),
+    re.compile(r"(?:^|\s-\s)(\d{1,3})-(\d{1,3})-(\d{1,2})(?=\s|$)"),
+)
+
 # qdel.log patterns (first Path has timestamp; subsequent Path lines start with " - Path:")
 _QDEL_PATH_RE = re.compile(
     r"^(?:\[(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}(?:\.\d+)?)\]\s*|\s*-\s+)?Path:\s*(\S+)\s*$"
@@ -327,6 +339,38 @@ def extract_ckeys_from_text(plain_text: str) -> List[str]:
     return found
 
 
+def extract_coords_from_text(text: str) -> List[Tuple[int, int, int]]:
+    """Extract ordered unique valid BYOND map coordinates (x, y, z) from a log message."""
+    if not text:
+        return []
+    matches: List[Tuple[int, int, Tuple[int, int, int]]] = []
+    for rx in _COORD_PATTERNS:
+        for m in rx.finditer(text):
+            try:
+                x = int(m.group(1))
+                y = int(m.group(2))
+                z = int(m.group(3))
+            except ValueError:
+                continue
+            # Valid SS13 turf coordinates start at (1,1,1); exclude nullspace (0,0,0) and bogus values
+            if 1 <= x <= 255 and 1 <= y <= 255 and 1 <= z <= 99:
+                matches.append((m.start(), m.end(), (x, y, z)))
+    matches.sort(key=lambda item: item[0])
+    seen: Set[Tuple[int, int, int]] = set()
+    ordered: List[Tuple[int, int, int]] = []
+    for _start, _end, xyz in matches:
+        if xyz not in seen:
+            seen.add(xyz)
+            ordered.append(xyz)
+    return ordered
+
+
+def primary_coord_from_text(text: str) -> Optional[Tuple[int, int, int]]:
+    """Return the first valid (x, y, z) coordinate found in text, or None."""
+    coords = extract_coords_from_text(text)
+    return coords[0] if coords else None
+
+
 def decode_log_bytes(data: bytes) -> str:
     """Decode raw log bytes preferring UTF-8 with CP1251/CP1252/latin-1 fallback."""
     return decode_byond_text(data)
@@ -369,6 +413,8 @@ class ParsedLogLine:
     safe_html: str
     ckeys: List[str] = field(default_factory=list)
     is_continuation: bool = False
+    coords: Optional[Tuple[int, int, int]] = None
+    all_coords: List[Tuple[int, int, int]] = field(default_factory=list)
 
 
 @dataclass
@@ -508,6 +554,7 @@ def _build_entry(
     if not render_html:
         safe_html = html_escape(display_raw)
     ckeys = extract_ckeys_from_text(plain_text)
+    all_coords = extract_coords_from_text(raw_msg)
     return ParsedLogLine(
         line_no=line_no,
         timestamp=ts,
@@ -517,7 +564,46 @@ def _build_entry(
         safe_html=safe_html,
         ckeys=ckeys,
         is_continuation=is_cont,
+        coords=all_coords[0] if all_coords else None,
+        all_coords=all_coords,
     )
+
+
+def _line_matches_filters(
+    ts: str,
+    cat: str,
+    raw_msg: str,
+    *,
+    preset: str,
+    categories: Optional[Sequence[str]],
+    ckey_norm: str,
+    q_lower: str,
+    pattern: Optional[Pattern[str]],
+    t_from: str,
+    t_to: str,
+) -> bool:
+    if not category_matches_filters(cat, preset=preset, selected_categories=categories):
+        return False
+    if t_from or t_to:
+        hhmm = _time_hhmm_from_ts(ts)
+        if not hhmm:
+            return False
+        if t_from and hhmm < t_from:
+            return False
+        if t_to and hhmm > t_to:
+            return False
+    if ckey_norm:
+        _, plain_for_ckey = sanitize_byond_html(raw_msg)
+        line_ckeys = extract_ckeys_from_text(plain_for_ckey)
+        if ckey_norm not in line_ckeys and ckey_norm not in normalize_ckey(plain_for_ckey):
+            return False
+    if q_lower:
+        if pattern is not None:
+            if not pattern.search(raw_msg):
+                return False
+        elif q_lower not in raw_msg.lower():
+            return False
+    return True
 
 
 def filter_game_log_file(
@@ -567,30 +653,19 @@ def filter_game_log_file(
 
         if regex_error:
             continue
-        if not category_matches_filters(cat, preset=preset, selected_categories=categories):
+        if not _line_matches_filters(
+            ts,
+            cat,
+            raw_msg,
+            preset=preset,
+            categories=categories,
+            ckey_norm=ckey_norm,
+            q_lower=q_lower,
+            pattern=pattern,
+            t_from=t_from,
+            t_to=t_to,
+        ):
             continue
-        if t_from or t_to:
-            hhmm = _time_hhmm_from_ts(ts)
-            if not hhmm:
-                continue
-            if t_from and hhmm < t_from:
-                continue
-            if t_to and hhmm > t_to:
-                continue
-
-        if ckey_norm:
-            _, plain_for_ckey = sanitize_byond_html(raw_msg)
-            line_ckeys = extract_ckeys_from_text(plain_for_ckey)
-            if ckey_norm not in line_ckeys and ckey_norm not in normalize_ckey(plain_for_ckey):
-                continue
-
-        if q_lower:
-            if pattern is not None:
-                if not pattern.search(raw_msg):
-                    continue
-            else:
-                if q_lower not in raw_msg.lower():
-                    continue
 
         matched_raw.append((line_no, ts, cat, raw_msg, is_cont))
 
@@ -831,6 +906,7 @@ def scan_raw_files_for_query(
                     continue
             if q_lower and q_lower not in plain_msg.lower():
                 continue
+            coords = primary_coord_from_text(raw_msg)
             hits.append(
                 {
                     "round_uid": rnd["round_uid"],
@@ -843,8 +919,106 @@ def scan_raw_files_for_query(
                     "category": cat,
                     "message": plain_msg,
                     "ckeys": extract_ckeys_from_text(plain_msg),
+                    "coord_x": coords[0] if coords else None,
+                    "coord_y": coords[1] if coords else None,
+                    "coord_z": coords[2] if coords else None,
                 }
             )
             if len(hits) >= limit:
                 return hits
     return hits
+
+
+def collect_round_map_events(
+    file_path: Path,
+    *,
+    preset: str = "gameplay",
+    categories: Optional[Sequence[str]] = None,
+    ckey: str = "",
+    q: str = "",
+    use_regex: bool = False,
+    time_from: str = "",
+    time_to: str = "",
+    mask_ips: bool = False,
+    render_html: bool = True,
+    z_filter: Optional[int] = None,
+    limit: int = 5000,
+) -> Dict[str, Any]:
+    """Collect coordinate-bearing log events from a round file honoring active filters."""
+    limit = max(1, min(int(limit), 10000))
+    pattern, regex_error = _compile_search_pattern(q, use_regex)
+    if regex_error:
+        return {
+            "events": [],
+            "total_with_coords": 0,
+            "z_counts": {},
+            "truncated": False,
+            "regex_error": regex_error,
+        }
+
+    q_lower = (q or "").strip().lower()
+    ckey_norm = normalize_ckey(ckey) if ckey else ""
+    t_from = (time_from or "").strip()
+    t_to = (time_to or "").strip()
+
+    events: List[Dict[str, Any]] = []
+    z_counts: Dict[int, int] = {}
+    total_with_coords = 0
+    truncated = False
+
+    for line_no, ts, cat, raw_msg, is_cont in iter_parsed_file_lines(file_path):
+        coords_list = extract_coords_from_text(raw_msg)
+        if not coords_list:
+            continue
+        if not _line_matches_filters(
+            ts,
+            cat,
+            raw_msg,
+            preset=preset,
+            categories=categories,
+            ckey_norm=ckey_norm,
+            q_lower=q_lower,
+            pattern=pattern,
+            t_from=t_from,
+            t_to=t_to,
+        ):
+            continue
+
+        primary = coords_list[0]
+        for _cx, _cy, cz in coords_list:
+            z_counts[cz] = z_counts.get(cz, 0) + 1
+            break  # count each event once by its primary Z level
+        total_with_coords += 1
+
+        if z_filter is not None and primary[2] != z_filter:
+            continue
+        if len(events) >= limit:
+            truncated = True
+            continue
+
+        entry = _build_entry(line_no, ts, cat, raw_msg, is_cont, mask_ips=mask_ips, render_html=render_html)
+        meta = category_info(cat)
+        events.append(
+            {
+                "line_no": entry.line_no,
+                "timestamp": entry.timestamp,
+                "time_short": _time_hhmm_from_ts(entry.timestamp) or (entry.timestamp[11:19] if len(entry.timestamp) >= 19 else entry.timestamp),
+                "category": entry.category,
+                "cat_css": meta["css"],
+                "plain_message": entry.plain_message,
+                "safe_html": entry.safe_html,
+                "ckeys": entry.ckeys,
+                "x": primary[0],
+                "y": primary[1],
+                "z": primary[2],
+                "all_coords": [[cx, cy, cz] for cx, cy, cz in coords_list],
+            }
+        )
+
+    return {
+        "events": events,
+        "total_with_coords": total_with_coords,
+        "z_counts": {str(z): cnt for z, cnt in sorted(z_counts.items())},
+        "truncated": truncated,
+        "regex_error": None,
+    }

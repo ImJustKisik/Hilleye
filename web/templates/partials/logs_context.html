@@ -9,7 +9,18 @@
       <span class="log-ln">#L{{ r.line_no }}</span>
       <span class="log-ts">{{ r.time_short or r.timestamp }}</span>
       <span><span class="log-cat-tag {{ r.cat_css }}">{{ r.category }}</span></span>
-      <div class="log-msg-cell">{{ r.safe_html | safe }}</div>
+      <div class="log-msg-cell">
+        <div>{{ r.safe_html | safe }}</div>
+        {% if r.coords %}
+        <div class="log-meta-badges">
+          <a href="/logs/round/{{ round.round_uid }}?file={{ selected_file|urlencode }}&preset=all&view=map&z={{ r.coords.z }}&tx={{ r.coords.x }}&ty={{ r.coords.y }}&focus={{ r.line_no }}"
+             class="log-coord-badge"
+             title="Показать точку ({{ r.coords.x }}, {{ r.coords.y }}, Z{{ r.coords.z }}) на карте">
+            &#x1F4CD; {{ r.coords.x }}, {{ r.coords.y }}, Z{{ r.coords.z }}{% if r.coords.area %} &bull; {{ r.coords.area }}{% endif %}
+          </a>
+        </div>
+        {% endif %}
+      </div>
       <span></span>
     </div>
     {% endfor %}

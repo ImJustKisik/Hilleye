@@ -94,6 +94,13 @@ class AppConfig(BaseModel):
     logs_index_include_debug: bool = Field(default=False)
     logs_auto_scan_on_startup: bool = Field(default=True)
 
+    maps_repo_dir: str = Field(default="", description="Local SierraBay12 git repo directory for DMM/DMI map rendering")
+    maps_github_repo: str = Field(default="ImJustKisik/SierraBay12", description="GitHub owner/repo fallback for maps")
+    maps_github_branch: str = Field(default="dev-sierra", description="GitHub branch fallback for maps")
+    maps_cache_dir: str = Field(default="map_cache", min_length=1, description="Directory for rendered map PNGs & area metadata")
+    maps_tile_px: int = Field(default=16, ge=4, le=32, description="Rendered pixels per SS13 turf tile")
+    maps_auto_build_on_startup: bool = Field(default=True, description="Automatically build map cache on startup if missing")
+
     model_config = {"extra": "allow"}
 
     @field_validator("discord_superadmin_ids", mode="before")
@@ -231,7 +238,22 @@ class AppConfig(BaseModel):
             if key in (logs_cfg or {}) and canonical not in data:
                 data[canonical] = logs_cfg[key]
 
-        # Isolate sibling logs storage when callers/tests specify an explicit db_path without explicit logs paths.
+        maps_cfg = data.get("maps", {})
+        if maps_cfg is not None and not isinstance(maps_cfg, dict):
+            raise ValueError("maps must be an object")
+        maps_aliases = {
+            "repo_dir": "maps_repo_dir",
+            "github_repo": "maps_github_repo",
+            "github_branch": "maps_github_branch",
+            "cache_dir": "maps_cache_dir",
+            "tile_px": "maps_tile_px",
+            "auto_build_on_startup": "maps_auto_build_on_startup",
+        }
+        for key, canonical in maps_aliases.items():
+            if key in (maps_cfg or {}) and canonical not in data:
+                data[canonical] = maps_cfg[key]
+
+        # Isolate sibling logs/maps storage when callers/tests specify an explicit db_path without explicit paths.
         explicit_db = data.get("db_path")
         if explicit_db and "logs_db_path" not in data:
             if explicit_db == ":memory:":
@@ -241,6 +263,10 @@ class AppConfig(BaseModel):
                 data["logs_db_path"] = str(parent / "logs.db")
                 if "logs_uploads_dir" not in data:
                     data["logs_uploads_dir"] = str(parent / "uploaded_logs")
+                if "maps_cache_dir" not in data:
+                    data["maps_cache_dir"] = str(parent / "map_cache")
+        elif explicit_db and Path(str(explicit_db)).is_absolute() and "maps_cache_dir" not in data:
+            data["maps_cache_dir"] = str(Path(str(explicit_db)).parent / "map_cache")
 
         # Synchronize alias pairs if one is provided
         if "poll_interval" in data and "poll_interval_seconds" not in data:
@@ -288,6 +314,22 @@ class AppConfig(BaseModel):
         path = Path(raw).expanduser()
         return path.resolve() if path.is_absolute() else (PROJECT_DIR / path).resolve()
 
+    def resolved_maps_repo_dir(self) -> Optional[Path]:
+        raw = (self.maps_repo_dir or "").strip()
+        if raw:
+            path = Path(raw).expanduser()
+            return path.resolve() if path.is_absolute() else (PROJECT_DIR / path).resolve()
+        logs_root = self.resolved_logs_root_dir()
+        if logs_root is not None:
+            for candidate in (logs_root, logs_root.parent, logs_root.parent.parent):
+                if (candidate / "maps" / "sierra").is_dir():
+                    return candidate.resolve()
+        return None
+
+    def resolved_maps_cache_dir(self) -> Path:
+        path = Path(self.maps_cache_dir).expanduser()
+        return path.resolve() if path.is_absolute() else (PROJECT_DIR / path).resolve()
+
     def discord_oauth_configured(self) -> bool:
         return bool(
             (self.discord_client_id or "").strip()
@@ -326,6 +368,10 @@ def _apply_env_overrides(raw_data: Dict[str, Any]) -> Dict[str, Any]:
         "HILLEYE_LOGS_DIR": "logs_root_dir",
         "HILLEYE_LOGS_UPLOADS_DIR": "logs_uploads_dir",
         "HILLEYE_LOGS_DB_PATH": "logs_db_path",
+        "HILLEYE_MAPS_REPO_DIR": "maps_repo_dir",
+        "HILLEYE_MAPS_GITHUB_REPO": "maps_github_repo",
+        "HILLEYE_MAPS_GITHUB_BRANCH": "maps_github_branch",
+        "HILLEYE_MAPS_CACHE_DIR": "maps_cache_dir",
     }
     for env_name, field_name in env_string_map.items():
         val = os.getenv(env_name)

@@ -28,6 +28,7 @@ from core.byond_topic import (
 from core.card_renderer import render_player_card
 from core import db as core_db
 from core import logs_db as core_logs_db
+from core import map_renderer as core_maps
 from core.hub_scraper import KNOWN_PAGER_ENDPOINTS
 from core.tracker import get_tracker
 from core.config import get_config
@@ -99,6 +100,7 @@ async def lifespan(app: FastAPI):
     logger.info("Starting Hilleye background telemetry tracker...")
     tracker = get_tracker(config=config)
     log_sync_task: Optional[asyncio.Task] = None
+    map_build_task: Optional[asyncio.Task] = None
 
     async def _initial_log_sync() -> None:
         try:
@@ -122,6 +124,23 @@ async def lifespan(app: FastAPI):
         except Exception:
             logger.exception("Background log index sync failed")
 
+    async def _initial_map_build() -> None:
+        try:
+            cache_dir = config.resolved_maps_cache_dir()
+            manifest = core_maps.get_map_manifest(cache_dir)
+            if not manifest.get("ready"):
+                built = await core_maps.build_map_cache(config, force=False)
+                logger.info(
+                    "Station map cache ready (%s, %s Z-levels in %ss)",
+                    built.get("source_kind"),
+                    len(built.get("levels", [])),
+                    built.get("elapsed_seconds"),
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("Background station map cache build failed", exc_info=True)
+
     try:
         await tracker.start()
         if config.logs_auto_scan_on_startup:
@@ -129,12 +148,19 @@ async def lifespan(app: FastAPI):
             uploads_dir = config.resolved_logs_uploads_dir()
             if (root_dir and root_dir.is_dir()) or uploads_dir.is_dir():
                 log_sync_task = asyncio.create_task(_initial_log_sync())
+        if config.maps_auto_build_on_startup:
+            cache_dir = config.resolved_maps_cache_dir()
+            if not core_maps.get_map_manifest(cache_dir).get("ready"):
+                repo_dir = config.resolved_maps_repo_dir()
+                if (repo_dir and (repo_dir / "maps" / "sierra").is_dir()) or config.maps_github_repo:
+                    map_build_task = asyncio.create_task(_initial_map_build())
         yield
     finally:
         try:
-            if log_sync_task is not None and not log_sync_task.done():
-                log_sync_task.cancel()
-                await asyncio.gather(log_sync_task, return_exceptions=True)
+            for bg_task in (log_sync_task, map_build_task):
+                if bg_task is not None and not bg_task.done():
+                    bg_task.cancel()
+                    await asyncio.gather(bg_task, return_exceptions=True)
             await tracker.stop()
             tasks = list(_manifest_tasks.values())
             for task in tasks:

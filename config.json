@@ -77,5 +77,13 @@
     "max_archive_files": 100,
     "index_include_debug": false,
     "auto_scan_on_startup": true
+  },
+  "maps": {
+    "repo_dir": "C:\\Users\\pizzalover\\Documents\\GitHub\\SierraBay12",
+    "github_repo": "ImJustKisik/SierraBay12",
+    "github_branch": "dev-sierra",
+    "cache_dir": "map_cache",
+    "tile_px": 16,
+    "auto_build_on_startup": true
   }
 }

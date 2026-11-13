@@ -13,4 +13,5 @@ examples/subscriptions.json*
 backups/
 *.db.gz
 uploaded_logs/
+map_cache/
 

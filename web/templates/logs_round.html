@@ -55,12 +55,18 @@
 
       <div class="logs-file-tabs">
         {% for fname in available_files %}
-        <a href="/logs/round/{{ round.round_uid }}?file={{ fname|urlencode }}"
+        <a href="/logs/round/{{ round.round_uid }}?file={{ fname|urlencode }}{% if view_mode == 'map' and fname != 'qdel.log' %}&view=map{% endif %}"
            class="logs-nav-pill {% if selected_file == fname %}is-active{% endif %}">{{ fname }}</a>
         {% endfor %}
         {% if is_qdel %}
         <a href="/api/v1/logs/rounds/{{ round.round_uid }}/download?file=qdel.log&mode=raw" class="logs-btn logs-btn-sm">Скачать qdel.log</a>
         {% else %}
+        <span class="logs-view-switch" role="group" aria-label="Режим просмотра">
+          <a href="/logs/round/{{ round.round_uid }}?{{ base_query_str }}&view=stream{% if focus_line %}&focus={{ focus_line }}#L{{ focus_line }}{% endif %}"
+             class="logs-nav-pill {% if view_mode != 'map' %}is-active{% endif %}">Лента</a>
+          <a href="/logs/round/{{ round.round_uid }}?{{ base_query_str }}&view=map{% if focus_line %}&focus={{ focus_line }}{% endif %}{% if target_z %}&z={{ target_z }}{% endif %}{% if target_x %}&tx={{ target_x }}{% endif %}{% if target_y %}&ty={{ target_y }}{% endif %}"
+             class="logs-nav-pill {% if view_mode == 'map' %}is-active{% endif %}">Карта раунда</a>
+        </span>
         <a href="/api/v1/logs/rounds/{{ round.round_uid }}/download?mode=filtered&{{ base_query_str }}" class="logs-btn logs-btn-sm">Скачать фильтр</a>
         <a href="/api/v1/logs/rounds/{{ round.round_uid }}/download?file={{ selected_file|urlencode }}&mode=raw&mask_ips={{ 1 if mask_ips else 0 }}" class="logs-btn logs-btn-sm">Скачать raw</a>
         {% endif %}
@@ -173,6 +179,7 @@
       <form id="logs-filter-form" action="/logs/round/{{ round.round_uid }}" method="get">
         <input type="hidden" name="file" value="{{ selected_file }}">
         <input type="hidden" id="logs-preset-input" name="preset" value="{{ active_preset }}">
+        <input type="hidden" id="logs-view-input" name="view" value="{{ view_mode }}">
         <input type="hidden" name="page" value="1">
 
         <div class="logs-form-grid">
@@ -208,7 +215,7 @@
             </select>
           </div>
           <button type="submit" class="logs-btn logs-btn-primary">Применить</button>
-          <a href="/logs/round/{{ round.round_uid }}?file={{ selected_file|urlencode }}" class="logs-btn">Сбросить</a>
+          <a href="/logs/round/{{ round.round_uid }}?file={{ selected_file|urlencode }}{% if view_mode == 'map' %}&view=map{% endif %}" class="logs-btn">Сбросить</a>
         </div>
 
         <div class="logs-check-row">
@@ -237,7 +244,7 @@
       {% if result.regex_error %}
       <div class="logs-alert logs-alert-error" role="alert">{{ result.regex_error }}</div>
       {% endif %}
-      {% if focus_line and not entries|selectattr("is_focused")|list %}
+      {% if view_mode != 'map' and focus_line and not entries|selectattr("is_focused")|list %}
       <div class="logs-alert logs-alert-info" role="status">
         Строка <code>#L{{ focus_line }}</code> скрыта активным фильтром.
         <a href="/logs/round/{{ round.round_uid }}?file={{ selected_file|urlencode }}&preset=all&focus={{ focus_line }}#L{{ focus_line }}" class="server-link">Открыть в режиме «Все категории»</a>
@@ -245,6 +252,86 @@
       {% endif %}
     </div>
 
+    {% if view_mode == 'map' %}
+    <!-- Interactive Station Map View -->
+    <div id="logs-map-root"
+         class="logs-map-root"
+         data-events-url="/api/v1/logs/rounds/{{ round.round_uid }}/map-events?{{ base_query_str }}"
+         data-round-uid="{{ round.round_uid }}"
+         data-selected-file="{{ selected_file }}"
+         data-base-query="{{ base_query_str }}"
+         data-mask-ips="{{ 1 if mask_ips else 0 }}"
+         data-render-html="{{ 1 if render_html else 0 }}"
+         data-target-z="{{ target_z or '' }}"
+         data-target-x="{{ target_x or '' }}"
+         data-target-y="{{ target_y or '' }}"
+         data-focus-line="{{ focus_line or '' }}"
+         data-ckey="{{ ckey }}"
+         data-tile-px="{{ map_manifest.tile_px or 16 }}"
+         data-map-ready="{{ '1' if map_manifest.ready else '0' }}">
+      <div class="logs-map-toolbar">
+        <div id="logs-map-deck-tabs" class="logs-map-deck-tabs" aria-label="Выбор палубы (Z-уровень)"></div>
+        <div class="logs-map-controls">
+          <button type="button" id="logs-map-mode-pins" class="logs-btn logs-btn-sm is-active">Точки</button>
+          <button type="button" id="logs-map-mode-heat" class="logs-btn logs-btn-sm">Тепловая карта</button>
+          <label class="logs-check-label">
+            <input type="checkbox" id="logs-map-cluster-cb" checked>
+            <span>Кластеры</span>
+          </label>
+          <label class="logs-check-label">
+            <input type="checkbox" id="logs-map-traj-cb" {% if ckey %}checked{% endif %}>
+            <span>Траектория ckey</span>
+          </label>
+          <button type="button" id="logs-map-zoom-out" class="logs-btn logs-btn-sm" title="Отдалить">&minus;</button>
+          <span id="logs-map-zoom-label" class="mono-val logs-map-zoom-label">100%</span>
+          <button type="button" id="logs-map-zoom-in" class="logs-btn logs-btn-sm" title="Приблизить">+</button>
+          <button type="button" id="logs-map-fit" class="logs-btn logs-btn-sm" title="Вписать карту в экран">Сброс</button>
+          <button type="button" id="logs-map-center-target" class="logs-btn logs-btn-sm logs-btn-primary" {% if not target_x %}hidden{% endif %}>Центр</button>
+        </div>
+      </div>
+
+      {% if not map_manifest.ready %}
+      <div class="logs-panel-body">
+        <div class="logs-alert logs-alert-info" role="status">
+          Тайлы карты SierraBay12 ещё не собраны — отображается координатная сетка (200&times;200).
+          {% if user.is_admin %}
+          <a href="/logs/admin" class="server-link">Собрать карту из Git в админ-панели</a>
+          {% endif %}
+        </div>
+      </div>
+      {% endif %}
+
+      <div id="logs-map-status" class="logs-map-status mono-val cell-sub">Загрузка событий раунда с координатами...</div>
+
+      <div class="logs-map-workspace">
+        <div class="logs-map-stage">
+          <canvas id="logs-map-canvas" width="900" height="720" aria-label="Интерактивная карта событий раунда"></canvas>
+          <div class="logs-map-hud">
+            <span id="logs-map-hud-coords" class="mono-val">X: &mdash;, Y: &mdash;, Z: &mdash;</span>
+            <span id="logs-map-hud-area" class="logs-map-hud-area">Наведите курсор на карту</span>
+          </div>
+          <div class="logs-map-legend" aria-label="Легенда категорий">
+            <span class="logs-map-legend-item"><span class="logs-map-dot is-attack"></span>Бой</span>
+            <span class="logs-map-legend-item"><span class="logs-map-dot is-say"></span>Речь</span>
+            <span class="logs-map-legend-item"><span class="logs-map-dot is-admin"></span>Админ</span>
+            <span class="logs-map-legend-item"><span class="logs-map-dot is-access"></span>Вход/сеть</span>
+            <span class="logs-map-legend-item"><span class="logs-map-dot is-game"></span>Игра/эмоции</span>
+            <span class="logs-map-legend-item"><span class="logs-map-dot is-other"></span>Прочее</span>
+          </div>
+        </div>
+
+        <aside id="logs-map-inspector" class="logs-map-inspector" aria-label="Инспектор точки карты">
+          <div class="logs-map-inspector-head">
+            <strong id="logs-map-inspector-title">События на карте</strong>
+            <span id="logs-map-inspector-sub" class="cell-sub mono-val">Нажмите на маркер или тайл</span>
+          </div>
+          <div id="logs-map-inspector-list" class="logs-map-inspector-list">
+            <div class="block-empty">Нажмите на любую точку на карте, чтобы увидеть логи в этом месте.</div>
+          </div>
+        </aside>
+      </div>
+    </div>
+    {% else %}
     <!-- Filtered Summary & Top Pagination -->
     <div class="logs-pagination">
       <span class="mono-val cell-sub">
@@ -270,8 +357,15 @@
         <span><span class="log-cat-tag {{ entry.cat_css }}">{{ entry.category }}</span></span>
         <div class="log-msg-cell">
           <div>{{ entry.safe_html | safe }}</div>
-          {% if entry.ckeys %}
-          <div>
+          {% if entry.coords or entry.ckeys %}
+          <div class="log-meta-badges">
+            {% if entry.coords %}
+            <a href="/logs/round/{{ round.round_uid }}?{{ base_query_str }}&view=map&z={{ entry.coords.z }}&tx={{ entry.coords.x }}&ty={{ entry.coords.y }}&focus={{ entry.line_no }}"
+               class="log-coord-badge"
+               title="Показать точку ({{ entry.coords.x }}, {{ entry.coords.y }}, Z{{ entry.coords.z }}) на карте раунда">
+              &#x1F4CD; {{ entry.coords.x }}, {{ entry.coords.y }}, Z{{ entry.coords.z }}{% if entry.coords.area %} &bull; {{ entry.coords.area }}{% endif %}
+            </a>
+            {% endif %}
             {% for ck in entry.ckeys %}
             <span class="log-ckey-inline">
               <button type="button" class="log-ckey-btn" data-ckey="{{ ck }}" title="Фильтровать раунд по ckey">{{ ck }}</button>
@@ -315,6 +409,7 @@
         {% endif %}
       </div>
     </div>
+    {% endif %}
     {% endif %}
     {% endif %}
   </section>
