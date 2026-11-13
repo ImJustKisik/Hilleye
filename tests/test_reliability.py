@@ -376,9 +376,14 @@ async def test_manifest_coalesces_and_distinguishes_empty_from_unknown(async_cli
     assert count == 1
     assert all(r.status_code == 200 and "Alice" in r.text for r in responses)
     web._manifest_results.clear()
-    response_data = {}
+    response_data = {"version": "516"}
     response = await async_client.post(f"/server/{sid}/manifest")
     assert "Alice" in response.text and "unrecognized" in response.text and "stale" in response.text
+    web._manifest_results.clear()
+    response_data = {}
+    response = await async_client.post(f"/server/{sid}/manifest")
+    assert "Alice" not in response.text
+    assert (await db.get_server_details(sid))["manifest"] == {}
     web._manifest_results.clear()
     response_data = {"command": ""}
     response = await async_client.post(f"/server/{sid}/manifest")

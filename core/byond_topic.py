@@ -441,7 +441,7 @@ def parse_topic_query_string(raw: str) -> Union[Dict[str, Any], List[str], str]:
             else:
                 if v.isdigit() and len(v) <= 12:
                     result[k] = int(v)
-                elif "," in v and not v.startswith("{"):
+                elif "," in v and "=" not in v and not v.startswith("{"):
                     result[k] = [p.strip() for p in v.split(",") if p.strip()]
                 else:
                     result[k] = v

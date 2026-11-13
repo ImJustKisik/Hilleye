@@ -443,7 +443,10 @@ async def fetch_server_manifest_htmx(request: Request, server_id: int):
                     return all((isinstance(v, dict) and isinstance(v.get("name"), str) and v["name"].strip())
                                or (isinstance(v, str) and "=" in v) for v in value)
                 return False
-            recognized = bool(departments) and all(valid_members(v) for v in departments.values())
+            recognized = (
+                (isinstance(raw, dict) and len(raw) == 0)
+                or (bool(departments) and all(valid_members(v) for v in departments.values()))
+            )
             if recognized:
                 manifest = parse_manifest_response(raw)
                 await core_db.save_manifest(server_id, manifest, time.time())

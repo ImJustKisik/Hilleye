@@ -116,6 +116,18 @@ def test_nested_percent_encoded_legacy_manifest():
     }
 
 
+def test_manifest_preserves_commas_in_names_and_ranks():
+    response = parse_topic_query_string(
+        "command=" + quote("Smith, John=Captain&Dr. Bob, MD=Head of Personnel")
+    )
+    assert parse_manifest_response(response) == {
+        "command": [
+            {"name": "Smith, John", "rank": "Captain"},
+            {"name": "Dr. Bob, MD", "rank": "Head of Personnel"},
+        ]
+    }
+
+
 @pytest.mark.parametrize("encoding,title", [("cp1251", "Колония Кофе"), ("cp1252", "Café colony")])
 @pytest.mark.parametrize("text_fallback", [False, True])
 async def test_hub_legacy_encoding(encoding, title, text_fallback):
