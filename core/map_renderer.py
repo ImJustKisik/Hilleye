@@ -9,7 +9,9 @@ import io
 import json
 import logging
 from pathlib import Path
+import queue
 import re
+import shutil
 import subprocess
 import tarfile
 import tempfile
@@ -74,7 +76,7 @@ def _should_extract_github_path(rel_str: str) -> bool:
     if low.startswith(("maps/sierra/", "icons/", "nano/images/sierra/")):
         return True
     if low.startswith(("code/", "mods/", "packs/")):
-        return low.endswith((".dm", ".dmi", ".png"))
+        return low.endswith((".dm", ".dmi"))
     return False
 
 
@@ -717,11 +719,40 @@ def _detect_local_git_commit(repo_dir: Path) -> str:
     return ""
 
 
-def _extract_tar_subset_sync(archive_path: Path, dest_dir: Path) -> None:
+class _ChunkQueueReader(io.RawIOBase):
+    """Stream adapter feeding async HTTP chunks into synchronous tarfile('r|gz')."""
+
+    def __init__(self, chunk_queue: "queue.Queue[Optional[bytes]]") -> None:
+        self._queue = chunk_queue
+        self._buf = bytearray()
+        self._eof = False
+
+    def readable(self) -> bool:
+        return True
+
+    def read(self, size: int = -1) -> bytes:
+        if size == 0:
+            return b""
+        while not self._eof and (size < 0 or len(self._buf) < size):
+            item = self._queue.get()
+            if item is None:
+                self._eof = True
+                break
+            self._buf.extend(item)
+        if size < 0 or size >= len(self._buf):
+            out = bytes(self._buf)
+            self._buf.clear()
+            return out
+        out = bytes(self._buf[:size])
+        del self._buf[:size]
+        return out
+
+
+def _extract_tar_stream_sync(reader: _ChunkQueueReader, dest_dir: Path) -> None:
     dest_resolved = dest_dir.resolve()
     total_extracted = 0
-    with tarfile.open(archive_path, mode="r:gz") as tf:
-        for member in tf.getmembers():
+    with tarfile.open(fileobj=reader, mode="r|gz") as tf:
+        for member in tf:
             if not member.isreg():
                 continue
             parts = Path(member.name).parts
@@ -756,7 +787,7 @@ async def _download_github_repo_subset(
     github_branch: str,
     dest_dir: Path,
 ) -> None:
-    """Safely stream and selectively extract map/icon files from GitHub archive tarball."""
+    """Stream and selectively extract map/icon files from GitHub tarball with zero archive disk buffer."""
     repo_clean = (github_repo or "").strip()
     branch_clean = (github_branch or "").strip()
     if not _GITHUB_REPO_RE.match(repo_clean):
@@ -778,14 +809,18 @@ async def _download_github_repo_subset(
     if transport is not None:
         client_kwargs["transport"] = transport
 
-    archive_path = dest_dir / "_github_archive.tar.gz"
     downloaded = 0
     _set_build_status(
         phase="downloading_github",
         downloaded_mb=0.0,
         total_mb=0.0,
-        detail=f"Скачивание {repo_clean}@{branch_clean} с GitHub...",
+        detail=f"Потоковое скачивание {repo_clean}@{branch_clean} с GitHub...",
     )
+    chunk_queue: "queue.Queue[Optional[bytes]]" = queue.Queue(maxsize=16)
+    reader = _ChunkQueueReader(chunk_queue)
+    extract_task: Optional[asyncio.Task] = None
+    eof_sent = False
+
     try:
         async with httpx.AsyncClient(**client_kwargs) as client:
             async with client.stream("GET", url) as resp:
@@ -794,26 +829,43 @@ async def _download_github_repo_subset(
                 content_len = resp.headers.get("content-length")
                 total_mb = round(int(content_len) / (1024 * 1024), 1) if content_len and content_len.isdigit() else 0.0
                 _set_build_status(total_mb=total_mb)
-                with archive_path.open("wb") as fp:
-                    async for chunk in resp.aiter_bytes(chunk_size=262144):
-                        if not chunk:
-                            continue
-                        downloaded += len(chunk)
-                        if downloaded > MAX_GITHUB_ARCHIVE_BYTES:
-                            raise ValueError("Архив GitHub превышает допустимый размер.")
-                        fp.write(chunk)
-                        _set_build_status(
-                            downloaded_mb=round(downloaded / (1024 * 1024), 1),
-                            detail=f"Скачивание с GitHub: {downloaded / (1024 * 1024):.1f} МБ...",
-                        )
-
-        _set_build_status(
-            phase="extracting",
-            detail="Распаковка карт и спрайтов из архива GitHub...",
-        )
-        await asyncio.to_thread(_extract_tar_subset_sync, archive_path, dest_dir)
+                extract_task = asyncio.create_task(
+                    asyncio.to_thread(_extract_tar_stream_sync, reader, dest_dir)
+                )
+                async for chunk in resp.aiter_bytes(chunk_size=131072):
+                    if not chunk:
+                        continue
+                    downloaded += len(chunk)
+                    if downloaded > MAX_GITHUB_ARCHIVE_BYTES:
+                        raise ValueError("Архив GitHub превышает допустимый размер.")
+                    if extract_task.done():
+                        break
+                    await asyncio.to_thread(chunk_queue.put, chunk)
+                    _set_build_status(
+                        downloaded_mb=round(downloaded / (1024 * 1024), 1),
+                        detail=f"Скачивание и распаковка с GitHub: {downloaded / (1024 * 1024):.1f} МБ...",
+                    )
+        if extract_task is not None:
+            await asyncio.to_thread(chunk_queue.put, None)
+            eof_sent = True
+            await extract_task
     finally:
-        archive_path.unlink(missing_ok=True)
+        if extract_task is not None:
+            if not eof_sent:
+                while True:
+                    try:
+                        chunk_queue.put_nowait(None)
+                        break
+                    except queue.Full:
+                        try:
+                            chunk_queue.get_nowait()
+                        except queue.Empty:
+                            break
+            if not extract_task.done():
+                try:
+                    await extract_task
+                except Exception:
+                    pass
 
 
 def _render_maps_from_repo_sync(
@@ -1077,7 +1129,11 @@ async def build_map_cache(
                     github_branch=config.maps_github_branch,
                 )
             else:
-                with tempfile.TemporaryDirectory(prefix="hilleye_maps_") as tmp_dir:
+                cache_dir.mkdir(parents=True, exist_ok=True)
+                for stale in cache_dir.glob("_gh_src_*"):
+                    if stale.is_dir():
+                        shutil.rmtree(stale, ignore_errors=True)
+                with tempfile.TemporaryDirectory(prefix="_gh_src_", dir=cache_dir) as tmp_dir:
                     tmp_path = Path(tmp_dir)
                     await _download_github_repo_subset(
                         config.maps_github_repo,
