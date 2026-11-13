@@ -123,5 +123,12 @@ Hilleye/
 
 ---
 
+### SierraBay12 Log Viewer (`/logs`)
+- Protected by Discord OAuth2 + user ID whitelist (`discord` section in `config.json` or `HILLEYE_DISCORD_CLIENT_ID`, `HILLEYE_DISCORD_CLIENT_SECRET`, `HILLEYE_DISCORD_REDIRECT_URI`, `HILLEYE_SESSION_SECRET`, `HILLEYE_DISCORD_SUPERADMIN_IDS`).
+- Configure `logs.root_dir` (`HILLEYE_LOGS_DIR`) to point to SierraBay12's `data/logs` directory (`game.log`, `qdel.log`), and upload `.log`/`.txt`/`.zip`/`.tar.gz` logs manually through the `/logs` web UI (`logs.uploads_dir`, `HILLEYE_LOGS_UPLOADS_DIR`).
+- Uses a dedicated SQLite WAL + FTS5 database (`logs.db`, override with `HILLEYE_LOGS_DB_PATH`) for fast cross-round search, dynamic whitelist management (`/logs/admin`), and access audit logging.
+
+---
+
 ## License
 MIT License.

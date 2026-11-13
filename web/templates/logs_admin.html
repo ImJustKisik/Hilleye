@@ -1,0 +1,213 @@
+{% extends "base.html" %}
+{% block title %}Администрирование логов — Hilleye{% endblock %}
+{% block extra_head %}
+<link rel="stylesheet" href="/static/css/logs.css">
+<script src="/static/js/logs.js" defer></script>
+{% endblock %}
+
+{% block content %}
+<div class="logs-page-stack">
+  <div class="logs-topbar">
+    <div class="logs-topbar-left">
+      <nav class="logs-subnav" aria-label="Навигация по логам">
+        <a href="/logs" class="logs-nav-pill">Раунды</a>
+        <a href="/logs/search" class="logs-nav-pill">Глобальный поиск</a>
+        <a href="/logs/admin" class="logs-nav-pill is-active">Вайтлист и аудит</a>
+      </nav>
+    </div>
+    <div class="logs-topbar-right">
+      <div class="logs-user-badge">
+        <span>{{ user.display_name }}</span>
+        <span class="logs-role-tag role-{{ user.role }}">{{ user.role }}</span>
+      </div>
+      <form action="/auth/logout" method="post">
+        <input type="hidden" name="csrf_token" value="{{ user.csrf_token }}">
+        <button type="submit" class="logs-btn logs-btn-sm">Выйти</button>
+      </form>
+    </div>
+  </div>
+
+  {% if notice %}
+  <div class="logs-alert logs-alert-ok" role="status">{{ notice }}</div>
+  {% endif %}
+  {% if error %}
+  <div class="logs-alert logs-alert-error" role="alert">{{ error }}</div>
+  {% endif %}
+
+  <div class="logs-dashboard-grid">
+    <!-- Whitelist Management -->
+    <section class="panel" aria-label="Управление вайтлистом Discord">
+      <div class="panel-header">
+        <h1 class="panel-title">Вайтлист Discord ID</h1>
+        <span class="mono-val cell-sub">{{ whitelist|length }} записей</span>
+      </div>
+      <div class="logs-panel-body">
+        <form action="/logs/admin/whitelist/add" method="post" class="logs-form-grid">
+          <input type="hidden" name="csrf_token" value="{{ user.csrf_token }}">
+          <div class="logs-field logs-field-sm">
+            <label for="wl-id" class="logs-label">Discord User ID</label>
+            <input type="text" id="wl-id" name="discord_id" required pattern="[0-9]{15,22}" class="logs-input" placeholder="123456789012345678">
+          </div>
+          <div class="logs-field">
+            <label for="wl-note" class="logs-label">Заметка / ник</label>
+            <input type="text" id="wl-note" name="display_name" maxlength="80" class="logs-input" placeholder="Например: Старший админ">
+          </div>
+          {% if user.is_superadmin %}
+          <div class="logs-field logs-field-sm">
+            <label for="wl-role" class="logs-label">Роль</label>
+            <select id="wl-role" name="role" class="logs-select">
+              <option value="viewer">viewer</option>
+              <option value="admin">admin</option>
+            </select>
+          </div>
+          {% endif %}
+          <button type="submit" class="logs-btn logs-btn-primary">Добавить</button>
+        </form>
+      </div>
+
+      <div class="logs-table-wrap">
+        <table class="logs-table">
+          <thead>
+            <tr>
+              <th>Discord ID</th>
+              <th>Имя / заметка</th>
+              <th>Роль</th>
+              <th>Кем добавлен</th>
+              <th>Добавлен</th>
+              <th>Действия</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in whitelist %}
+            <tr>
+              <td class="mono-val">{{ item.discord_id }}</td>
+              <td>{{ item.display_name or '—' }}</td>
+              <td><span class="logs-role-tag role-{{ item.role }}">{{ item.role }}</span></td>
+              <td class="mono-val">{{ item.added_by }}</td>
+              <td class="mono-val">{{ item.added_at_str }}</td>
+              <td>
+                {% if item.is_config_superadmin %}
+                <span class="cell-sub">защищено (config)</span>
+                {% else %}
+                <form action="/logs/admin/whitelist/remove" method="post">
+                  <input type="hidden" name="csrf_token" value="{{ user.csrf_token }}">
+                  <input type="hidden" name="discord_id" value="{{ item.discord_id }}">
+                  <button type="submit" class="logs-btn logs-btn-sm logs-btn-danger">Удалить</button>
+                </form>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Index Control & Uploaded Logs -->
+    <section class="panel" aria-label="Индексация и загруженные архивы">
+      <div class="panel-header">
+        <h2 class="panel-title">Индекс FTS5 и загрузки</h2>
+      </div>
+      <div class="logs-panel-body">
+        <p class="logs-auth-copy">
+          Проиндексировано строк: <strong>{{ "{:,}".format(stats.indexed_entries) }}</strong> ({{ stats.total_rounds }} раундов, {{ stats.total_size_label }}). Последнее обновление: <span class="mono-val">{{ stats.last_indexed_str }}</span>.
+        </p>
+        <form action="/logs/reindex" method="post" class="logs-form-grid">
+          <input type="hidden" name="csrf_token" value="{{ user.csrf_token }}">
+          <label class="logs-check-label">
+            <input type="checkbox" name="include_debug" value="1" {% if index_include_debug %}checked{% endif %}>
+            <span>Включать DEBUG-строки в FTS5</span>
+          </label>
+          <button type="submit" class="logs-btn logs-btn-primary">Полная переиндексация</button>
+        </form>
+      </div>
+
+      {% if uploaded_rounds %}
+      <div class="logs-table-wrap">
+        <table class="logs-table">
+          <thead>
+            <tr>
+              <th>Загруженный раунд</th>
+              <th>Дата</th>
+              <th>Размер</th>
+              <th>Удалить</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for ur in uploaded_rounds %}
+            <tr>
+              <td class="mono-val">
+                <a href="/logs/round/{{ ur.round_uid }}" class="server-link">{{ ur.round_id }}</a>
+                {% if ur.label %}<div class="cell-sub">{{ ur.label }}</div>{% endif %}
+              </td>
+              <td class="mono-val">{{ ur.round_date }}</td>
+              <td class="mono-val">{{ ur.size_label }}</td>
+              <td>
+                <form action="/logs/rounds/{{ ur.round_uid }}/delete" method="post">
+                  <input type="hidden" name="csrf_token" value="{{ user.csrf_token }}">
+                  <button type="submit" class="logs-btn logs-btn-sm logs-btn-danger">Удалить</button>
+                </form>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="logs-panel-body">
+        <div class="block-empty">Загруженных вручную раундов нет.</div>
+      </div>
+      {% endif %}
+    </section>
+  </div>
+
+  <!-- Audit Log -->
+  <section class="panel" aria-label="Журнал аудита">
+    <div class="panel-header">
+      <h2 class="panel-title">Журнал аудита ({{ total_events }})</h2>
+      <form action="/logs/admin" method="get" class="logs-form-grid">
+        <select name="action" class="logs-select" aria-label="Фильтр событий аудита">
+          <option value="">Все действия</option>
+          {% for act in ['login', 'login_denied', 'logout', 'view_round', 'search_global', 'download_log', 'upload_round', 'delete_upload', 'whitelist_add', 'whitelist_remove', 'refresh', 'reindex'] %}
+          <option value="{{ act }}" {% if action_filter == act %}selected{% endif %}>{{ act }}</option>
+          {% endfor %}
+        </select>
+        <button type="submit" class="logs-btn logs-btn-sm">Фильтр</button>
+      </form>
+    </div>
+
+    {% if audit_events %}
+    <div class="logs-table-wrap">
+      <table class="logs-table">
+        <thead>
+          <tr>
+            <th>Время (UTC)</th>
+            <th>Пользователь</th>
+            <th>Действие</th>
+            <th>Объект</th>
+            <th>IP</th>
+            <th>Детали</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for ev in audit_events %}
+          <tr>
+            <td class="mono-val">{{ ev.created_at_str }}</td>
+            <td class="mono-val">{{ ev.discord_username or '—' }} {% if ev.discord_id %}<span class="cell-sub">({{ ev.discord_id }})</span>{% endif %}</td>
+            <td>{{ ev.action_label }}</td>
+            <td class="mono-val">{{ ev.target or '—' }}</td>
+            <td class="mono-val">{{ ev.ip_address or '—' }}</td>
+            <td class="cell-sub">{{ ev.details or '—' }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="logs-panel-body">
+      <div class="block-empty">Событий аудита пока нет.</div>
+    </div>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

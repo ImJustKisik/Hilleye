@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Доступ к логам SierraBay12 — Hilleye{% endblock %}
+{% block extra_head %}
+<link rel="stylesheet" href="/static/css/logs.css">
+<script src="/static/js/logs.js" defer></script>
+{% endblock %}
+
+{% block content %}
+<article class="panel logs-auth-card" aria-label="Авторизация в просмоторщике логов">
+  {% if status_kind == 'unconfigured' %}
+    <h1 class="logs-auth-title">Discord OAuth2 не настроен</h1>
+    <p class="logs-auth-copy">
+      Доступ к просмоторщику логов SierraBay12 закрыт по умолчанию. Чтобы включить авторизацию через Discord и вайтлист, заполните секцию <code>discord</code> в <code>config.json</code> или задайте переменные окружения:
+    </p>
+    <pre class="logs-code-block">{
+  "discord": {
+    "client_id": "ВАШ_CLIENT_ID",
+    "client_secret": "ВАШ_CLIENT_SECRET",
+    "redirect_uri": "{{ redirect_uri_hint }}",
+    "session_secret": "ДЛИННЫЙ_СЛУЧАЙНЫЙ_СЕКРЕТ",
+    "superadmin_ids": ["123456789012345678"],
+    "secure_cookies": true
+  }
+}</pre>
+    <p class="logs-auth-copy">
+      Переменные окружения: <code>HILLEYE_DISCORD_CLIENT_ID</code>, <code>HILLEYE_DISCORD_CLIENT_SECRET</code>, <code>HILLEYE_DISCORD_REDIRECT_URI</code>, <code>HILLEYE_SESSION_SECRET</code>, <code>HILLEYE_DISCORD_SUPERADMIN_IDS</code>.
+    </p>
+    <a href="/" class="logs-btn">Вернуться в Hilleye</a>
+
+  {% elif status_kind == 'forbidden' %}
+    <h1 class="logs-auth-title">Доступ запрещён (нет в вайтлисте)</h1>
+    <p class="logs-auth-copy">
+      Вы вошли через Discord, но ваш аккаунт пока не добавлен в вайтлист просмоторщика логов SierraBay12. Передайте ваш Discord User ID администратору:
+    </p>
+    {% if session_user %}
+    <div class="logs-id-box">
+      <span>Пользователь: <strong>{{ session_user.display_name or session_user.username }}</strong></span>
+      <span>ID: <code id="my-discord-id">{{ session_user.uid }}</code></span>
+      <button type="button" class="logs-btn logs-btn-sm" data-copy-text="{{ session_user.uid }}">Скопировать ID</button>
+    </div>
+    <form action="/auth/logout" method="post">
+      <input type="hidden" name="csrf_token" value="{{ session_user.csrf }}">
+      <button type="submit" class="logs-btn">Выйти из аккаунта</button>
+      <a href="/" class="logs-btn">На главную</a>
+    </form>
+    {% endif %}
+
+  {% elif status_kind == 'admin_required' %}
+    <h1 class="logs-auth-title">Недостаточно прав</h1>
+    <p class="logs-auth-copy">{{ error_message or 'Для открытия этой страницы нужны права администратора.' }}</p>
+    <a href="/logs" class="logs-btn logs-btn-primary">К просмоторщику логов</a>
+
+  {% else %}
+    <h1 class="logs-auth-title">Просмотр логов SierraBay12</h1>
+    <p class="logs-auth-copy">
+      Раздел логов содержит служебные события, чат раундов, атаки и данные подключений (<code>ACCESS</code>/<code>ADMIN</code>). Вход разрешён только пользователям из вайтлиста через Discord.
+    </p>
+    {% if error_message %}
+    <div class="logs-alert logs-alert-error" role="alert">{{ error_message }}</div>
+    {% endif %}
+    <div class="logs-topbar-left">
+      <a href="/auth/discord/login?next={{ next_path|urlencode }}" class="logs-btn logs-btn-primary">Войти через Discord</a>
+      <a href="/" class="logs-btn">На главную Hilleye</a>
+    </div>
+  {% endif %}
+</article>
+{% endblock %}

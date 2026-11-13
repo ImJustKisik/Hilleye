@@ -12,3 +12,5 @@ examples/token.txt
 examples/subscriptions.json*
 backups/
 *.db.gz
+uploaded_logs/
+

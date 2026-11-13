@@ -27,9 +27,11 @@ from core.byond_topic import (
 )
 from core.card_renderer import render_player_card
 from core import db as core_db
+from core import logs_db as core_logs_db
 from core.hub_scraper import KNOWN_PAGER_ENDPOINTS
 from core.tracker import get_tracker
 from core.config import get_config
+from web.logs_routes import create_logs_router
 
 logger = logging.getLogger(__name__)
 
@@ -86,20 +88,53 @@ def _set_cached_card(norm_ckey: str, png_bytes: bytes) -> None:
 async def lifespan(app: FastAPI):
     """
     Application lifespan manager:
-    - On startup: initialize SQLite WAL database and start the background tracker.
-    - On shutdown: stop background tracker and safely close database connections.
+    - On startup: initialize SQLite WAL databases and start the background tracker.
+    - On shutdown: stop background tracker, log indexer, and safely close database connections.
     """
     logger.info("Initializing Hilleye SQLite WAL database...")
     config = get_config()
     await core_db.init_db(config.resolved_db_path())
+    await core_logs_db.init_logs_db(config.resolved_logs_db_path())
 
     logger.info("Starting Hilleye background telemetry tracker...")
     tracker = get_tracker(config=config)
+    log_sync_task: Optional[asyncio.Task] = None
+
+    async def _initial_log_sync() -> None:
+        try:
+            root_dir = config.resolved_logs_root_dir()
+            uploads_dir = config.resolved_logs_uploads_dir()
+            if (root_dir and root_dir.is_dir()) or uploads_dir.is_dir():
+                summary = await core_logs_db.sync_and_index_rounds(
+                    root_dir,
+                    uploads_dir,
+                    include_debug=config.logs_index_include_debug,
+                    force_reindex=False,
+                )
+                logger.info(
+                    "Initial log index sync complete: %s rounds discovered, %s indexed (%ss)",
+                    summary["discovered"],
+                    summary["indexed_rounds"],
+                    summary["elapsed_seconds"],
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Background log index sync failed")
+
     try:
         await tracker.start()
+        if config.logs_auto_scan_on_startup:
+            root_dir = config.resolved_logs_root_dir()
+            uploads_dir = config.resolved_logs_uploads_dir()
+            if (root_dir and root_dir.is_dir()) or uploads_dir.is_dir():
+                log_sync_task = asyncio.create_task(_initial_log_sync())
         yield
     finally:
         try:
+            if log_sync_task is not None and not log_sync_task.done():
+                log_sync_task.cancel()
+                await asyncio.gather(log_sync_task, return_exceptions=True)
             await tracker.stop()
             tasks = list(_manifest_tasks.values())
             for task in tasks:
@@ -108,6 +143,7 @@ async def lifespan(app: FastAPI):
             _manifest_tasks.clear()
             _manifest_results.clear()
         finally:
+            await core_logs_db.close_logs_db()
             await core_db.close_db()
 
 
@@ -625,3 +661,12 @@ async def fetch_server_manifest_htmx(request: Request, server_id: int):
         },
         status_code=200,
     )
+
+
+app.include_router(
+    create_logs_router(
+        templates=templates,
+        get_config_fn=lambda: get_config(),
+        get_shell_context_fn=_get_shell_context,
+    )
+)

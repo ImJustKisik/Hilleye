@@ -1,0 +1,156 @@
+{% extends "base.html" %}
+{% block title %}Глобальный поиск по логам SierraBay12 — Hilleye{% endblock %}
+{% block extra_head %}
+<link rel="stylesheet" href="/static/css/logs.css">
+<script src="/static/js/logs.js" defer></script>
+{% endblock %}
+
+{% block content %}
+<div class="logs-page-stack">
+  <div class="logs-topbar">
+    <div class="logs-topbar-left">
+      <nav class="logs-subnav" aria-label="Навигация по логам">
+        <a href="/logs" class="logs-nav-pill">Раунды</a>
+        <a href="/logs/search" class="logs-nav-pill is-active">Глобальный поиск</a>
+        {% if user.is_admin %}
+        <a href="/logs/admin" class="logs-nav-pill">Вайтлист и аудит</a>
+        {% endif %}
+      </nav>
+    </div>
+    <div class="logs-topbar-right">
+      <div class="logs-user-badge">
+        <span>{{ user.display_name }}</span>
+        <span class="logs-role-tag role-{{ user.role }}">{{ user.role }}</span>
+      </div>
+      <form action="/auth/logout" method="post">
+        <input type="hidden" name="csrf_token" value="{{ user.csrf_token }}">
+        <button type="submit" class="logs-btn logs-btn-sm">Выйти</button>
+      </form>
+    </div>
+  </div>
+
+  <section class="panel" aria-label="Параметры глобального поиска">
+    <div class="panel-header">
+      <h1 class="panel-title">Глобальный поиск по всем раундам</h1>
+      <span class="block-meta mono-val">SQLite FTS5 + прямое сканирование DEBUG</span>
+    </div>
+    <div class="logs-panel-body">
+      <form action="/logs/search" method="get">
+        <div class="logs-form-grid">
+          <div class="logs-field">
+            <label for="gsearch-q" class="logs-label">Поисковый запрос</label>
+            <input type="text" id="gsearch-q" name="q" value="{{ q }}" class="logs-input" placeholder="Текст сообщения, команда, объект...">
+          </div>
+          <div class="logs-field logs-field-sm">
+            <label for="gsearch-ckey" class="logs-label">Игрок (ckey)</label>
+            <input type="text" id="gsearch-ckey" name="ckey" value="{{ ckey }}" class="logs-input" placeholder="ckey...">
+          </div>
+          <div class="logs-field logs-field-sm">
+            <label for="gsearch-preset" class="logs-label">Пресет</label>
+            <select id="gsearch-preset" name="preset" class="logs-select">
+              {% for pid, pinfo in presets.items() %}
+              <option value="{{ pid }}" {% if active_preset == pid %}selected{% endif %}>{{ pinfo.label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="logs-field logs-field-sm">
+            <label for="gsearch-df" class="logs-label">Дата от</label>
+            <input type="date" id="gsearch-df" name="date_from" value="{{ date_from }}" class="logs-input">
+          </div>
+          <div class="logs-field logs-field-sm">
+            <label for="gsearch-dt" class="logs-label">Дата до</label>
+            <input type="date" id="gsearch-dt" name="date_to" value="{{ date_to }}" class="logs-input">
+          </div>
+          <div class="logs-field logs-field-sm">
+            <label for="gsearch-round" class="logs-label">Round UID (опц.)</label>
+            <input type="text" id="gsearch-round" name="round_uid" value="{{ round_uid }}" class="logs-input" placeholder="d-... / u-...">
+          </div>
+          <button type="submit" class="logs-btn logs-btn-primary">Искать</button>
+          <a href="/logs/search" class="logs-btn">Сбросить</a>
+        </div>
+
+        <div class="logs-check-row">
+          <label class="logs-check-label">
+            <input type="checkbox" name="scan_debug" value="1" {% if scan_debug %}checked{% endif %}>
+            <span>Искать также в DEBUG/SS напрямую на диске (медленнее)</span>
+          </label>
+          <label class="logs-check-label">
+            <input type="checkbox" name="mask_ips" value="1" {% if mask_ips %}checked{% endif %}>
+            <span>Скрыть IP/CID</span>
+          </label>
+        </div>
+
+        <div class="logs-cat-chips" aria-label="Выбрать конкретные категории">
+          {% for cat_name in all_categories %}
+          <label class="logs-cat-chip {% if cat_name in selected_cats %}is-selected{% endif %}">
+            <input type="checkbox" name="cat" value="{{ cat_name }}" {% if cat_name in selected_cats %}checked{% endif %}>
+            <span>{{ cat_name }}</span>
+          </label>
+          {% endfor %}
+        </div>
+      </form>
+    </div>
+  </section>
+
+  {% if has_query %}
+  <section class="panel" aria-label="Результаты поиска">
+    <div class="panel-header">
+      <h2 class="panel-title">Найдено совпадений: {{ total_hits }}</h2>
+      <span class="mono-val cell-sub">Страница {{ page }} / {{ total_pages }}</span>
+    </div>
+
+    {% if hits %}
+    <div class="log-stream">
+      {% for h in hits %}
+      <div class="log-row">
+        <a href="/logs/round/{{ h.round_uid }}?file=game.log&preset=all&focus={{ h.line_no }}#L{{ h.line_no }}" class="log-ln" title="Открыть строку в раунде">#L{{ h.line_no }}</a>
+        <span class="log-ts" title="{{ h.timestamp }}">
+          <div>{{ h.round_date }}</div>
+          <div>{{ h.timestamp[11:] if h.timestamp|length > 11 else h.timestamp }}</div>
+        </span>
+        <span>
+          <span class="log-cat-tag {{ h.cat_css }}">{{ h.category }}</span>
+          <div class="cell-sub mono-val">{{ h.round_id }}</div>
+        </span>
+        <div class="log-msg-cell">
+          <div>{{ h.safe_html | safe }}</div>
+          {% if h.ckeys %}
+          <div>
+            {% for ck in h.ckeys %}
+            <span class="log-ckey-inline">
+              <a href="/logs/search?ckey={{ ck|urlencode }}&preset={{ active_preset|urlencode }}" class="log-ckey-btn">{{ ck }}</a>
+              <a href="/player/{{ ck }}" class="log-ckey-dossier" target="_blank" rel="noopener">&nearr; досье</a>
+            </span>
+            {% endfor %}
+          </div>
+          {% endif %}
+        </div>
+        <div class="log-row-actions">
+          <a href="/logs/round/{{ h.round_uid }}?file=game.log&preset=all&focus={{ h.line_no }}#L{{ h.line_no }}" class="logs-btn logs-btn-sm logs-btn-primary">К строке</a>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+
+    {% if total_pages > 1 %}
+    <div class="logs-pagination">
+      <span class="mono-val cell-sub">Страница {{ page }} из {{ total_pages }}</span>
+      <div class="logs-topbar-left">
+        {% if page > 1 %}
+        <a href="/logs/search?{{ search_query_str }}&page={{ page - 1 }}" class="logs-btn logs-btn-sm">&larr; Назад</a>
+        {% endif %}
+        {% if page < total_pages %}
+        <a href="/logs/search?{{ search_query_str }}&page={{ page + 1 }}" class="logs-btn logs-btn-sm">Вперёд &rarr;</a>
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
+    {% else %}
+    <div class="logs-panel-body">
+      <div class="block-empty">Совпадений не найдено. Если нужно искать по отладочным сообщениям <code>DEBUG</code>, отметьте «Искать также в DEBUG/SS напрямую на диске».</div>
+    </div>
+    {% endif %}
+  </section>
+  {% endif %}
+</div>
+{% endblock %}

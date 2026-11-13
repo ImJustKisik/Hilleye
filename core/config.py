@@ -74,8 +74,44 @@ class AppConfig(BaseModel):
         default_factory=lambda: list(DEFAULT_CUSTOM_SERVERS),
         description="User-defined unannounced servers to poll",
     )
+    discord_client_id: str = Field(default="", description="Discord OAuth2 application client ID")
+    discord_client_secret: str = Field(default="", description="Discord OAuth2 application client secret")
+    discord_redirect_uri: str = Field(default="", description="Explicit HTTPS Discord OAuth2 callback URI")
+    discord_session_secret: str = Field(default="", description="HMAC key for signed session cookies")
+    discord_superadmin_ids: List[str] = Field(
+        default_factory=list,
+        description="Base super-admin Discord user IDs with full whitelist control",
+    )
+    discord_session_ttl_seconds: int = Field(default=604800, ge=60, le=2592000)
+    discord_secure_cookies: bool = Field(default=True, description="Require Secure flag on auth cookies")
+
+    logs_root_dir: str = Field(default="", description="Root directory containing SierraBay12 round logs")
+    logs_uploads_dir: str = Field(default="uploaded_logs", min_length=1, description="Directory for uploaded logs")
+    logs_db_path: str = Field(default="logs.db", min_length=1, description="SQLite database path for log index/auth")
+    logs_max_upload_mb: int = Field(default=50, ge=1, le=500)
+    logs_max_extracted_mb: int = Field(default=200, ge=1, le=2000)
+    logs_max_archive_files: int = Field(default=100, ge=1, le=1000)
+    logs_index_include_debug: bool = Field(default=False)
+    logs_auto_scan_on_startup: bool = Field(default=True)
 
     model_config = {"extra": "allow"}
+
+    @field_validator("discord_superadmin_ids", mode="before")
+    @classmethod
+    def validate_superadmin_ids(cls, v: Any) -> List[str]:
+        if isinstance(v, str):
+            raw_items = [part.strip() for part in v.split(",")]
+        elif isinstance(v, (list, tuple, set)):
+            raw_items = [str(part).strip() for part in v]
+        else:
+            return []
+        cleaned: List[str] = []
+        seen = set()
+        for item in raw_items:
+            if item and item.isdigit() and item not in seen:
+                seen.add(item)
+                cleaned.append(item)
+        return cleaned
 
     @field_validator("custom_servers", mode="before")
     @classmethod
@@ -161,6 +197,51 @@ class AppConfig(BaseModel):
             raise ValueError("database must be an object")
         if "path" in database:
             data.setdefault("db_path", database["path"])
+
+        discord_cfg = data.get("discord", {})
+        if discord_cfg is not None and not isinstance(discord_cfg, dict):
+            raise ValueError("discord must be an object")
+        discord_aliases = {
+            "client_id": "discord_client_id",
+            "client_secret": "discord_client_secret",
+            "redirect_uri": "discord_redirect_uri",
+            "session_secret": "discord_session_secret",
+            "superadmin_ids": "discord_superadmin_ids",
+            "session_ttl_seconds": "discord_session_ttl_seconds",
+            "secure_cookies": "discord_secure_cookies",
+        }
+        for key, canonical in discord_aliases.items():
+            if key in (discord_cfg or {}) and canonical not in data:
+                data[canonical] = discord_cfg[key]
+
+        logs_cfg = data.get("logs", {})
+        if logs_cfg is not None and not isinstance(logs_cfg, dict):
+            raise ValueError("logs must be an object")
+        logs_aliases = {
+            "root_dir": "logs_root_dir",
+            "uploads_dir": "logs_uploads_dir",
+            "db_path": "logs_db_path",
+            "max_upload_mb": "logs_max_upload_mb",
+            "max_extracted_mb": "logs_max_extracted_mb",
+            "max_archive_files": "logs_max_archive_files",
+            "index_include_debug": "logs_index_include_debug",
+            "auto_scan_on_startup": "logs_auto_scan_on_startup",
+        }
+        for key, canonical in logs_aliases.items():
+            if key in (logs_cfg or {}) and canonical not in data:
+                data[canonical] = logs_cfg[key]
+
+        # Isolate sibling logs storage when callers/tests specify an explicit db_path without explicit logs paths.
+        explicit_db = data.get("db_path")
+        if explicit_db and "logs_db_path" not in data:
+            if explicit_db == ":memory:":
+                data["logs_db_path"] = ":memory:"
+            elif Path(str(explicit_db)).is_absolute():
+                parent = Path(str(explicit_db)).parent
+                data["logs_db_path"] = str(parent / "logs.db")
+                if "logs_uploads_dir" not in data:
+                    data["logs_uploads_dir"] = str(parent / "uploaded_logs")
+
         # Synchronize alias pairs if one is provided
         if "poll_interval" in data and "poll_interval_seconds" not in data:
             data["poll_interval_seconds"] = data["poll_interval"]
@@ -190,6 +271,30 @@ class AppConfig(BaseModel):
         path = Path(self.db_path).expanduser()
         return str(path.resolve() if path.is_absolute() else (PROJECT_DIR / path).resolve())
 
+    def resolved_logs_db_path(self) -> str:
+        if self.logs_db_path == ":memory:":
+            return self.logs_db_path
+        path = Path(self.logs_db_path).expanduser()
+        return str(path.resolve() if path.is_absolute() else (PROJECT_DIR / path).resolve())
+
+    def resolved_logs_uploads_dir(self) -> Path:
+        path = Path(self.logs_uploads_dir).expanduser()
+        return path.resolve() if path.is_absolute() else (PROJECT_DIR / path).resolve()
+
+    def resolved_logs_root_dir(self) -> Optional[Path]:
+        raw = (self.logs_root_dir or "").strip()
+        if not raw:
+            return None
+        path = Path(raw).expanduser()
+        return path.resolve() if path.is_absolute() else (PROJECT_DIR / path).resolve()
+
+    def discord_oauth_configured(self) -> bool:
+        return bool(
+            (self.discord_client_id or "").strip()
+            and (self.discord_client_secret or "").strip()
+            and (self.discord_redirect_uri or "").strip()
+        )
+
     def __getitem__(self, item: str) -> Any:
         """Allow dictionary-style access for backwards compatibility."""
         if hasattr(self, item):
@@ -209,6 +314,34 @@ class AppConfig(BaseModel):
 Config = AppConfig
 
 
+def _apply_env_overrides(raw_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Apply environment variable overrides without altering explicit config schema."""
+    env_string_map = {
+        "HILLEYE_DB_PATH": "db_path",
+        "HILLEYE_DISCORD_CLIENT_ID": "discord_client_id",
+        "HILLEYE_DISCORD_CLIENT_SECRET": "discord_client_secret",
+        "HILLEYE_DISCORD_REDIRECT_URI": "discord_redirect_uri",
+        "HILLEYE_SESSION_SECRET": "discord_session_secret",
+        "HILLEYE_DISCORD_SUPERADMIN_IDS": "discord_superadmin_ids",
+        "HILLEYE_LOGS_DIR": "logs_root_dir",
+        "HILLEYE_LOGS_UPLOADS_DIR": "logs_uploads_dir",
+        "HILLEYE_LOGS_DB_PATH": "logs_db_path",
+    }
+    for env_name, field_name in env_string_map.items():
+        val = os.getenv(env_name)
+        if val is not None and val != "":
+            raw_data[field_name] = val
+
+    secure_env = os.getenv("HILLEYE_SECURE_COOKIES")
+    if secure_env is not None and secure_env != "":
+        raw_data["discord_secure_cookies"] = secure_env.strip().lower() not in {"0", "false", "no", "off"}
+
+    max_upload_env = os.getenv("HILLEYE_LOGS_MAX_UPLOAD_MB")
+    if max_upload_env is not None and max_upload_env != "":
+        raw_data["logs_max_upload_mb"] = int(max_upload_env)
+    return raw_data
+
+
 def load_config(config_path: Union[str, Path] = DEFAULT_CONFIG_PATH) -> AppConfig:
     """
     Loads configuration from a JSON file.
@@ -217,7 +350,7 @@ def load_config(config_path: Union[str, Path] = DEFAULT_CONFIG_PATH) -> AppConfi
     path = Path(config_path)
     if not path.is_file():
         logger.info("Config file '%s' not found. Using default configuration.", path)
-        return AppConfig(db_path=os.getenv("HILLEYE_DB_PATH", "tracker.db"))
+        return AppConfig(**_apply_env_overrides({"db_path": "tracker.db"}))
 
     try:
         content = path.read_text(encoding="utf-8").strip()
@@ -226,8 +359,7 @@ def load_config(config_path: Union[str, Path] = DEFAULT_CONFIG_PATH) -> AppConfi
         raw_data = json.loads(content)
         if not isinstance(raw_data, dict):
             raise ValueError("configuration root must be an object")
-        if os.getenv("HILLEYE_DB_PATH"):
-            raw_data["db_path"] = os.environ["HILLEYE_DB_PATH"]
+        _apply_env_overrides(raw_data)
         return AppConfig(**raw_data)
     except Exception as exc:
         raise ValueError(f"Invalid configuration '{path}': {exc}") from exc

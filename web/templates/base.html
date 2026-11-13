@@ -15,6 +15,7 @@
   <title>{% block title %}Hilleye — SS13 Player Dossier &amp; Server Monitor{% endblock %}</title>
   <link rel="icon" type="image/svg+xml" href="/static/img/logo.svg">
   <link rel="stylesheet" href="/static/css/style.css">
+  {% block extra_head %}{% endblock %}
   <script src="/static/js/htmx.min.js" defer></script>
   <script src="/static/js/app.js" defer></script>
 </head>
@@ -41,6 +42,7 @@
           <span class="status-pill-value">{{ tracker_stats.tracked_players }}</span>
         </div>
         {% endif %}
+        <a href="/logs" class="header-link">Логи</a>
         <a href="/api/v1/servers" class="header-link">JSON API</a>
       </nav>
     </header>

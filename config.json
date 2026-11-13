@@ -56,5 +56,26 @@
   },
   "database": {
     "path": "tracker.db"
+  },
+  "discord": {
+    "client_id": "1443644430727905290",
+    "client_secret": "",
+    "redirect_uri": "https://hilleye.duckdns.org/api/auth/callback",
+    "session_secret": "",
+    "superadmin_ids": [
+      "243353319450345472"
+    ],
+    "session_ttl_seconds": 604800,
+    "secure_cookies": true
+  },
+  "logs": {
+    "root_dir": "",
+    "uploads_dir": "uploaded_logs",
+    "db_path": "logs.db",
+    "max_upload_mb": 50,
+    "max_extracted_mb": 200,
+    "max_archive_files": 100,
+    "index_include_debug": false,
+    "auto_scan_on_startup": true
   }
 }

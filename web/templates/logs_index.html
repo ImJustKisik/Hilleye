@@ -1,0 +1,231 @@
+{% extends "base.html" %}
+{% block title %}Логи SierraBay12 — Hilleye{% endblock %}
+{% block extra_head %}
+<link rel="stylesheet" href="/static/css/logs.css">
+<script src="/static/js/logs.js" defer></script>
+{% endblock %}
+
+{% block content %}
+<div class="logs-page-stack">
+  <!-- Top Bar -->
+  <div class="logs-topbar">
+    <div class="logs-topbar-left">
+      <nav class="logs-subnav" aria-label="Навигация по логам">
+        <a href="/logs" class="logs-nav-pill is-active">Раунды</a>
+        <a href="/logs/search" class="logs-nav-pill">Глобальный поиск</a>
+        {% if user.is_admin %}
+        <a href="/logs/admin" class="logs-nav-pill">Вайтлист и аудит</a>
+        {% endif %}
+      </nav>
+    </div>
+    <div class="logs-topbar-right">
+      <form action="/logs/refresh" method="post">
+        <input type="hidden" name="csrf_token" value="{{ user.csrf_token }}">
+        <button type="submit" class="logs-btn logs-btn-sm" title="Пересканировать папку логов и проиндексировать новые раунды">Обновить список</button>
+      </form>
+      <div class="logs-user-badge">
+        <span>{{ user.display_name }}</span>
+        <span class="logs-role-tag role-{{ user.role }}">{{ user.role }}</span>
+      </div>
+      <form action="/auth/logout" method="post">
+        <input type="hidden" name="csrf_token" value="{{ user.csrf_token }}">
+        <button type="submit" class="logs-btn logs-btn-sm">Выйти</button>
+      </form>
+    </div>
+  </div>
+
+  {% if notice %}
+  <div class="logs-alert logs-alert-ok" role="status">{{ notice }}</div>
+  {% endif %}
+
+  {% if not root_dir_exists %}
+  <div class="logs-alert logs-alert-warn" role="status">
+    Папка серверных логов на диске не найдена: <code>{{ logs_root_dir or 'не задана' }}</code>. Вы можете загружать логи вручную ниже или указать путь <code>logs.root_dir</code> / <code>HILLEYE_LOGS_DIR</code>.
+  </div>
+  {% endif %}
+
+  <!-- KPI Summary Strip -->
+  <section class="panel" aria-label="Сводка архива логов">
+    <div class="telemetry-strip">
+      <div class="telemetry-cell">
+        <div class="cell-label">Всего раундов</div>
+        <div class="cell-value">{{ stats.total_rounds }}</div>
+        <div class="cell-sub mono-val">Диск: {{ stats.disk_rounds }} &bull; Загружено: {{ stats.upload_rounds }}</div>
+      </div>
+      <div class="telemetry-cell">
+        <div class="cell-label">Игровых строк</div>
+        <div class="cell-value">{{ "{:,}".format(stats.gameplay_lines) }}</div>
+        <div class="cell-sub mono-val">Всего строк: {{ "{:,}".format(stats.total_lines) }}</div>
+      </div>
+      <div class="telemetry-cell">
+        <div class="cell-label">Индекс FTS5</div>
+        <div class="cell-value">{{ "{:,}".format(stats.indexed_entries) }}</div>
+        <div class="cell-sub mono-val">Объём: {{ stats.total_size_label }}</div>
+      </div>
+      <div class="telemetry-cell">
+        <div class="cell-label">Последняя индексация</div>
+        <div class="cell-value timestamp">{{ stats.last_indexed_str }}</div>
+        <div class="cell-sub">Источник: <code>SierraBay12</code></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Quick Search + Drag-and-Drop Manual Upload -->
+  <div class="logs-dashboard-grid">
+    <section class="panel" aria-label="Быстрый поиск по всем раундам">
+      <div class="panel-header">
+        <h1 class="panel-title">Глобальный поиск по логам SierraBay12</h1>
+        <a href="/logs/search" class="raw-json-link">Расширенный поиск</a>
+      </div>
+      <div class="logs-panel-body">
+        <form action="/logs/search" method="get" class="logs-form-grid">
+          <div class="logs-field">
+            <label for="quick-search-q" class="logs-label">Текст / событие / предмет</label>
+            <input type="text" id="quick-search-q" name="q" class="logs-input" placeholder="Например: punched, syndicate, login, shuttle...">
+          </div>
+          <div class="logs-field logs-field-sm">
+            <label for="quick-search-ckey" class="logs-label">Игрок (ckey)</label>
+            <input type="text" id="quick-search-ckey" name="ckey" class="logs-input" placeholder="Например: player">
+          </div>
+          <div class="logs-field logs-field-sm">
+            <label for="quick-search-preset" class="logs-label">Пресет</label>
+            <select id="quick-search-preset" name="preset" class="logs-select">
+              <option value="gameplay">Игровые события</option>
+              <option value="admin_combat">Админ / Атаки</option>
+              <option value="chat">Чат</option>
+              <option value="all">Все категории</option>
+            </select>
+          </div>
+          <button type="submit" class="logs-btn logs-btn-primary">Найти</button>
+        </form>
+      </div>
+    </section>
+
+    <section class="panel" aria-label="Ручная загрузка логов">
+      <div class="panel-header">
+        <h2 class="panel-title">Загрузка логов вручную</h2>
+        <span class="block-meta mono-val">до {{ max_upload_mb }} МБ</span>
+      </div>
+      <div class="logs-panel-body">
+        <form id="logs-upload-form" action="/logs/upload" method="post" enctype="multipart/form-data">
+          <input type="hidden" name="csrf_token" value="{{ user.csrf_token }}">
+          <div class="logs-dropzone" id="logs-dropzone">
+            <div class="logs-dropzone-title">Перетащите файл сюда или нажмите для выбора</div>
+            <div class="logs-dropzone-sub">Поддерживаются: <code>game.log</code>, <code>qdel.log</code>, <code>.txt</code>, <code>.zip</code>, <code>.tar.gz</code></div>
+            <input type="file" id="logs-upload-file" name="file" class="logs-file-input" accept=".log,.txt,.zip,.gz,.tgz,.tar">
+          </div>
+          <div class="logs-form-grid">
+            <div class="logs-field">
+              <label for="upload-label" class="logs-label">Метка / комментарий (необязательно)</label>
+              <input type="text" id="upload-label" name="label" class="logs-input" maxlength="100" placeholder="Например: Инцидент на смене">
+            </div>
+            <button type="submit" class="logs-btn logs-btn-primary">Загрузить</button>
+          </div>
+        </form>
+        <div id="logs-upload-status" class="logs-alert" hidden></div>
+      </div>
+    </section>
+  </div>
+
+  <!-- Rounds Directory -->
+  <section class="panel" aria-label="Список раундов">
+    <div class="panel-header">
+      <h2 class="panel-title">Список раундов ({{ total_rounds }})</h2>
+      <form action="/logs" method="get" class="logs-form-grid">
+        <div class="logs-field logs-field-sm">
+          <select name="date" class="logs-select" aria-label="Фильтр по дате">
+            <option value="">Все даты</option>
+            {% for d in stats.dates %}
+            <option value="{{ d.round_date }}" {% if date_filter == d.round_date %}selected{% endif %}>{{ d.round_date }} ({{ d.cnt }})</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="logs-field logs-field-sm">
+          <select name="source" class="logs-select" aria-label="Фильтр по источнику">
+            <option value="">Все источники</option>
+            <option value="disk" {% if source_filter == 'disk' %}selected{% endif %}>Сервер (диск)</option>
+            <option value="upload" {% if source_filter == 'upload' %}selected{% endif %}>Загруженные</option>
+          </select>
+        </div>
+        <div class="logs-field logs-field-sm">
+          <input type="text" name="q" value="{{ q_filter }}" class="logs-input" placeholder="ID раунда или метка...">
+        </div>
+        <button type="submit" class="logs-btn logs-btn-sm">Фильтр</button>
+        {% if date_filter or source_filter or q_filter %}
+        <a href="/logs" class="logs-btn logs-btn-sm">Сбросить</a>
+        {% endif %}
+      </form>
+    </div>
+
+    {% if rounds %}
+    <div class="logs-table-wrap">
+      <table class="logs-table">
+        <thead>
+          <tr>
+            <th>Дата</th>
+            <th>Round ID</th>
+            <th>Источник</th>
+            <th>Файлы</th>
+            <th>Начало &ndash; Конец</th>
+            <th>Игровых / Всего</th>
+            <th>Размер</th>
+            <th>Действия</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in rounds %}
+          <tr>
+            <td class="mono-val">{{ r.round_date }}</td>
+            <td class="mono-val">
+              <a href="/logs/round/{{ r.round_uid }}" class="server-link">{{ r.round_id }}</a>
+              {% if r.label %}<div class="cell-sub">{{ r.label }}</div>{% endif %}
+            </td>
+            <td>
+              {% if r.source_type == 'upload' %}
+              <span class="logs-badge logs-badge-upload">ЗАГРУЖЕНО</span>
+              {% else %}
+              <span class="logs-badge logs-badge-disk">ДИСК</span>
+              {% endif %}
+            </td>
+            <td class="mono-val">
+              {% if r.has_game_log %}<a href="/logs/round/{{ r.round_uid }}?file=game.log" class="logs-badge">game.log</a> {% endif %}
+              {% if r.has_qdel_log %}<a href="/logs/round/{{ r.round_uid }}?file=qdel.log" class="logs-badge">qdel.log</a> {% endif %}
+              {% if r.has_initialize_log %}<a href="/logs/round/{{ r.round_uid }}?file=initialize.log" class="logs-badge">init.log</a>{% endif %}
+            </td>
+            <td class="mono-val">
+              {% if r.started_at %}{{ r.started_at[11:19] }}{% else %}—{% endif %}
+              &ndash;
+              {% if r.ended_at %}{{ r.ended_at[11:19] }}{% else %}—{% endif %}
+            </td>
+            <td class="mono-val">{{ r.gameplay_line_count }} / {{ r.line_count }}</td>
+            <td class="mono-val">{{ r.size_label }}</td>
+            <td>
+              <a href="/logs/round/{{ r.round_uid }}" class="logs-btn logs-btn-sm logs-btn-primary">Открыть</a>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    {% if total_pages > 1 %}
+    <div class="logs-pagination">
+      <span class="mono-val cell-sub">Страница {{ page }} из {{ total_pages }}</span>
+      <div class="logs-topbar-left">
+        {% if page > 1 %}
+        <a href="/logs?date={{ date_filter|urlencode }}&source={{ source_filter|urlencode }}&q={{ q_filter|urlencode }}&page={{ page - 1 }}" class="logs-btn logs-btn-sm">&larr; Назад</a>
+        {% endif %}
+        {% if page < total_pages %}
+        <a href="/logs?date={{ date_filter|urlencode }}&source={{ source_filter|urlencode }}&q={{ q_filter|urlencode }}&page={{ page + 1 }}" class="logs-btn logs-btn-sm">Вперёд &rarr;</a>
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
+    {% else %}
+    <div class="logs-panel-body">
+      <div class="block-empty">Раунды не найдены. Нажмите «Обновить список» или загрузите файл лога вручную.</div>
+    </div>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}
