@@ -49,23 +49,48 @@ def _fmt_bytes(num: int) -> str:
     return f"{int(val)} Б"
 
 
+_AUDIT_ACTION_LABELS: Dict[str, str] = {
+    "login": "Вход через Discord",
+    "login_denied": "Отказ входа (нет доступа)",
+    "logout": "Выход",
+    "view_round": "Просмотр раунда",
+    "search_global": "Глобальный поиск",
+    "download_log": "Скачивание лога",
+    "upload_round": "Загрузка лога",
+    "delete_upload": "Удаление загруженного лога",
+    "whitelist_add": "Выдача доступа",
+    "whitelist_remove": "Отзыв доступа",
+    "refresh": "Обновление списка",
+    "reindex": "Переиндексация",
+    "rebuild_maps": "Пересборка карты",
+}
+
+
 def _audit_action_label(action: str) -> str:
-    labels = {
-        "login": "Вход через Discord",
-        "login_denied": "Отказ входа (нет в вайтлисте)",
-        "logout": "Выход",
-        "view_round": "Просмотр раунда",
-        "search_global": "Глобальный поиск",
-        "download_log": "Скачивание лога",
-        "upload_round": "Загрузка лога вручную",
-        "delete_upload": "Удаление загруженного лога",
-        "whitelist_add": "Добавление в вайтлист",
-        "whitelist_remove": "Удаление из вайтлиста",
-        "refresh": "Обновление списка логов",
-        "reindex": "Переиндексация логов",
-        "rebuild_maps": "Пересборка карты из Git",
+    return _AUDIT_ACTION_LABELS.get(action, action)
+
+
+def _entry_to_vm(
+    entry: Any,
+    cache_dir: Path,
+    *,
+    focus: Optional[int] = None,
+    target_line: Optional[int] = None,
+) -> Dict[str, Any]:
+    meta = category_info(entry.category)
+    return {
+        "line_no": entry.line_no,
+        "timestamp": entry.timestamp,
+        "time_short": entry.timestamp[11:] if len(entry.timestamp) > 11 else entry.timestamp,
+        "category": entry.category,
+        "cat_css": meta["css"],
+        "safe_html": entry.safe_html,
+        "ckeys": entry.ckeys,
+        "coords": _coord_vm(entry.coords, cache_dir),
+        "is_continuation": getattr(entry, "is_continuation", False),
+        "is_focused": focus is not None and entry.line_no == focus,
+        "is_target": target_line is not None and entry.line_no == target_line,
     }
-    return labels.get(action, action)
 
 
 def _coord_vm(coords: Optional[Tuple[int, int, int]], cache_dir: Path) -> Optional[Dict[str, Any]]:
@@ -176,7 +201,7 @@ def create_logs_router(
                 request,
                 status_kind="admin_required",
                 session=session,
-                error_message="Раздел администрирования доступен только администраторам просмоторщика логов.",
+                error_message="Для открытия этого раздела нужны права администратора.",
                 http_status=403,
             )
             return None, resp
@@ -192,12 +217,30 @@ def create_logs_router(
         if status_kind == "unconfigured":
             raise HTTPException(status_code=503, detail="Discord OAuth2 не настроен на сервере.")
         if status_kind == "unauthenticated" or (user is None and status_kind != "forbidden"):
-            raise HTTPException(status_code=401, detail="Требуется авторизация через Discord.")
+            raise HTTPException(status_code=401, detail="Требуется вход через Discord.")
         if status_kind == "forbidden" or user is None:
-            raise HTTPException(status_code=403, detail="Ваш Discord ID не добавлен в вайтлист просмоторщика логов.")
+            raise HTTPException(status_code=403, detail="Ваш Discord ID не добавлен в список доступа.")
         if require_admin and not user.is_admin:
-            raise HTTPException(status_code=403, detail="Требуются права администратора просмоторщика логов.")
+            raise HTTPException(status_code=403, detail="Требуются права администратора.")
         return user
+
+    async def _resolve_round_and_file(
+        round_uid: str,
+        file_name: str,
+    ) -> Tuple[Dict[str, Any], Path]:
+        config = get_config_fn()
+        rnd = await logs_db.get_round_by_uid(round_uid)
+        if rnd is None:
+            raise HTTPException(status_code=404, detail="Раунд не найден.")
+        file_path = logs_db.resolve_round_file_path(
+            rnd,
+            file_name,
+            root_dir=config.resolved_logs_root_dir(),
+            uploads_dir=config.resolved_logs_uploads_dir(),
+        )
+        if file_path is None:
+            raise HTTPException(status_code=404, detail=f"Файл {file_name} не найден.")
+        return rnd, file_path
 
     # -----------------------------------------------------------------------
     # Discord OAuth2 Endpoints
@@ -241,7 +284,7 @@ def create_logs_router(
             resp = await _render_auth_gate(
                 request,
                 status_kind="unauthenticated",
-                error_message="Авторизация через Discord была отменена пользователем.",
+                error_message="Авторизация через Discord отменена.",
                 http_status=400,
             )
             resp.delete_cookie(discord_auth.OAUTH_STATE_COOKIE_NAME, path="/", secure=cookie_secure, httponly=True, samesite="lax")
@@ -439,7 +482,7 @@ def create_logs_router(
         if file_path is None:
             raise HTTPException(status_code=404, detail=f"Файл {selected_file} не найден на диске.")
 
-        if page == 1 and not q and not ckey and focus is None:
+        if page == 1 and not q and not ckey and focus is None and request.headers.get("HX-Request") != "true":
             await logs_db.record_audit_event(
                 "view_round",
                 discord_id=user.discord_id,
@@ -501,23 +544,7 @@ def create_logs_router(
             render_html=render_html,
         )
 
-        entries_vm = []
-        for entry in result.entries:
-            meta = category_info(entry.category)
-            entries_vm.append(
-                {
-                    "line_no": entry.line_no,
-                    "timestamp": entry.timestamp,
-                    "time_short": entry.timestamp[11:] if len(entry.timestamp) > 11 else entry.timestamp,
-                    "category": entry.category,
-                    "cat_css": meta["css"],
-                    "safe_html": entry.safe_html,
-                    "ckeys": entry.ckeys,
-                    "coords": _coord_vm(entry.coords, cache_dir),
-                    "is_continuation": entry.is_continuation,
-                    "is_focused": focus is not None and entry.line_no == focus,
-                }
-            )
+        entries_vm = [_entry_to_vm(entry, cache_dir, focus=focus) for entry in result.entries]
 
         categories_vm = _ordered_categories(result.category_counts)
         query_pairs: List[Tuple[str, str]] = [
@@ -541,9 +568,15 @@ def create_logs_router(
             query_pairs.append(("time_to", time_to))
         base_query_str = urlencode(query_pairs)
 
+        template_name = (
+            "partials/logs_round_stream.html"
+            if request.headers.get("HX-Request") == "true" and view_mode == "stream"
+            else "logs_round.html"
+        )
+
         return templates.TemplateResponse(
             request=request,
-            name="logs_round.html",
+            name=template_name,
             context={
                 **shell,
                 "user": user,
@@ -584,23 +617,15 @@ def create_logs_router(
         radius: int = Query(default=20, ge=1, le=100),
         mask_ips: str = "0",
         html: str = "1",
+        inline: str = "0",
     ):
         user = await _require_api_user(request)
         config = get_config_fn()
-        rnd = await logs_db.get_round_by_uid(round_uid)
-        if rnd is None:
-            raise HTTPException(status_code=404, detail="Раунд не найден.")
-        file_path = logs_db.resolve_round_file_path(
-            rnd,
-            file,
-            root_dir=config.resolved_logs_root_dir(),
-            uploads_dir=config.resolved_logs_uploads_dir(),
-        )
-        if file_path is None:
-            raise HTTPException(status_code=404, detail="Файл лога не найден.")
+        rnd, file_path = await _resolve_round_and_file(round_uid, file)
 
         mask_flag = _parse_bool_flag(mask_ips, default=False)
         render_html = _parse_bool_flag(html, default=True)
+        inline_flag = _parse_bool_flag(inline, default=False)
         context_entries = await asyncio.to_thread(
             read_context_lines,
             file_path,
@@ -610,22 +635,7 @@ def create_logs_router(
             render_html=render_html,
         )
         cache_dir = config.resolved_maps_cache_dir()
-        rows = []
-        for entry in context_entries:
-            meta = category_info(entry.category)
-            rows.append(
-                {
-                    "line_no": entry.line_no,
-                    "timestamp": entry.timestamp,
-                    "time_short": entry.timestamp[11:] if len(entry.timestamp) > 11 else entry.timestamp,
-                    "category": entry.category,
-                    "cat_css": meta["css"],
-                    "safe_html": entry.safe_html,
-                    "ckeys": entry.ckeys,
-                    "coords": _coord_vm(entry.coords, cache_dir),
-                    "is_target": entry.line_no == line,
-                }
-            )
+        rows = [_entry_to_vm(entry, cache_dir, target_line=line) for entry in context_entries]
         return templates.TemplateResponse(
             request=request,
             name="partials/logs_context.html",
@@ -636,6 +646,7 @@ def create_logs_router(
                 "target_line": line,
                 "radius": radius,
                 "rows": rows,
+                "inline": inline_flag,
             },
         )
 
@@ -790,6 +801,7 @@ def create_logs_router(
                 "active_preset": active_preset,
                 "presets": LOG_PRESETS,
                 "all_categories": list(CATEGORY_META.keys()),
+                "all_categories_vm": _ordered_categories({c: 0 for c in CATEGORY_META.keys()}),
                 "selected_cats": set(selected_cats),
                 "date_from": date_from,
                 "date_to": date_to,
@@ -846,6 +858,7 @@ def create_logs_router(
                 "user": user,
                 "whitelist": whitelist,
                 "audit_events": events,
+                "audit_actions": list(_AUDIT_ACTION_LABELS.items()),
                 "total_events": total_events,
                 "action_filter": action,
                 "uploaded_rounds": uploaded_rounds,
@@ -888,7 +901,9 @@ def create_logs_router(
         )
         if _prefers_json(request):
             return {"ok": True, **summary}
-        msg = quote(f"Обновлено: найдено {summary['discovered']} раунд(ов), проиндексировано {summary['indexed_rounds']} за {summary['elapsed_seconds']}с")
+        msg = quote(
+            f"Список обновлён: {summary['discovered']} раундов, проиндексировано {summary['indexed_rounds']} ({summary['elapsed_seconds']} с)"
+        )
         return RedirectResponse(f"/logs?notice={msg}", status_code=303)
 
     @router.post("/logs/reindex")
@@ -1117,7 +1132,7 @@ def create_logs_router(
         )
         if _prefers_json(request):
             return {"ok": True, "discord_id": discord_id.strip(), "role": effective_role}
-        return RedirectResponse(f"/logs/admin?notice={quote('Пользователь добавлен в вайтлист')}", status_code=303)
+        return RedirectResponse(f"/logs/admin?notice={quote('Доступ выдан')}", status_code=303)
 
     @router.post("/logs/admin/whitelist/remove")
     async def whitelist_remove_route(
@@ -1145,7 +1160,7 @@ def create_logs_router(
         )
         if _prefers_json(request):
             return {"ok": True, "removed": removed}
-        return RedirectResponse(f"/logs/admin?notice={quote('Пользователь удалён из вайтлиста')}", status_code=303)
+        return RedirectResponse(f"/logs/admin?notice={quote('Доступ отозван')}", status_code=303)
 
     # -----------------------------------------------------------------------
     # Protected JSON & Download API (/api/v1/logs/...)
@@ -1185,17 +1200,7 @@ def create_logs_router(
     ):
         await _require_api_user(request)
         config = get_config_fn()
-        rnd = await logs_db.get_round_by_uid(round_uid)
-        if rnd is None:
-            raise HTTPException(status_code=404, detail="Раунд не найден.")
-        file_path = logs_db.resolve_round_file_path(
-            rnd,
-            file,
-            root_dir=config.resolved_logs_root_dir(),
-            uploads_dir=config.resolved_logs_uploads_dir(),
-        )
-        if file_path is None:
-            raise HTTPException(status_code=404, detail="Файл лога не найден.")
+        rnd, file_path = await _resolve_round_and_file(round_uid, file)
 
         res = await asyncio.to_thread(
             filter_game_log_file,
@@ -1245,18 +1250,7 @@ def create_logs_router(
         sort_dir: str = "desc",
     ):
         await _require_api_user(request)
-        config = get_config_fn()
-        rnd = await logs_db.get_round_by_uid(round_uid)
-        if rnd is None:
-            raise HTTPException(status_code=404, detail="Раунд не найден.")
-        file_path = logs_db.resolve_round_file_path(
-            rnd,
-            "qdel.log",
-            root_dir=config.resolved_logs_root_dir(),
-            uploads_dir=config.resolved_logs_uploads_dir(),
-        )
-        if file_path is None:
-            raise HTTPException(status_code=404, detail="qdel.log отсутствует в этом раунде.")
+        _rnd, file_path = await _resolve_round_and_file(round_uid, "qdel.log")
         report = await asyncio.to_thread(parse_qdel_log_file, file_path, q=q, sort_by=sort_by, sort_dir=sort_dir)
         return {
             "round_uid": round_uid,
@@ -1288,17 +1282,7 @@ def create_logs_router(
     ):
         await _require_api_user(request)
         config = get_config_fn()
-        rnd = await logs_db.get_round_by_uid(round_uid)
-        if rnd is None:
-            raise HTTPException(status_code=404, detail="Раунд не найден.")
-        file_path = logs_db.resolve_round_file_path(
-            rnd,
-            file,
-            root_dir=config.resolved_logs_root_dir(),
-            uploads_dir=config.resolved_logs_uploads_dir(),
-        )
-        if file_path is None:
-            raise HTTPException(status_code=404, detail="Файл лога не найден.")
+        rnd, file_path = await _resolve_round_and_file(round_uid, file)
         entries = await asyncio.to_thread(
             read_context_lines, file_path, line, radius=radius, mask_ips=mask_ips, render_html=False
         )
@@ -1333,18 +1317,7 @@ def create_logs_router(
         mask_ips: bool = False,
     ):
         user = await _require_api_user(request)
-        config = get_config_fn()
-        rnd = await logs_db.get_round_by_uid(round_uid)
-        if rnd is None:
-            raise HTTPException(status_code=404, detail="Раунд не найден.")
-        file_path = logs_db.resolve_round_file_path(
-            rnd,
-            file,
-            root_dir=config.resolved_logs_root_dir(),
-            uploads_dir=config.resolved_logs_uploads_dir(),
-        )
-        if file_path is None:
-            raise HTTPException(status_code=404, detail="Файл лога не найден.")
+        rnd, file_path = await _resolve_round_and_file(round_uid, file)
 
         await logs_db.record_audit_event(
             "download_log",
@@ -1447,17 +1420,7 @@ def create_logs_router(
     ):
         await _require_api_user(request)
         config = get_config_fn()
-        rnd = await logs_db.get_round_by_uid(round_uid)
-        if rnd is None:
-            raise HTTPException(status_code=404, detail="Раунд не найден.")
-        file_path = logs_db.resolve_round_file_path(
-            rnd,
-            file,
-            root_dir=config.resolved_logs_root_dir(),
-            uploads_dir=config.resolved_logs_uploads_dir(),
-        )
-        if file_path is None:
-            raise HTTPException(status_code=404, detail="Файл лога не найден.")
+        rnd, file_path = await _resolve_round_and_file(round_uid, file)
         if file == "qdel.log":
             raise HTTPException(status_code=400, detail="Координаты карты поддерживаются только для game.log / initialize.log.")
 

@@ -250,7 +250,7 @@ async def list_whitelist(superadmin_ids: Sequence[str]) -> List[Dict[str, Any]]:
                 0,
                 {
                     "discord_id": sid,
-                    "display_name": "Конфиг супер-админ",
+                    "display_name": "Суперадмин (config.json)",
                     "role": "superadmin",
                     "added_by": "config.json",
                     "added_at": None,

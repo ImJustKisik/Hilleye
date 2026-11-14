@@ -7,25 +7,8 @@
 
 {% block content %}
 <div class="logs-page-stack">
-  <div class="logs-topbar">
-    <div class="logs-topbar-left">
-      <nav class="logs-subnav" aria-label="Навигация по логам">
-        <a href="/logs" class="logs-nav-pill">Раунды</a>
-        <a href="/logs/search" class="logs-nav-pill">Глобальный поиск</a>
-        <a href="/logs/admin" class="logs-nav-pill is-active">Вайтлист и аудит</a>
-      </nav>
-    </div>
-    <div class="logs-topbar-right">
-      <div class="logs-user-badge">
-        <span>{{ user.display_name }}</span>
-        <span class="logs-role-tag role-{{ user.role }}">{{ user.role }}</span>
-      </div>
-      <form action="/auth/logout" method="post">
-        <input type="hidden" name="csrf_token" value="{{ user.csrf_token }}">
-        <button type="submit" class="logs-btn logs-btn-sm">Выйти</button>
-      </form>
-    </div>
-  </div>
+  {% set logs_nav_active = 'admin' %}
+  {% include "partials/logs_topbar.html" %}
 
   {% if notice %}
   <div class="logs-alert logs-alert-ok" role="status">{{ notice }}</div>
@@ -36,21 +19,21 @@
 
   <div class="logs-dashboard-grid">
     <!-- Whitelist Management -->
-    <section class="panel" aria-label="Управление вайтлистом Discord">
+    <section class="panel" aria-label="Управление доступом">
       <div class="panel-header">
-        <h1 class="panel-title">Вайтлист Discord ID</h1>
-        <span class="mono-val cell-sub">{{ whitelist|length }} записей</span>
+        <h1 class="panel-title">Доступ (Discord ID)</h1>
+        <span class="mono-val cell-sub">{{ whitelist|length }}</span>
       </div>
       <div class="logs-panel-body">
         <form action="/logs/admin/whitelist/add" method="post" class="logs-form-grid">
           <input type="hidden" name="csrf_token" value="{{ user.csrf_token }}">
           <div class="logs-field logs-field-sm">
-            <label for="wl-id" class="logs-label">Discord User ID</label>
+            <label for="wl-id" class="logs-label">Discord ID</label>
             <input type="text" id="wl-id" name="discord_id" required pattern="[0-9]{15,22}" class="logs-input" placeholder="123456789012345678">
           </div>
           <div class="logs-field">
-            <label for="wl-note" class="logs-label">Заметка / ник</label>
-            <input type="text" id="wl-note" name="display_name" maxlength="80" class="logs-input" placeholder="Например: Старший админ">
+            <label for="wl-note" class="logs-label">Имя / заметка</label>
+            <input type="text" id="wl-note" name="display_name" maxlength="80" class="logs-input" placeholder="Ник или комментарий">
           </div>
           {% if user.is_superadmin %}
           <div class="logs-field logs-field-sm">
@@ -72,9 +55,9 @@
               <th>Discord ID</th>
               <th>Имя / заметка</th>
               <th>Роль</th>
-              <th>Кем добавлен</th>
-              <th>Добавлен</th>
-              <th>Действия</th>
+              <th>Добавил</th>
+              <th>Дата</th>
+              <th></th>
             </tr>
           </thead>
           <tbody>
@@ -82,12 +65,12 @@
             <tr>
               <td class="mono-val">{{ item.discord_id }}</td>
               <td>{{ item.display_name or '—' }}</td>
-              <td><span class="logs-role-tag role-{{ item.role }}">{{ item.role }}</span></td>
+              <td><span class="logs-source-tag">{{ item.role }}</span></td>
               <td class="mono-val">{{ item.added_by }}</td>
               <td class="mono-val">{{ item.added_at_str }}</td>
               <td>
                 {% if item.is_config_superadmin %}
-                <span class="cell-sub">защищено (config)</span>
+                <span class="cell-sub">конфиг</span>
                 {% else %}
                 <form action="/logs/admin/whitelist/remove" method="post">
                   <input type="hidden" name="csrf_token" value="{{ user.csrf_token }}">
@@ -106,19 +89,19 @@
     <!-- Index Control & Uploaded Logs -->
     <section class="panel" aria-label="Индексация и загруженные архивы">
       <div class="panel-header">
-        <h2 class="panel-title">Индекс FTS5 и загрузки</h2>
+        <h2 class="panel-title">Индексация и загрузки</h2>
       </div>
       <div class="logs-panel-body">
         <p class="logs-auth-copy">
-          Проиндексировано строк: <strong>{{ "{:,}".format(stats.indexed_entries) }}</strong> ({{ stats.total_rounds }} раундов, {{ stats.total_size_label }}). Последнее обновление: <span class="mono-val">{{ stats.last_indexed_str }}</span>.
+          Строк в индексе: <strong class="mono-val">{{ "{:,}".format(stats.indexed_entries) }}</strong> ({{ stats.total_rounds }} раундов, {{ stats.total_size_label }}). Обновлено: <span class="mono-val">{{ stats.last_indexed_str }}</span>.
         </p>
         <form action="/logs/reindex" method="post" class="logs-form-grid">
           <input type="hidden" name="csrf_token" value="{{ user.csrf_token }}">
           <label class="logs-check-label">
             <input type="checkbox" name="include_debug" value="1" {% if index_include_debug %}checked{% endif %}>
-            <span>Включать DEBUG-строки в FTS5</span>
+            <span>Включать DEBUG-строки в индекс</span>
           </label>
-          <button type="submit" class="logs-btn logs-btn-primary">Полная переиндексация</button>
+          <button type="submit" class="logs-btn logs-btn-primary">Переиндексировать</button>
         </form>
       </div>
 
@@ -127,10 +110,10 @@
         <table class="logs-table">
           <thead>
             <tr>
-              <th>Загруженный раунд</th>
+              <th>Раунд</th>
               <th>Дата</th>
               <th>Размер</th>
-              <th>Удалить</th>
+              <th></th>
             </tr>
           </thead>
           <tbody>
@@ -155,43 +138,42 @@
       </div>
       {% else %}
       <div class="logs-panel-body">
-        <div class="block-empty">Загруженных вручную раундов нет.</div>
+        <div class="block-empty">Загруженных архивов нет.</div>
       </div>
       {% endif %}
     </section>
   </div>
 
-  <!-- Station Map Cache (SierraBay12 Git / DMM) -->
-  <section class="panel" aria-label="Карта станции из Git">
+  <!-- Station Map Cache -->
+  <section class="panel" aria-label="Карта станции">
     <div class="panel-header">
-      <h2 class="panel-title">Карта станции из Git (SierraBay12)</h2>
+      <h2 class="panel-title">Карта станции</h2>
       <span class="mono-val cell-sub">
         {% if map_manifest.ready %}
-        Готова &bull; {{ map_manifest.levels|length }} палуб &bull; {{ map_manifest.tile_px }}px/тайл
+        {{ map_manifest.levels|length }} палуб &middot; {{ map_manifest.tile_px }}px
         {% else %}
-        Не собрана (используется координатная сетка)
+        Не собрана
         {% endif %}
       </span>
     </div>
     <div class="logs-panel-body">
       {% if map_build_status and map_build_status.state == 'running' %}
       <div id="logs-map-build-status" class="logs-alert logs-alert-info" data-map-building="1" role="status">
-        Сборка карты выполняется: <span id="logs-map-build-detail">{{ map_build_status.detail or 'В процессе...' }}</span>
+        Сборка карты: <span id="logs-map-build-detail">{{ map_build_status.detail or 'выполняется...' }}</span>
       </div>
       {% elif map_build_status and map_build_status.state == 'error' %}
       <div id="logs-map-build-status" class="logs-alert logs-alert-error" role="alert">
-        Ошибка последней сборки карты: {{ map_build_status.error }}
+        Ошибка сборки карты: {{ map_build_status.error }}
       </div>
       {% endif %}
       <p class="logs-auth-copy">
         {% if map_manifest.ready %}
         Источник: <strong>{{ map_manifest.source_kind }}</strong>
         {% if map_manifest.commit %}(<span class="mono-val">{{ map_manifest.commit[:12] }}</span>){% endif %}
-        &bull; Собрана: <span class="mono-val">{{ map_manifest.generated_at or '—' }}</span>
-        {% if map_manifest.elapsed_seconds %}({{ map_manifest.elapsed_seconds }}с){% endif %}.
+        &middot; <span class="mono-val">{{ map_manifest.generated_at or '—' }}</span>{% if map_manifest.elapsed_seconds %} ({{ map_manifest.elapsed_seconds }}с){% endif %}.
         Палубы: {% for lv in map_manifest.levels %}<span class="mono-val">{{ lv.short_label }}</span>{% if not loop.last %}, {% endif %}{% endfor %}.
         {% else %}
-        Тайлы карты (<code>.dmm</code> + <code>.dmi</code>) и зоны <code>/area</code> ещё не сгенерированы в кеш. Нажмите «Пересобрать», чтобы отрендерить палубы Z1–Z7.
+        Тайлы карты (<code>.dmm</code> + <code>.dmi</code>) ещё не собраны.
         {% endif %}
       </p>
       <div class="logs-form-grid">
@@ -199,13 +181,13 @@
           <input type="hidden" name="csrf_token" value="{{ user.csrf_token }}">
           <input type="hidden" name="source" value="auto">
           <input type="hidden" name="background" value="1">
-          <button type="submit" class="logs-btn logs-btn-primary">Пересобрать (локальный Git / auto)</button>
+          <button type="submit" class="logs-btn logs-btn-primary">Пересобрать</button>
         </form>
         <form action="/logs/admin/maps/rebuild" method="post">
           <input type="hidden" name="csrf_token" value="{{ user.csrf_token }}">
           <input type="hidden" name="source" value="github">
           <input type="hidden" name="background" value="1">
-          <button type="submit" class="logs-btn">Загрузить с GitHub (dev-sierra)</button>
+          <button type="submit" class="logs-btn">Скачать с GitHub</button>
         </form>
       </div>
     </div>
@@ -218,8 +200,8 @@
       <form action="/logs/admin" method="get" class="logs-form-grid">
         <select name="action" class="logs-select" aria-label="Фильтр событий аудита">
           <option value="">Все действия</option>
-          {% for act in ['login', 'login_denied', 'logout', 'view_round', 'search_global', 'download_log', 'upload_round', 'delete_upload', 'whitelist_add', 'whitelist_remove', 'refresh', 'reindex'] %}
-          <option value="{{ act }}" {% if action_filter == act %}selected{% endif %}>{{ act }}</option>
+          {% for act_val, act_label in audit_actions %}
+          <option value="{{ act_val }}" {% if action_filter == act_val %}selected{% endif %}>{{ act_label }}</option>
           {% endfor %}
         </select>
         <button type="submit" class="logs-btn logs-btn-sm">Фильтр</button>
@@ -255,7 +237,7 @@
     </div>
     {% else %}
     <div class="logs-panel-body">
-      <div class="block-empty">Событий аудита пока нет.</div>
+      <div class="block-empty">Событий нет.</div>
     </div>
     {% endif %}
   </section>

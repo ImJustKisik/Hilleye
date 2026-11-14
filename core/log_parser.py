@@ -725,27 +725,19 @@ def export_filtered_game_log(
 
     out_lines: List[str] = []
     for _line_no, ts, cat, raw_msg, is_cont in iter_parsed_file_lines(file_path):
-        if not category_matches_filters(cat, preset=preset, selected_categories=categories):
+        if not _line_matches_filters(
+            ts,
+            cat,
+            raw_msg,
+            preset=preset,
+            categories=categories,
+            ckey_norm=ckey_norm,
+            q_lower=q_lower,
+            pattern=pattern,
+            t_from=t_from,
+            t_to=t_to,
+        ):
             continue
-        if t_from or t_to:
-            hhmm = _time_hhmm_from_ts(ts)
-            if not hhmm:
-                continue
-            if t_from and hhmm < t_from:
-                continue
-            if t_to and hhmm > t_to:
-                continue
-        if ckey_norm:
-            _, plain_for_ckey = sanitize_byond_html(raw_msg)
-            line_ckeys = extract_ckeys_from_text(plain_for_ckey)
-            if ckey_norm not in line_ckeys and ckey_norm not in normalize_ckey(plain_for_ckey):
-                continue
-        if q_lower:
-            if pattern is not None:
-                if not pattern.search(raw_msg):
-                    continue
-            elif q_lower not in raw_msg.lower():
-                continue
 
         display_msg = mask_sensitive_text(raw_msg) if mask_ips else raw_msg
         if is_cont:

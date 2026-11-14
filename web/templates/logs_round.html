@@ -7,49 +7,29 @@
 
 {% block content %}
 <div class="logs-page-stack">
-  <!-- Top Bar -->
-  <div class="logs-topbar">
-    <div class="logs-topbar-left">
-      <a href="/logs" class="logs-btn logs-btn-sm">&larr; Все раунды</a>
-      <nav class="logs-subnav" aria-label="Навигация">
-        <a href="/logs/search?round_uid={{ round.round_uid|urlencode }}" class="logs-nav-pill">Поиск в раунде (FTS)</a>
-        {% if user.is_admin %}
-        <a href="/logs/admin" class="logs-nav-pill">Вайтлист и аудит</a>
-        {% endif %}
-      </nav>
-    </div>
-    <div class="logs-topbar-right">
-      <div class="logs-user-badge">
-        <span>{{ user.display_name }}</span>
-        <span class="logs-role-tag role-{{ user.role }}">{{ user.role }}</span>
-      </div>
-      <form action="/auth/logout" method="post">
-        <input type="hidden" name="csrf_token" value="{{ user.csrf_token }}">
-        <button type="submit" class="logs-btn logs-btn-sm">Выйти</button>
-      </form>
-    </div>
-  </div>
+  {% set logs_nav_active = 'rounds' %}
+  {% set logs_round_search_uid = round.round_uid %}
+  {% include "partials/logs_topbar.html" %}
 
   <!-- Round Header & File Tabs -->
   <section class="panel">
     <div class="logs-round-header">
       <div>
-        <div class="logs-topbar-left">
+        <div class="logs-round-title-row">
           <h1 class="logs-round-title">Раунд {{ round.round_id }}</h1>
-          {% if round.source_type == 'upload' %}
-          <span class="logs-badge logs-badge-upload">ЗАГРУЖЕНО</span>
-          {% else %}
-          <span class="logs-badge logs-badge-disk">ДИСК</span>
-          {% endif %}
+          <span class="logs-source-tag">{% if round.source_type == 'upload' %}загружен{% else %}диск{% endif %}</span>
           {% if round.label %}
-          <span class="logs-badge">{{ round.label }}</span>
+          <span class="logs-source-tag">{{ round.label }}</span>
           {% endif %}
         </div>
         <div class="logs-round-meta mono-val">
-          <span>Дата: <strong>{{ round.round_date }}</strong></span>
-          {% if round.started_at %}<span>Начало: {{ round.started_at }}</span>{% endif %}
-          {% if round.ended_at %}<span>Конец: {{ round.ended_at }}</span>{% endif %}
-          <span>Игровых строк: {{ round.gameplay_line_count }} / {{ round.line_count }}</span>
+          <span>{{ round.round_date }}</span>
+          {% if round.started_at and round.ended_at %}
+          <span>{{ round.started_at }} &ndash; {{ round.ended_at }}</span>
+          {% elif round.started_at %}
+          <span>{{ round.started_at }}</span>
+          {% endif %}
+          <span>{{ round.gameplay_line_count }} / {{ round.line_count }} строк</span>
         </div>
       </div>
 
@@ -59,53 +39,43 @@
            class="logs-nav-pill {% if selected_file == fname %}is-active{% endif %}">{{ fname }}</a>
         {% endfor %}
         {% if is_qdel %}
-        <a href="/api/v1/logs/rounds/{{ round.round_uid }}/download?file=qdel.log&mode=raw" class="logs-btn logs-btn-sm">Скачать qdel.log</a>
+        <a href="/api/v1/logs/rounds/{{ round.round_uid }}/download?file=qdel.log&mode=raw" class="logs-btn logs-btn-sm">Скачать raw</a>
         {% else %}
         <span class="logs-view-switch" role="group" aria-label="Режим просмотра">
           <a href="/logs/round/{{ round.round_uid }}?{{ base_query_str }}&view=stream{% if focus_line %}&focus={{ focus_line }}#L{{ focus_line }}{% endif %}"
              class="logs-nav-pill {% if view_mode != 'map' %}is-active{% endif %}">Лента</a>
           <a href="/logs/round/{{ round.round_uid }}?{{ base_query_str }}&view=map{% if focus_line %}&focus={{ focus_line }}{% endif %}{% if target_z %}&z={{ target_z }}{% endif %}{% if target_x %}&tx={{ target_x }}{% endif %}{% if target_y %}&ty={{ target_y }}{% endif %}"
-             class="logs-nav-pill {% if view_mode == 'map' %}is-active{% endif %}">Карта раунда</a>
+             class="logs-nav-pill {% if view_mode == 'map' %}is-active{% endif %}">Карта</a>
         </span>
-        <a href="/api/v1/logs/rounds/{{ round.round_uid }}/download?mode=filtered&{{ base_query_str }}" class="logs-btn logs-btn-sm">Скачать фильтр</a>
-        <a href="/api/v1/logs/rounds/{{ round.round_uid }}/download?file={{ selected_file|urlencode }}&mode=raw&mask_ips={{ 1 if mask_ips else 0 }}" class="logs-btn logs-btn-sm">Скачать raw</a>
+        <a href="/api/v1/logs/rounds/{{ round.round_uid }}/download?mode=filtered&{{ base_query_str }}"
+           class="logs-btn logs-btn-sm" title="Скачать отфильтрованные строки">Экспорт</a>
+        <a href="/api/v1/logs/rounds/{{ round.round_uid }}/download?file={{ selected_file|urlencode }}&mode=raw&mask_ips={{ 1 if mask_ips else 0 }}"
+           class="logs-btn logs-btn-sm" title="Скачать исходный файл целиком">Raw</a>
         {% endif %}
       </div>
     </div>
 
     {% if is_qdel %}
-    <!-- qdel.log Structured Analyzer -->
-    <div class="telemetry-strip">
-      <div class="telemetry-cell">
-        <div class="cell-label">Уникальных путей</div>
-        <div class="cell-value">{{ qdel_report.total_paths }}</div>
-      </div>
-      <div class="telemetry-cell">
-        <div class="cell-label">Всего qdel()</div>
-        <div class="cell-value">{{ "{:,}".format(qdel_report.total_qdels) }}</div>
-      </div>
-      <div class="telemetry-cell">
-        <div class="cell-label">Лишних qdel()</div>
-        <div class="cell-value">{{ "{:,}".format(qdel_report.total_unnecessary) }}</div>
-      </div>
-      <div class="telemetry-cell">
-        <div class="cell-label">Общее время Destroy()</div>
-        <div class="cell-value">{{ "{:,.2f}".format(qdel_report.total_destroy_ms) }}<span class="unit">ms</span></div>
-      </div>
+    <!-- qdel.log Analyzer -->
+    <div class="logs-meta-strip mono-val">
+      <span>Путей: <strong>{{ qdel_report.total_paths }}</strong></span>
+      <span>Всего qdel(): <strong>{{ "{:,}".format(qdel_report.total_qdels) }}</strong></span>
+      <span>Лишних: <strong>{{ "{:,}".format(qdel_report.total_unnecessary) }}</strong></span>
+      <span>Destroy(): <strong>{{ "{:,.2f}".format(qdel_report.total_destroy_ms) }} ms</strong></span>
     </div>
 
     <div class="logs-panel-body">
       <form action="/logs/round/{{ round.round_uid }}" method="get" class="logs-form-grid">
         <input type="hidden" name="file" value="qdel.log">
         <div class="logs-field">
-          <label for="qdel-q" class="logs-label">Фильтр по пути (/turf, /obj, /datum...)</label>
+          <label for="qdel-q" class="logs-label">Фильтр по пути</label>
           <input type="text" id="qdel-q" name="q" value="{{ q }}" class="logs-input" placeholder="/obj/item/...">
         </div>
         <div class="logs-field logs-field-sm">
           <label for="qdel-sort" class="logs-label">Сортировка</label>
           <select id="qdel-sort" name="sort_by" class="logs-select">
-            <option value="destroy_cost_ms" {% if sort_by == 'destroy_cost_ms' %}selected{% endif %}>Destroy() Cost (ms)</option>
-            <option value="qdel_count" {% if sort_by == 'qdel_count' %}selected{% endif %}>qdel() Count</option>
+            <option value="destroy_cost_ms" {% if sort_by == 'destroy_cost_ms' %}selected{% endif %}>Destroy() (ms)</option>
+            <option value="qdel_count" {% if sort_by == 'qdel_count' %}selected{% endif %}>Вызовы qdel()</option>
             <option value="unnecessary_count" {% if sort_by == 'unnecessary_count' %}selected{% endif %}>Лишние qdel()</option>
             <option value="path" {% if sort_by == 'path' %}selected{% endif %}>Путь (A-Z)</option>
           </select>
@@ -118,10 +88,10 @@
           </select>
         </div>
         <div class="logs-field logs-field-sm">
-          <label for="qdel-view" class="logs-label">Режим</label>
+          <label for="qdel-view" class="logs-label">Формат</label>
           <select id="qdel-view" name="qdel_view" class="logs-select">
             <option value="table" {% if qdel_view != 'raw' %}selected{% endif %}>Таблица</option>
-            <option value="raw" {% if qdel_view == 'raw' %}selected{% endif %}>Raw текст</option>
+            <option value="raw" {% if qdel_view == 'raw' %}selected{% endif %}>Текст</option>
           </select>
         </div>
         <button type="submit" class="logs-btn logs-btn-primary">Применить</button>
@@ -136,20 +106,20 @@
         <thead>
           <tr>
             <th>#</th>
-            <th>Path</th>
-            <th>qdel() Count</th>
-            <th>Лишних qdel()</th>
-            <th>Destroy() Cost</th>
+            <th>Путь</th>
+            <th class="col-num">qdel()</th>
+            <th class="col-num">Лишних</th>
+            <th class="col-num">Destroy()</th>
           </tr>
         </thead>
         <tbody>
           {% for item in qdel_report.entries %}
           <tr>
-            <td class="mono-val">#L{{ item.line_no }}</td>
+            <td class="mono-val cell-sub">#L{{ item.line_no }}</td>
             <td class="mono-val">{{ item.path }}</td>
-            <td class="mono-val">{{ "{:,}".format(item.qdel_count) }}</td>
-            <td class="mono-val">{{ "{:,}".format(item.unnecessary_count) }}</td>
-            <td class="mono-val {% if item.destroy_cost_ms >= 5000 %}qdel-cost-high{% elif item.destroy_cost_ms >= 1000 %}qdel-cost-med{% endif %}">
+            <td class="mono-val col-num">{{ "{:,}".format(item.qdel_count) }}</td>
+            <td class="mono-val col-num">{{ "{:,}".format(item.unnecessary_count) }}</td>
+            <td class="mono-val col-num {% if item.destroy_cost_ms >= 5000 %}qdel-cost-high{% elif item.destroy_cost_ms >= 1000 %}qdel-cost-med{% endif %}">
               {{ "{:,.3f}".format(item.destroy_cost_ms) }} ms
             </td>
           </tr>
@@ -165,9 +135,8 @@
 
     {% else %}
     <!-- game.log / initialize.log Filter Toolbar -->
-    <div class="logs-panel-body">
+    <div id="logs-round-toolbar" class="logs-panel-body {% if view_mode != 'map' %}logs-sticky-toolbar{% endif %}">
       <div class="logs-preset-bar" aria-label="Пресеты категорий">
-        <span class="logs-label">Пресеты:</span>
         {% for pid, pinfo in presets.items() %}
         <button type="button"
                 class="logs-nav-pill {% if not selected_cats and active_preset == pid %}is-active{% endif %}"
@@ -184,30 +153,30 @@
 
         <div class="logs-form-grid">
           <div class="logs-field">
-            <label for="logs-q-input" class="logs-label">Поиск текста / regex</label>
-            <input type="text" id="logs-q-input" name="q" value="{{ q }}" class="logs-input" placeholder="Текст или регулярное выражение...">
+            <label for="logs-q-input" class="logs-label">Поиск / regex</label>
+            <input type="text" id="logs-q-input" name="q" value="{{ q }}" class="logs-input" placeholder="Текст или шаблон (нажмите /)">
           </div>
           <div class="logs-field logs-field-sm">
             <label for="logs-ckey-input" class="logs-label">Игрок (ckey)</label>
             <input type="text" id="logs-ckey-input" name="ckey" value="{{ ckey }}" class="logs-input" placeholder="ckey...">
           </div>
           <div class="logs-field logs-field-sm">
-            <label for="logs-time-from" class="logs-label">Время от (ЧЧ:ММ)</label>
+            <label for="logs-time-from" class="logs-label">С (ЧЧ:ММ)</label>
             <input type="text" id="logs-time-from" name="time_from" value="{{ time_from }}" class="logs-input" placeholder="14:00">
           </div>
           <div class="logs-field logs-field-sm">
-            <label for="logs-time-to" class="logs-label">Время до (ЧЧ:ММ)</label>
+            <label for="logs-time-to" class="logs-label">По (ЧЧ:ММ)</label>
             <input type="text" id="logs-time-to" name="time_to" value="{{ time_to }}" class="logs-input" placeholder="16:30">
           </div>
           <div class="logs-field logs-field-sm">
-            <label for="logs-html-mode" class="logs-label">Формат строк</label>
+            <label for="logs-html-mode" class="logs-label">Отображение</label>
             <select id="logs-html-mode" name="html" class="logs-select">
-              <option value="1" {% if render_html %}selected{% endif %}>HTML-разметка</option>
-              <option value="0" {% if not render_html %}selected{% endif %}>Сырой текст</option>
+              <option value="1" {% if render_html %}selected{% endif %}>Форматированный</option>
+              <option value="0" {% if not render_html %}selected{% endif %}>Без разметки</option>
             </select>
           </div>
           <div class="logs-field logs-field-sm">
-            <label for="logs-per-page" class="logs-label">На странице</label>
+            <label for="logs-per-page" class="logs-label">Строк</label>
             <select id="logs-per-page" name="per_page" class="logs-select">
               <option value="100" {% if per_page == 100 %}selected{% endif %}>100</option>
               <option value="200" {% if per_page == 200 %}selected{% endif %}>200</option>
@@ -219,17 +188,16 @@
         </div>
 
         <div class="logs-check-row">
-          <label class="logs-check-label">
+          <label class="logs-check-label" title="Интерпретировать строку поиска как регулярное выражение">
             <input type="checkbox" name="regex" value="1" {% if use_regex %}checked{% endif %}>
-            <span>Регулярное выражение (Regex)</span>
+            <span>Regex</span>
           </label>
-          <label class="logs-check-label">
+          <label class="logs-check-label" title="Скрыть IP-адреса и CID игроков в выводе">
             <input type="checkbox" name="mask_ips" value="1" {% if mask_ips %}checked{% endif %}>
-            <span>Скрыть IP/CID (для скриншотов)</span>
+            <span>Скрыть IP/CID</span>
           </label>
         </div>
 
-        <!-- Hidden checkboxes synced by clickable category chips -->
         <div class="logs-cat-chips" aria-label="Фильтр по категориям">
           {% for cat in categories_vm %}
           <label class="logs-cat-chip {% if cat.name in selected_cats %}is-selected{% endif %}" data-cat-toggle="{{ cat.name }}" title="{{ cat.desc }}">
@@ -241,19 +209,13 @@
         </div>
       </form>
 
-      {% if result.regex_error %}
+      {% if view_mode == 'map' and result.regex_error %}
       <div class="logs-alert logs-alert-error" role="alert">{{ result.regex_error }}</div>
-      {% endif %}
-      {% if view_mode != 'map' and focus_line and not entries|selectattr("is_focused")|list %}
-      <div class="logs-alert logs-alert-info" role="status">
-        Строка <code>#L{{ focus_line }}</code> скрыта активным фильтром.
-        <a href="/logs/round/{{ round.round_uid }}?file={{ selected_file|urlencode }}&preset=all&focus={{ focus_line }}#L{{ focus_line }}" class="server-link">Открыть в режиме «Все категории»</a>
-      </div>
       {% endif %}
     </div>
 
     {% if view_mode == 'map' %}
-    <!-- Interactive Station Map View -->
+    <!-- Station Map View -->
     <div id="logs-map-root"
          class="logs-map-root"
          data-events-url="/api/v1/logs/rounds/{{ round.round_uid }}/map-events?{{ base_query_str }}"
@@ -270,146 +232,71 @@
          data-tile-px="{{ map_manifest.tile_px or 16 }}"
          data-map-ready="{{ '1' if map_manifest.ready else '0' }}">
       <div class="logs-map-toolbar">
-        <div id="logs-map-deck-tabs" class="logs-map-deck-tabs" aria-label="Выбор палубы (Z-уровень)"></div>
+        <div id="logs-map-deck-tabs" class="logs-map-deck-tabs" aria-label="Выбор палубы"></div>
         <div class="logs-map-controls">
           <button type="button" id="logs-map-mode-pins" class="logs-btn logs-btn-sm is-active">Точки</button>
-          <button type="button" id="logs-map-mode-heat" class="logs-btn logs-btn-sm">Тепловая карта</button>
+          <button type="button" id="logs-map-mode-heat" class="logs-btn logs-btn-sm">Плотность</button>
           <label class="logs-check-label">
             <input type="checkbox" id="logs-map-cluster-cb" checked>
             <span>Кластеры</span>
           </label>
           <label class="logs-check-label">
             <input type="checkbox" id="logs-map-traj-cb" {% if ckey %}checked{% endif %}>
-            <span>Траектория ckey</span>
+            <span>Траектория</span>
           </label>
           <button type="button" id="logs-map-zoom-out" class="logs-btn logs-btn-sm" title="Отдалить">&minus;</button>
           <span id="logs-map-zoom-label" class="mono-val logs-map-zoom-label">100%</span>
           <button type="button" id="logs-map-zoom-in" class="logs-btn logs-btn-sm" title="Приблизить">+</button>
-          <button type="button" id="logs-map-fit" class="logs-btn logs-btn-sm" title="Вписать карту в экран">Сброс</button>
-          <button type="button" id="logs-map-center-target" class="logs-btn logs-btn-sm logs-btn-primary" {% if not target_x %}hidden{% endif %}>Центр</button>
+          <button type="button" id="logs-map-fit" class="logs-btn logs-btn-sm" title="Вписать карту в область">Вписать</button>
+          <button type="button" id="logs-map-center-target" class="logs-btn logs-btn-sm logs-btn-primary" {% if not target_x %}hidden{% endif %}>К точке</button>
         </div>
       </div>
 
       {% if not map_manifest.ready %}
       <div class="logs-panel-body">
         <div class="logs-alert logs-alert-info" role="status">
-          Тайлы карты SierraBay12 ещё не собраны — отображается координатная сетка (200&times;200).
+          Подложка карты не собрана &mdash; отображается координатная сетка 200&times;200.
           {% if user.is_admin %}
-          <a href="/logs/admin" class="server-link">Собрать карту из Git в админ-панели</a>
+          <a href="/logs/admin" class="server-link">Собрать в разделе «Доступ и аудит»</a>
           {% endif %}
         </div>
       </div>
       {% endif %}
 
-      <div id="logs-map-status" class="logs-map-status mono-val cell-sub">Загрузка событий раунда с координатами...</div>
+      <div id="logs-map-status" class="logs-map-status mono-val cell-sub">Загрузка событий...</div>
 
       <div class="logs-map-workspace">
         <div class="logs-map-stage">
-          <canvas id="logs-map-canvas" width="900" height="720" aria-label="Интерактивная карта событий раунда"></canvas>
+          <canvas id="logs-map-canvas" width="900" height="720" aria-label="Карта событий раунда"></canvas>
           <div class="logs-map-hud">
             <span id="logs-map-hud-coords" class="mono-val">X: &mdash;, Y: &mdash;, Z: &mdash;</span>
-            <span id="logs-map-hud-area" class="logs-map-hud-area">Наведите курсор на карту</span>
+            <span id="logs-map-hud-area" class="logs-map-hud-area">Наведите на карту</span>
           </div>
-          <div class="logs-map-legend" aria-label="Легенда категорий">
+          <div class="logs-map-legend" aria-label="Категории маркеров">
             <span class="logs-map-legend-item"><span class="logs-map-dot is-attack"></span>Бой</span>
             <span class="logs-map-legend-item"><span class="logs-map-dot is-say"></span>Речь</span>
             <span class="logs-map-legend-item"><span class="logs-map-dot is-admin"></span>Админ</span>
-            <span class="logs-map-legend-item"><span class="logs-map-dot is-access"></span>Вход/сеть</span>
-            <span class="logs-map-legend-item"><span class="logs-map-dot is-game"></span>Игра/эмоции</span>
+            <span class="logs-map-legend-item"><span class="logs-map-dot is-access"></span>Сеть</span>
+            <span class="logs-map-legend-item"><span class="logs-map-dot is-game"></span>Игра</span>
             <span class="logs-map-legend-item"><span class="logs-map-dot is-other"></span>Прочее</span>
           </div>
         </div>
 
-        <aside id="logs-map-inspector" class="logs-map-inspector" aria-label="Инспектор точки карты">
+        <aside id="logs-map-inspector" class="logs-map-inspector" aria-label="События в выбранной точке">
           <div class="logs-map-inspector-head">
-            <strong id="logs-map-inspector-title">События на карте</strong>
-            <span id="logs-map-inspector-sub" class="cell-sub mono-val">Нажмите на маркер или тайл</span>
+            <strong id="logs-map-inspector-title">Инспектор</strong>
+            <span id="logs-map-inspector-sub" class="cell-sub mono-val">Выберите маркер или тайл</span>
           </div>
           <div id="logs-map-inspector-list" class="logs-map-inspector-list">
-            <div class="block-empty">Нажмите на любую точку на карте, чтобы увидеть логи в этом месте.</div>
+            <div class="block-empty">Нажмите на точку или тайл карты.</div>
           </div>
         </aside>
       </div>
     </div>
     {% else %}
-    <!-- Filtered Summary & Top Pagination -->
-    <div class="logs-pagination">
-      <span class="mono-val cell-sub">
-        Найдено строк: <strong>{{ result.total_matches }}</strong> из {{ result.total_lines }} &bull; Страница {{ result.page }} / {{ result.total_pages }}
-      </span>
-      <div class="logs-topbar-left">
-        {% if result.page > 1 %}
-        <a href="/logs/round/{{ round.round_uid }}?{{ base_query_str }}&page={{ result.page - 1 }}" class="logs-btn logs-btn-sm">&larr; Назад</a>
-        {% endif %}
-        {% if result.page < result.total_pages %}
-        <a href="/logs/round/{{ round.round_uid }}?{{ base_query_str }}&page={{ result.page + 1 }}" class="logs-btn logs-btn-sm">Вперёд &rarr;</a>
-        {% endif %}
-      </div>
+    <div id="logs-stream-container">
+      {% include "partials/logs_round_stream.html" %}
     </div>
-
-    <!-- Log Entries Stream -->
-    {% if entries %}
-    <div class="log-stream">
-      {% for entry in entries %}
-      <div id="L{{ entry.line_no }}" class="log-row {% if entry.is_focused %}is-focused{% endif %} {% if entry.is_continuation %}is-continuation{% endif %}">
-        <a href="/logs/round/{{ round.round_uid }}?{{ base_query_str }}&focus={{ entry.line_no }}#L{{ entry.line_no }}" class="log-ln" title="Прямая ссылка на строку">#L{{ entry.line_no }}</a>
-        <span class="log-ts" title="{{ entry.timestamp }}">{{ entry.time_short or entry.timestamp }}</span>
-        <span><span class="log-cat-tag {{ entry.cat_css }}">{{ entry.category }}</span></span>
-        <div class="log-msg-cell">
-          <div>{{ entry.safe_html | safe }}</div>
-          {% if entry.coords or entry.ckeys %}
-          <div class="log-meta-badges">
-            {% if entry.coords %}
-            <a href="/logs/round/{{ round.round_uid }}?{{ base_query_str }}&view=map&z={{ entry.coords.z }}&tx={{ entry.coords.x }}&ty={{ entry.coords.y }}&focus={{ entry.line_no }}"
-               class="log-coord-badge"
-               title="Показать точку ({{ entry.coords.x }}, {{ entry.coords.y }}, Z{{ entry.coords.z }}) на карте раунда">
-              &#x1F4CD; {{ entry.coords.x }}, {{ entry.coords.y }}, Z{{ entry.coords.z }}{% if entry.coords.area %} &bull; {{ entry.coords.area }}{% endif %}
-            </a>
-            {% endif %}
-            {% for ck in entry.ckeys %}
-            <span class="log-ckey-inline">
-              <button type="button" class="log-ckey-btn" data-ckey="{{ ck }}" title="Фильтровать раунд по ckey">{{ ck }}</button>
-              <a href="/player/{{ ck }}" class="log-ckey-dossier" target="_blank" rel="noopener" title="Открыть досье Hilleye">&nearr; досье</a>
-            </span>
-            {% endfor %}
-          </div>
-          {% endif %}
-        </div>
-        <div class="log-row-actions">
-          <button type="button"
-                  class="log-mini-btn"
-                  data-context-url="/logs/round/{{ round.round_uid }}/context?file={{ selected_file|urlencode }}&line={{ entry.line_no }}&mask_ips={{ 1 if mask_ips else 0 }}&html={{ 1 if render_html else 0 }}"
-                  data-line-no="{{ entry.line_no }}"
-                  title="Показать соседние ±20 строк (включая DEBUG)">&plusmn;20</button>
-          <button type="button"
-                  class="log-mini-btn"
-                  data-copy-text="/logs/round/{{ round.round_uid }}?file={{ selected_file|urlencode }}&preset=all&focus={{ entry.line_no }}#L{{ entry.line_no }}"
-                  title="Скопировать ссылку на строку">Ссылка</button>
-        </div>
-      </div>
-      {% endfor %}
-    </div>
-    {% else %}
-    <div class="logs-panel-body">
-      <div class="block-empty">Нет строк, подходящих под выбранные фильтры. Попробуйте пресет «Все категории» или очистите поиск.</div>
-    </div>
-    {% endif %}
-
-    {% if result.total_pages > 1 %}
-    <div class="logs-pagination">
-      <span class="mono-val cell-sub">Страница {{ result.page }} из {{ result.total_pages }}</span>
-      <div class="logs-topbar-left">
-        {% if result.page > 1 %}
-        <a href="/logs/round/{{ round.round_uid }}?{{ base_query_str }}&page=1" class="logs-btn logs-btn-sm">Первая</a>
-        <a href="/logs/round/{{ round.round_uid }}?{{ base_query_str }}&page={{ result.page - 1 }}" class="logs-btn logs-btn-sm">&larr; Назад</a>
-        {% endif %}
-        {% if result.page < result.total_pages %}
-        <a href="/logs/round/{{ round.round_uid }}?{{ base_query_str }}&page={{ result.page + 1 }}" class="logs-btn logs-btn-sm">Вперёд &rarr;</a>
-        <a href="/logs/round/{{ round.round_uid }}?{{ base_query_str }}&page={{ result.total_pages }}" class="logs-btn logs-btn-sm">Последняя</a>
-        {% endif %}
-      </div>
-    </div>
-    {% endif %}
     {% endif %}
     {% endif %}
   </section>

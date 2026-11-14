@@ -758,11 +758,19 @@ async def test_web_map_viewer_and_admin_rebuild(tmp_path, logs_env, monkeypatch)
             rounds, _ = await logs_db.list_rounds()
             uid = rounds[0]["round_uid"]
 
-            # Stream view contains clickable coordinate badge
+            # Stream view contains clickable coordinate badge & sticky/htmx containers
             round_resp = await client.get(f"/logs/round/{uid}")
             assert round_resp.status_code == 200
+            assert 'id="logs-stream-container"' in round_resp.text
+            assert "logs-sticky-toolbar" in round_resp.text
             assert "log-coord-badge" in round_resp.text
             assert "view=map&z=3&tx=82&ty=104" in round_resp.text or "view=map&amp;z=3&amp;tx=82&amp;ty=104" in round_resp.text
+
+            # HTMX partial request returns only the stream partial without full page shell
+            htmx_resp = await client.get(f"/logs/round/{uid}?preset=all", headers={"HX-Request": "true"})
+            assert htmx_resp.status_code == 200
+            assert "log-stream" in htmx_resp.text
+            assert "<!DOCTYPE html>" not in htmx_resp.text
 
             # Map view & map-events JSON API
             map_page = await client.get(f"/logs/round/{uid}?view=map&z=3&tx=82&ty=104&focus=9")

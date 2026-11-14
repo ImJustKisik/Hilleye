@@ -7,8 +7,30 @@
     var fileInput = document.getElementById("logs-upload-file");
     var form = document.getElementById("logs-upload-form");
     var statusBox = document.getElementById("logs-upload-status");
+    var dzTitle = document.getElementById("logs-dropzone-title");
+    var dzSub = document.getElementById("logs-dropzone-sub");
     if (!dropzone || !fileInput || !form || dropzone.dataset.bound) return;
     dropzone.dataset.bound = "1";
+
+    var defaultTitle = dzTitle ? dzTitle.textContent : "Перетащите файл или нажмите для выбора";
+    var defaultSub = dzSub ? dzSub.textContent : "game.log, qdel.log, .txt, .zip, .tar.gz";
+
+    function formatFileSize(bytes) {
+      if (!bytes || bytes < 1024) return (bytes || 0) + " Б";
+      if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " КБ";
+      return (bytes / (1024 * 1024)).toFixed(2) + " МБ";
+    }
+
+    function updateSelectedFilePreview() {
+      var f = fileInput.files && fileInput.files[0];
+      if (!f) {
+        if (dzTitle) dzTitle.textContent = defaultTitle;
+        if (dzSub) dzSub.textContent = defaultSub;
+        return;
+      }
+      if (dzTitle) dzTitle.textContent = f.name;
+      if (dzSub) dzSub.textContent = "Готово к загрузке (" + formatFileSize(f.size) + ")";
+    }
 
     function showStatus(msg, isError) {
       if (!statusBox) return;
@@ -22,6 +44,15 @@
         fileInput.click();
       }
     });
+
+    dropzone.addEventListener("keydown", function (ev) {
+      if (ev.key === "Enter" || ev.key === " ") {
+        ev.preventDefault();
+        fileInput.click();
+      }
+    });
+
+    fileInput.addEventListener("change", updateSelectedFilePreview);
 
     dropzone.addEventListener("dragover", function (ev) {
       ev.preventDefault();
@@ -37,6 +68,7 @@
       dropzone.classList.remove("is-dragover");
       if (ev.dataTransfer && ev.dataTransfer.files && ev.dataTransfer.files.length > 0) {
         fileInput.files = ev.dataTransfer.files;
+        updateSelectedFilePreview();
         uploadSelectedFile();
       }
     });
@@ -88,10 +120,55 @@
     });
   }
 
+  function syncToolbarActiveStates(filterForm) {
+    if (!filterForm) return;
+    var presetField = document.getElementById("logs-preset-input");
+    var anyCatChecked = false;
+    filterForm.querySelectorAll('input[name="cat"]').forEach(function (cb) {
+      var chip = cb.closest(".logs-cat-chip");
+      if (chip) {
+        chip.classList.toggle("is-selected", cb.checked);
+      }
+      if (cb.checked) anyCatChecked = true;
+    });
+    var activePreset = presetField ? presetField.value : "";
+    document.querySelectorAll("[data-preset-id]").forEach(function (btn) {
+      btn.classList.toggle("is-active", !anyCatChecked && btn.dataset.presetId === activePreset);
+    });
+  }
+
+  function submitFilterForm(filterForm) {
+    if (!filterForm) return;
+    syncToolbarActiveStates(filterForm);
+    var streamContainer = document.getElementById("logs-stream-container");
+    if (streamContainer && window.htmx && typeof window.htmx.ajax === "function") {
+      var params = new URLSearchParams(new FormData(filterForm));
+      var action = filterForm.getAttribute("action") || window.location.pathname;
+      var url = action + "?" + params.toString();
+      window.history.pushState({}, "", url);
+      window.htmx.ajax("GET", url, { target: "#logs-stream-container", swap: "innerHTML" });
+      return;
+    }
+    filterForm.submit();
+  }
+
   function initRoundFilterHelpers() {
     var filterForm = document.getElementById("logs-filter-form");
     var ckeyInput = document.getElementById("logs-ckey-input");
     var presetField = document.getElementById("logs-preset-input");
+
+    if (filterForm && !filterForm.dataset.htmxBound) {
+      filterForm.dataset.htmxBound = "1";
+      filterForm.addEventListener("submit", function (ev) {
+        var streamContainer = document.getElementById("logs-stream-container");
+        if (streamContainer && window.htmx) {
+          ev.preventDefault();
+          var pageInput = filterForm.querySelector('input[name="page"]');
+          if (pageInput) pageInput.value = "1";
+          submitFilterForm(filterForm);
+        }
+      });
+    }
 
     // Preset buttons
     document.querySelectorAll("[data-preset-id]").forEach(function (btn) {
@@ -106,22 +183,26 @@
         });
         var pageInput = filterForm.querySelector('input[name="page"]');
         if (pageInput) pageInput.value = "1";
-        filterForm.submit();
+        submitFilterForm(filterForm);
       });
     });
 
-    // Category chip toggle (native <label> toggles checkbox once; submit on change)
-    if (filterForm) {
-      filterForm.querySelectorAll('input[name="cat"]').forEach(function (cb) {
-        if (cb.dataset.bound) return;
-        cb.dataset.bound = "1";
-        cb.addEventListener("change", function () {
+    // Category chip toggle (native <label> toggles checkbox once; submit inside round viewer, toggle class outside)
+    document.querySelectorAll('.logs-cat-chip input[name="cat"]').forEach(function (cb) {
+      if (cb.dataset.bound) return;
+      cb.dataset.bound = "1";
+      cb.addEventListener("change", function () {
+        var chip = cb.closest(".logs-cat-chip");
+        if (chip) {
+          chip.classList.toggle("is-selected", cb.checked);
+        }
+        if (filterForm && filterForm.contains(cb)) {
           var pageInput = filterForm.querySelector('input[name="page"]');
           if (pageInput) pageInput.value = "1";
-          filterForm.submit();
-        });
+          submitFilterForm(filterForm);
+        }
       });
-    }
+    });
 
     // Clickable ckey filter inside log lines
     document.querySelectorAll(".log-ckey-btn[data-ckey]").forEach(function (btn) {
@@ -132,9 +213,87 @@
         ckeyInput.value = btn.dataset.ckey || "";
         var pageInput = filterForm.querySelector('input[name="page"]');
         if (pageInput) pageInput.value = "1";
-        filterForm.submit();
+        submitFilterForm(filterForm);
       });
     });
+  }
+
+  function closeAllInlineContexts() {
+    document.querySelectorAll(".log-inline-context").forEach(function (el) {
+      el.remove();
+    });
+    document.querySelectorAll(".log-row.has-context-open").forEach(function (row) {
+      row.classList.remove("has-context-open");
+    });
+  }
+
+  function toggleInlineContext(row, url, lineNo) {
+    if (!row || !url) return;
+    var existing = row.nextElementSibling;
+    if (existing && existing.classList.contains("log-inline-context")) {
+      existing.remove();
+      row.classList.remove("has-context-open");
+      return;
+    }
+
+    var drawer = document.createElement("div");
+    drawer.className = "log-inline-context";
+
+    var loadingBar = document.createElement("div");
+    loadingBar.className = "logs-context-bar";
+    var loadingText = document.createElement("span");
+    loadingText.className = "mono-val cell-sub";
+    loadingText.textContent = "Загрузка контекста" + (lineNo ? " #L" + lineNo : "") + "...";
+    var loadingClose = document.createElement("button");
+    loadingClose.type = "button";
+    loadingClose.className = "log-mini-btn";
+    loadingClose.textContent = "Скрыть";
+    loadingClose.addEventListener("click", function () {
+      drawer.remove();
+      row.classList.remove("has-context-open");
+    });
+    loadingBar.appendChild(loadingText);
+    loadingBar.appendChild(loadingClose);
+    drawer.appendChild(loadingBar);
+
+    row.classList.add("has-context-open");
+    row.insertAdjacentElement("afterend", drawer);
+
+    var fetchUrl = url + (url.indexOf("?") === -1 ? "?" : "&") + "inline=1";
+    fetch(fetchUrl, { credentials: "same-origin" })
+      .then(function (resp) {
+        if (!resp.ok) throw new Error("HTTP " + resp.status);
+        return resp.text();
+      })
+      .then(function (html) {
+        drawer.innerHTML = html;
+        var closeBtn = drawer.querySelector(".js-close-inline-context");
+        if (closeBtn) {
+          closeBtn.addEventListener("click", function () {
+            drawer.remove();
+            row.classList.remove("has-context-open");
+          });
+        }
+      })
+      .catch(function () {
+        drawer.innerHTML = "";
+        var errWrap = document.createElement("div");
+        errWrap.className = "logs-context-bar";
+        var errMsg = document.createElement("span");
+        errMsg.className = "logs-alert-error";
+        errMsg.textContent = "Не удалось загрузить контекст.";
+        var errClose = document.createElement("button");
+        errClose.type = "button";
+        errClose.className = "log-mini-btn";
+        errClose.textContent = "Закрыть";
+        errClose.addEventListener("click", function () {
+          drawer.remove();
+          row.classList.remove("has-context-open");
+        });
+        errWrap.appendChild(errMsg);
+        errWrap.appendChild(errClose);
+        drawer.appendChild(errWrap);
+      });
   }
 
   function openLogContextModal(url, lineNo) {
@@ -143,9 +302,9 @@
     var modalTitle = document.getElementById("log-context-modal-title");
     if (!modal || !modalBody || !url) return;
     if (modalTitle) {
-      modalTitle.textContent = "Контекст вокруг строки #L" + (lineNo || "");
+      modalTitle.textContent = "Контекст строки #L" + (lineNo || "");
     }
-    modalBody.innerHTML = '<div class="logs-panel-body">Загрузка контекста...</div>';
+    modalBody.innerHTML = '<div class="logs-panel-body cell-sub">Загрузка контекста...</div>';
     modal.hidden = false;
     fetch(url, { credentials: "same-origin" })
       .then(function (resp) {
@@ -181,17 +340,60 @@
       modal.addEventListener("click", function (ev) {
         if (ev.target === modal) closeModal();
       });
-      document.addEventListener("keydown", function (ev) {
-        if (ev.key === "Escape" && !modal.hidden) closeModal();
-      });
     }
 
     document.querySelectorAll("[data-context-url]").forEach(function (btn) {
       if (btn.dataset.bound) return;
       btn.dataset.bound = "1";
       btn.addEventListener("click", function () {
-        openLogContextModal(btn.dataset.contextUrl, btn.dataset.lineNo || "");
+        var row = btn.closest(".log-row");
+        if (row) {
+          toggleInlineContext(row, btn.dataset.contextUrl, btn.dataset.lineNo || "");
+        } else {
+          openLogContextModal(btn.dataset.contextUrl, btn.dataset.lineNo || "");
+        }
       });
+    });
+  }
+
+  function initKeyboardShortcuts() {
+    if (document.body.dataset.logsKeysBound) return;
+    document.body.dataset.logsKeysBound = "1";
+    document.addEventListener("keydown", function (ev) {
+      var active = document.activeElement;
+      var tag = active ? active.tagName.toLowerCase() : "";
+      var isTyping = tag === "input" || tag === "textarea" || tag === "select" || (active && active.isContentEditable);
+
+      if (ev.key === "/" && !isTyping && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {
+        var searchInput =
+          document.getElementById("logs-q-input") ||
+          document.getElementById("gsearch-q") ||
+          document.getElementById("quick-search-q") ||
+          document.getElementById("qdel-q");
+        if (searchInput) {
+          ev.preventDefault();
+          searchInput.focus();
+          searchInput.select();
+        }
+        return;
+      }
+
+      if (ev.key === "Escape") {
+        var modal = document.getElementById("log-context-modal");
+        var modalBody = document.getElementById("log-context-modal-body");
+        if (modal && !modal.hidden) {
+          modal.hidden = true;
+          if (modalBody) modalBody.innerHTML = "";
+          return;
+        }
+        if (document.querySelector(".log-inline-context")) {
+          closeAllInlineContexts();
+          return;
+        }
+        if (isTyping && active) {
+          active.blur();
+        }
+      }
     });
   }
 
@@ -224,12 +426,12 @@
 
   function categoryPinColor(category) {
     var cat = (category || "").toUpperCase();
-    if (cat === "ATTACK") return "#ef4444";
-    if (cat === "SAY" || cat === "WHISPER" || cat === "RADIO" || cat === "OOC") return "#38bdf8";
-    if (cat === "ADMIN" || cat === "ADMINPM" || cat === "ADMINPRIVATE" || cat === "ASAY") return "#f59e0b";
-    if (cat === "ACCESS") return "#22c55e";
-    if (cat === "GAME" || cat === "EMOTE" || cat === "VOTE") return "#a855f7";
-    return "#cbd5e1";
+    if (cat === "ATTACK") return "#f87171";
+    if (cat === "SAY" || cat === "WHISPER" || cat === "RADIO" || cat === "OOC") return "#34d399";
+    if (cat === "ADMIN" || cat === "ADMINPM" || cat === "ADMINPRIVATE" || cat === "ASAY") return "#fbbf24";
+    if (cat === "ACCESS") return "#60a5fa";
+    if (cat === "GAME" || cat === "EMOTE" || cat === "VOTE") return "#c084fc";
+    return "#94a3b8";
   }
 
   function decodeRleAreas(payload) {
@@ -465,7 +667,7 @@
       if (!hudCoords || !hudArea) return;
       if (tx == null || ty == null) {
         hudCoords.textContent = "X: \u2014, Y: \u2014, Z: " + state.currentZ;
-        hudArea.textContent = "Наведите курсор на карту";
+        hudArea.textContent = "Наведите на карту";
         return;
       }
       hudCoords.textContent = "X: " + tx + ", Y: " + ty + ", Z: " + state.currentZ;
@@ -680,7 +882,7 @@
 
       ctx.setTransform(state.dpr, 0, 0, state.dpr, 0, 0);
       ctx.imageSmoothingEnabled = false;
-      ctx.fillStyle = "#070b11";
+      ctx.fillStyle = "#080a0e";
       ctx.fillRect(0, 0, w, h);
 
       var x0 = state.offsetX;
@@ -693,9 +895,9 @@
       if (imgRec && imgRec.status === "loaded") {
         ctx.drawImage(imgRec.img, x0, y0, drawW, drawH);
       } else {
-        ctx.fillStyle = "#0c131d";
+        ctx.fillStyle = "#12161c";
         ctx.fillRect(x0, y0, drawW, drawH);
-        ctx.strokeStyle = "rgba(148, 163, 184, 0.14)";
+        ctx.strokeStyle = "rgba(134, 148, 168, 0.14)";
         ctx.lineWidth = 1;
         var stepMajor = 10 * lv.tile_px * state.scale;
         if (stepMajor >= 8) {
@@ -715,7 +917,7 @@
       }
 
       // Map bounds frame
-      ctx.strokeStyle = "rgba(56, 189, 248, 0.35)";
+      ctx.strokeStyle = "rgba(134, 148, 168, 0.35)";
       ctx.lineWidth = 1;
       ctx.strokeRect(x0, y0, drawW, drawH);
 
@@ -729,7 +931,7 @@
           var hpt = tileToScreen(hev.x, hev.y, lv);
           if (hpt.x < -rHeat || hpt.x > w + rHeat || hpt.y < -rHeat || hpt.y > h + rHeat) continue;
           var grad = ctx.createRadialGradient(hpt.x, hpt.y, 1, hpt.x, hpt.y, rHeat);
-          grad.addColorStop(0, "rgba(239, 68, 68, 0.38)");
+          grad.addColorStop(0, "rgba(217, 38, 56, 0.42)");
           grad.addColorStop(0.5, "rgba(245, 158, 11, 0.18)");
           grad.addColorStop(1, "rgba(245, 158, 11, 0)");
           ctx.fillStyle = grad;
@@ -755,7 +957,7 @@
         }
 
         if (trajEvents.length > 1) {
-          ctx.strokeStyle = "rgba(56, 189, 248, 0.78)";
+          ctx.strokeStyle = "rgba(96, 165, 250, 0.85)";
           ctx.lineWidth = 2;
           ctx.beginPath();
           var prevPt = null;
@@ -783,7 +985,7 @@
               var mx = (aPt.x + bPt.x) / 2;
               var my = (aPt.y + bPt.y) / 2;
               var ang = Math.atan2(bPt.y - aPt.y, bPt.x - aPt.x);
-              ctx.fillStyle = "#38bdf8";
+              ctx.fillStyle = "#60a5fa";
               ctx.beginPath();
               ctx.moveTo(mx + Math.cos(ang) * 5, my + Math.sin(ang) * 5);
               ctx.lineTo(mx + Math.cos(ang + 2.5) * 5, my + Math.sin(ang + 2.5) * 5);
@@ -794,14 +996,14 @@
             stepIdx++;
           }
           if (trajEvents.length <= 40 && stepIdx > 0) {
-            ctx.font = "600 10px monospace";
+            ctx.font = "600 10px 'JetBrains Mono', Consolas, monospace";
             ctx.textAlign = "center";
             ctx.textBaseline = "middle";
             for (var ts = 0; ts < trajEvents.length; ts++) {
               var spt = tileToScreen(trajEvents[ts].x, trajEvents[ts].y, lv);
-              ctx.fillStyle = "#082f49";
+              ctx.fillStyle = "#12161c";
               ctx.fillRect(spt.x - 8, spt.y - 16, 16, 12);
-              ctx.fillStyle = "#e0f2fe";
+              ctx.fillStyle = "#eef2f6";
               ctx.fillText(String(ts + 1), spt.x, spt.y - 10);
             }
           }
@@ -881,7 +1083,7 @@
           var radius = cnt > 1 ? Math.min(16, 8 + Math.log2(cnt) * 2.2) : (state.mode === "heat" ? 4 : 5.5);
 
           if (item.hasFocus) {
-            ctx.strokeStyle = "#22d3ee";
+            ctx.strokeStyle = "#d92638";
             ctx.lineWidth = 2.5;
             ctx.beginPath();
             ctx.arc(item.sx, item.sy, radius + 6, 0, Math.PI * 2);
@@ -894,7 +1096,7 @@
           ctx.fill();
 
           ctx.fillStyle = color;
-          ctx.strokeStyle = "#f8fafc";
+          ctx.strokeStyle = "#eef2f6";
           ctx.lineWidth = 1.4;
           ctx.beginPath();
           ctx.arc(item.sx, item.sy, radius, 0, Math.PI * 2);
@@ -902,8 +1104,8 @@
           ctx.stroke();
 
           if (cnt > 1) {
-            ctx.fillStyle = "#0f172a";
-            ctx.font = "700 10px sans-serif";
+            ctx.fillStyle = "#080a0e";
+            ctx.font = "700 10px 'JetBrains Mono', Consolas, monospace";
             ctx.textAlign = "center";
             ctx.textBaseline = "middle";
             ctx.fillText(String(cnt), item.sx, item.sy + 0.5);
@@ -927,7 +1129,7 @@
         var stX = x0 + (st.x - 1) * lv.tile_px * state.scale;
         var stY = y0 + (lv.height - st.y) * lv.tile_px * state.scale;
         var stSize = lv.tile_px * state.scale;
-        ctx.strokeStyle = "#22d3ee";
+        ctx.strokeStyle = "#d92638";
         ctx.lineWidth = 2;
         ctx.strokeRect(stX, stY, stSize, stSize);
       }
@@ -1025,6 +1227,14 @@
       canvas.classList.add("is-dragging");
     });
 
+    canvas.addEventListener("mouseleave", function () {
+      if (state.hoverTile) {
+        state.hoverTile = null;
+        updateHud(null, null);
+        requestDraw();
+      }
+    });
+
     window.addEventListener("mousemove", function (ev) {
       if (state.dragging) {
         var dx = ev.clientX - state.dragStartX;
@@ -1045,9 +1255,16 @@
       ) {
         var lv = getLevelMeta(state.currentZ);
         var tile = screenToTile(ev.clientX - rect.left, ev.clientY - rect.top, lv);
-        state.hoverTile = tile;
-        updateHud(tile ? tile.x : null, tile ? tile.y : null);
-        requestDraw();
+        var prev = state.hoverTile;
+        var changed =
+          (!prev && tile) ||
+          (prev && !tile) ||
+          (prev && tile && (prev.x !== tile.x || prev.y !== tile.y));
+        if (changed) {
+          state.hoverTile = tile;
+          updateHud(tile ? tile.x : null, tile ? tile.y : null);
+          requestDraw();
+        }
       }
     });
 
@@ -1213,14 +1430,25 @@
     }, 2000);
   }
 
-  function initAll() {
-    initDragAndDropUpload();
+  function bindStreamHelpers() {
     initRoundFilterHelpers();
     initContextModal();
     initCopyButtons();
     scrollFocusedLine();
+  }
+
+  function initAll() {
+    initDragAndDropUpload();
+    bindStreamHelpers();
+    initKeyboardShortcuts();
     initRoundMapViewer();
     initAdminMapBuildPolling();
+
+    document.body.addEventListener("htmx:afterSwap", function (ev) {
+      if (ev.detail && ev.detail.target && ev.detail.target.id === "logs-stream-container") {
+        bindStreamHelpers();
+      }
+    });
   }
 
   document.addEventListener("DOMContentLoaded", initAll);

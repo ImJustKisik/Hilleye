@@ -1,14 +1,20 @@
-<div class="logs-panel-body">
+<div class="{% if not inline %}logs-panel-body{% endif %}">
   <div class="logs-context-bar">
-    <span class="mono-val">Строки вокруг <strong>#L{{ target_line }}</strong> (&plusmn;{{ radius }}, все категории)</span>
-    <a href="/logs/round/{{ round.round_uid }}?file={{ selected_file|urlencode }}&preset=all&focus={{ target_line }}#L{{ target_line }}" class="logs-btn logs-btn-sm logs-btn-primary">Открыть в раунде (Все категории)</a>
+    <span class="mono-val">Контекст <strong>#L{{ target_line }}</strong> (&plusmn;{{ radius }}, все категории)</span>
+    <div class="logs-context-actions">
+      <a href="/logs/round/{{ round.round_uid }}?file={{ selected_file|urlencode }}&preset=all&focus={{ target_line }}#L{{ target_line }}"
+         class="logs-btn logs-btn-sm">Открыть в раунде</a>
+      {% if inline %}
+      <button type="button" class="logs-btn logs-btn-sm js-close-inline-context" title="Свернуть контекст">Скрыть</button>
+      {% endif %}
+    </div>
   </div>
   <div class="log-stream">
     {% for r in rows %}
-    <div class="log-row {% if r.is_target %}is-target{% endif %}">
+    <div class="log-row {{ r.cat_css }} {% if r.is_target %}is-target{% endif %}">
       <span class="log-ln">#L{{ r.line_no }}</span>
       <span class="log-ts">{{ r.time_short or r.timestamp }}</span>
-      <span><span class="log-cat-tag {{ r.cat_css }}">{{ r.category }}</span></span>
+      <span class="log-cat-cell"><span class="log-cat-tag {{ r.cat_css }}">{{ r.category }}</span></span>
       <div class="log-msg-cell">
         <div>{{ r.safe_html | safe }}</div>
         {% if r.coords %}
@@ -16,7 +22,7 @@
           <a href="/logs/round/{{ round.round_uid }}?file={{ selected_file|urlencode }}&preset=all&view=map&z={{ r.coords.z }}&tx={{ r.coords.x }}&ty={{ r.coords.y }}&focus={{ r.line_no }}"
              class="log-coord-badge"
              title="Показать точку ({{ r.coords.x }}, {{ r.coords.y }}, Z{{ r.coords.z }}) на карте">
-            &#x1F4CD; {{ r.coords.x }}, {{ r.coords.y }}, Z{{ r.coords.z }}{% if r.coords.area %} &bull; {{ r.coords.area }}{% endif %}
+            {{ r.coords.x }}, {{ r.coords.y }}, Z{{ r.coords.z }}{% if r.coords.area %} &middot; {{ r.coords.area }}{% endif %}
           </a>
         </div>
         {% endif %}

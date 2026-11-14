@@ -1,0 +1,116 @@
+{% if result.regex_error %}
+<div class="logs-panel-body">
+  <div class="logs-alert logs-alert-error" role="alert">{{ result.regex_error }}</div>
+</div>
+{% endif %}
+{% if focus_line and not entries|selectattr("is_focused")|list %}
+<div class="logs-panel-body">
+  <div class="logs-alert logs-alert-info" role="status">
+    Строка <code>#L{{ focus_line }}</code> скрыта активным фильтром.
+    <a href="/logs/round/{{ round.round_uid }}?file={{ selected_file|urlencode }}&preset=all&focus={{ focus_line }}#L{{ focus_line }}" class="server-link">Открыть в режиме «Все категории»</a>
+  </div>
+</div>
+{% endif %}
+
+<!-- Filtered Summary & Top Pagination -->
+<div class="logs-pagination">
+  <span class="mono-val cell-sub">
+    <strong>{{ result.total_matches }}</strong> / {{ result.total_lines }} строк &middot; стр. {{ result.page }} / {{ result.total_pages }}
+  </span>
+  <div class="logs-topbar-left">
+    {% if result.page > 1 %}
+    <a href="/logs/round/{{ round.round_uid }}?{{ base_query_str }}&page={{ result.page - 1 }}"
+       hx-get="/logs/round/{{ round.round_uid }}?{{ base_query_str }}&page={{ result.page - 1 }}"
+       hx-target="#logs-stream-container"
+       hx-push-url="true"
+       class="logs-btn logs-btn-sm">&larr; Назад</a>
+    {% endif %}
+    {% if result.page < result.total_pages %}
+    <a href="/logs/round/{{ round.round_uid }}?{{ base_query_str }}&page={{ result.page + 1 }}"
+       hx-get="/logs/round/{{ round.round_uid }}?{{ base_query_str }}&page={{ result.page + 1 }}"
+       hx-target="#logs-stream-container"
+       hx-push-url="true"
+       class="logs-btn logs-btn-sm">Вперёд &rarr;</a>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Log Entries Stream -->
+{% if entries %}
+<div class="log-stream">
+  {% for entry in entries %}
+  <div id="L{{ entry.line_no }}" class="log-row {{ entry.cat_css }} {% if entry.is_focused %}is-focused{% endif %} {% if entry.is_continuation %}is-continuation{% endif %}">
+    <a href="/logs/round/{{ round.round_uid }}?{{ base_query_str }}&focus={{ entry.line_no }}#L{{ entry.line_no }}" class="log-ln" title="Прямая ссылка на строку">#L{{ entry.line_no }}</a>
+    <span class="log-ts" title="{{ entry.timestamp }}">{{ entry.time_short or entry.timestamp }}</span>
+    <span class="log-cat-cell"><span class="log-cat-tag {{ entry.cat_css }}">{{ entry.category }}</span></span>
+    <div class="log-msg-cell">
+      <div>{{ entry.safe_html | safe }}</div>
+      {% if entry.coords or entry.ckeys %}
+      <div class="log-meta-badges">
+        {% if entry.coords %}
+        <a href="/logs/round/{{ round.round_uid }}?{{ base_query_str }}&view=map&z={{ entry.coords.z }}&tx={{ entry.coords.x }}&ty={{ entry.coords.y }}&focus={{ entry.line_no }}"
+           class="log-coord-badge"
+           title="Показать точку ({{ entry.coords.x }}, {{ entry.coords.y }}, Z{{ entry.coords.z }}) на карте">
+          {{ entry.coords.x }}, {{ entry.coords.y }}, Z{{ entry.coords.z }}{% if entry.coords.area %} &middot; {{ entry.coords.area }}{% endif %}
+        </a>
+        {% endif %}
+        {% for ck in entry.ckeys %}
+        <span class="log-ckey-inline">
+          <button type="button" class="log-ckey-btn" data-ckey="{{ ck }}" title="Фильтровать по ckey">{{ ck }}</button>
+          <a href="/player/{{ ck }}" class="log-ckey-dossier" target="_blank" rel="noopener" title="Досье игрока">&nearr;</a>
+        </span>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </div>
+    <div class="log-row-actions">
+      <button type="button"
+              class="log-mini-btn"
+              data-context-url="/logs/round/{{ round.round_uid }}/context?file={{ selected_file|urlencode }}&line={{ entry.line_no }}&mask_ips={{ 1 if mask_ips else 0 }}&html={{ 1 if render_html else 0 }}"
+              data-line-no="{{ entry.line_no }}"
+              title="Показать соседние ±20 строк (включая DEBUG)">&plusmn;20</button>
+      <button type="button"
+              class="log-mini-btn"
+              data-copy-text="/logs/round/{{ round.round_uid }}?file={{ selected_file|urlencode }}&preset=all&focus={{ entry.line_no }}#L{{ entry.line_no }}"
+              title="Скопировать ссылку на строку">Ссылка</button>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="logs-panel-body">
+  <div class="block-empty">Нет строк по выбранным фильтрам.</div>
+</div>
+{% endif %}
+
+{% if result.total_pages > 1 %}
+<div class="logs-pagination">
+  <span class="mono-val cell-sub">Страница {{ result.page }} из {{ result.total_pages }}</span>
+  <div class="logs-topbar-left">
+    {% if result.page > 1 %}
+    <a href="/logs/round/{{ round.round_uid }}?{{ base_query_str }}&page=1"
+       hx-get="/logs/round/{{ round.round_uid }}?{{ base_query_str }}&page=1"
+       hx-target="#logs-stream-container"
+       hx-push-url="true"
+       class="logs-btn logs-btn-sm">Первая</a>
+    <a href="/logs/round/{{ round.round_uid }}?{{ base_query_str }}&page={{ result.page - 1 }}"
+       hx-get="/logs/round/{{ round.round_uid }}?{{ base_query_str }}&page={{ result.page - 1 }}"
+       hx-target="#logs-stream-container"
+       hx-push-url="true"
+       class="logs-btn logs-btn-sm">&larr; Назад</a>
+    {% endif %}
+    {% if result.page < result.total_pages %}
+    <a href="/logs/round/{{ round.round_uid }}?{{ base_query_str }}&page={{ result.page + 1 }}"
+       hx-get="/logs/round/{{ round.round_uid }}?{{ base_query_str }}&page={{ result.page + 1 }}"
+       hx-target="#logs-stream-container"
+       hx-push-url="true"
+       class="logs-btn logs-btn-sm">Вперёд &rarr;</a>
+    <a href="/logs/round/{{ round.round_uid }}?{{ base_query_str }}&page={{ result.total_pages }}"
+       hx-get="/logs/round/{{ round.round_uid }}?{{ base_query_str }}&page={{ result.total_pages }}"
+       hx-target="#logs-stream-container"
+       hx-push-url="true"
+       class="logs-btn logs-btn-sm">Последняя</a>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
