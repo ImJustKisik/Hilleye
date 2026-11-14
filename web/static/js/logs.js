@@ -120,26 +120,121 @@
     });
   }
 
+  function buildCleanFilterParams(filterForm) {
+    var raw = new URLSearchParams(new FormData(filterForm));
+    var clean = new URLSearchParams();
+    raw.forEach(function (val, key) {
+      if (key === "view" || key === "page") return;
+      clean.append(key, val);
+    });
+    return clean;
+  }
+
+  function syncHeaderActionLinks(filterForm) {
+    if (!filterForm) return;
+    var cleanStr = buildCleanFilterParams(filterForm).toString();
+    var streamLink = document.getElementById("logs-link-stream");
+    if (streamLink && streamLink.dataset.baseHref) {
+      var sFocus = streamLink.dataset.focusLine || "";
+      var sHref = streamLink.dataset.baseHref + "?" + cleanStr + "&view=stream";
+      if (sFocus) {
+        sHref += "&focus=" + encodeURIComponent(sFocus) + "#L" + encodeURIComponent(sFocus);
+      }
+      streamLink.setAttribute("href", sHref);
+    }
+
+    var mapLink = document.getElementById("logs-link-map");
+    if (mapLink && mapLink.dataset.baseHref) {
+      var mHref = mapLink.dataset.baseHref + "?" + cleanStr + "&view=map";
+      var mFocus = mapLink.dataset.focusLine || "";
+      var mz = mapLink.dataset.targetZ || "";
+      var mx = mapLink.dataset.targetX || "";
+      var my = mapLink.dataset.targetY || "";
+      if (mFocus) mHref += "&focus=" + encodeURIComponent(mFocus);
+      if (mz) mHref += "&z=" + encodeURIComponent(mz);
+      if (mx) mHref += "&tx=" + encodeURIComponent(mx);
+      if (my) mHref += "&ty=" + encodeURIComponent(my);
+      mapLink.setAttribute("href", mHref);
+    }
+
+    var exportLink = document.getElementById("logs-link-export");
+    if (exportLink && exportLink.dataset.baseHref) {
+      exportLink.setAttribute("href", exportLink.dataset.baseHref + "?mode=filtered&" + cleanStr);
+    }
+
+    var rawLink = document.getElementById("logs-link-raw");
+    if (rawLink && rawLink.dataset.baseHref) {
+      var rawFile = rawLink.dataset.selectedFile || "game.log";
+      var maskCb = filterForm.querySelector('input[name="mask_ips"]');
+      var maskFlag = maskCb && maskCb.checked ? "1" : "0";
+      rawLink.setAttribute(
+        "href",
+        rawLink.dataset.baseHref + "?file=" + encodeURIComponent(rawFile) + "&mode=raw&mask_ips=" + maskFlag
+      );
+    }
+  }
+
   function syncToolbarActiveStates(filterForm) {
     if (!filterForm) return;
     var presetField = document.getElementById("logs-preset-input");
     var anyCatChecked = false;
     filterForm.querySelectorAll('input[name="cat"]').forEach(function (cb) {
-      var chip = cb.closest(".logs-cat-chip");
-      if (chip) {
-        chip.classList.toggle("is-selected", cb.checked);
-      }
       if (cb.checked) anyCatChecked = true;
     });
+
     var activePreset = presetField ? presetField.value : "";
+    var activePresetBtn = null;
     document.querySelectorAll("[data-preset-id]").forEach(function (btn) {
-      btn.classList.toggle("is-active", !anyCatChecked && btn.dataset.presetId === activePreset);
+      var isActive = !anyCatChecked && btn.dataset.presetId === activePreset;
+      btn.classList.toggle("is-active", isActive);
+      if (btn.dataset.presetId === activePreset) {
+        activePresetBtn = btn;
+      }
+    });
+
+    var includeSet = {};
+    var excludeSet = {};
+    var hasInclude = false;
+    var hasExclude = false;
+    if (activePresetBtn) {
+      var incRaw = activePresetBtn.dataset.presetInclude || "";
+      var excRaw = activePresetBtn.dataset.presetExclude || "";
+      if (incRaw) {
+        hasInclude = true;
+        incRaw.split(",").forEach(function (k) {
+          if (k) includeSet[k] = true;
+        });
+      }
+      if (excRaw) {
+        hasExclude = true;
+        excRaw.split(",").forEach(function (k) {
+          if (k) excludeSet[k] = true;
+        });
+      }
+    }
+
+    filterForm.querySelectorAll('input[name="cat"]').forEach(function (cb) {
+      var chip = cb.closest(".logs-cat-chip");
+      if (!chip) return;
+      chip.classList.toggle("is-selected", cb.checked);
+      var catName = (cb.value || "").toUpperCase();
+      var included = true;
+      if (anyCatChecked) {
+        included = cb.checked;
+      } else if (hasInclude) {
+        included = Boolean(includeSet[catName]);
+      } else if (hasExclude) {
+        included = !excludeSet[catName];
+      }
+      chip.classList.toggle("is-excluded", !included);
     });
   }
 
   function submitFilterForm(filterForm) {
     if (!filterForm) return;
     syncToolbarActiveStates(filterForm);
+    syncHeaderActionLinks(filterForm);
+
     var streamContainer = document.getElementById("logs-stream-container");
     if (streamContainer && window.htmx && typeof window.htmx.ajax === "function") {
       var params = new URLSearchParams(new FormData(filterForm));
@@ -149,6 +244,16 @@
       window.htmx.ajax("GET", url, { target: "#logs-stream-container", swap: "innerHTML" });
       return;
     }
+
+    if (typeof window.__logsMapReload === "function") {
+      var mapParams = new URLSearchParams(new FormData(filterForm));
+      var mapAction = filterForm.getAttribute("action") || window.location.pathname;
+      var mapUrl = mapAction + "?" + mapParams.toString();
+      window.history.replaceState({}, "", mapUrl);
+      window.__logsMapReload(filterForm, buildCleanFilterParams(filterForm).toString());
+      return;
+    }
+
     filterForm.submit();
   }
 
@@ -157,16 +262,33 @@
     var ckeyInput = document.getElementById("logs-ckey-input");
     var presetField = document.getElementById("logs-preset-input");
 
+    if (filterForm) {
+      syncToolbarActiveStates(filterForm);
+      syncHeaderActionLinks(filterForm);
+    }
+
     if (filterForm && !filterForm.dataset.htmxBound) {
       filterForm.dataset.htmxBound = "1";
       filterForm.addEventListener("submit", function (ev) {
         var streamContainer = document.getElementById("logs-stream-container");
-        if (streamContainer && window.htmx) {
+        var isAjaxStream = Boolean(streamContainer && window.htmx);
+        var isAjaxMap = typeof window.__logsMapReload === "function";
+        if (isAjaxStream || isAjaxMap) {
           ev.preventDefault();
           var pageInput = filterForm.querySelector('input[name="page"]');
           if (pageInput) pageInput.value = "1";
           submitFilterForm(filterForm);
         }
+      });
+
+      filterForm.querySelectorAll('select, input[name="regex"], input[name="mask_ips"]').forEach(function (ctrl) {
+        if (ctrl.dataset.autoBound) return;
+        ctrl.dataset.autoBound = "1";
+        ctrl.addEventListener("change", function () {
+          var pageInput = filterForm.querySelector('input[name="page"]');
+          if (pageInput) pageInput.value = "1";
+          submitFilterForm(filterForm);
+        });
       });
     }
 
@@ -211,6 +333,19 @@
       btn.addEventListener("click", function () {
         if (!filterForm || !ckeyInput) return;
         ckeyInput.value = btn.dataset.ckey || "";
+        var pageInput = filterForm.querySelector('input[name="page"]');
+        if (pageInput) pageInput.value = "1";
+        submitFilterForm(filterForm);
+      });
+    });
+
+    // Clear active ckey pill button
+    document.querySelectorAll("[data-clear-ckey]").forEach(function (btn) {
+      if (btn.dataset.bound) return;
+      btn.dataset.bound = "1";
+      btn.addEventListener("click", function () {
+        if (!filterForm || !ckeyInput) return;
+        ckeyInput.value = "";
         var pageInput = filterForm.querySelector('input[name="page"]');
         if (pageInput) pageInput.value = "1";
         submitFilterForm(filterForm);
@@ -456,25 +591,34 @@
     return { width: w, height: h, palette: palette, grid: grid };
   }
 
+  function normalizeCkeyClient(val) {
+    return String(val || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  }
+
   function initRoundMapViewer() {
+    window.__logsMapReload = null;
     var root = document.getElementById("logs-map-root");
     var canvas = document.getElementById("logs-map-canvas");
     if (!root || !canvas || !canvas.getContext) return;
 
     var ctx = canvas.getContext("2d");
     var deckTabs = document.getElementById("logs-map-deck-tabs");
+    var sectorSelect = document.getElementById("logs-map-sector-select");
     var statusEl = document.getElementById("logs-map-status");
+    var errorEl = document.getElementById("logs-map-error");
     var hudCoords = document.getElementById("logs-map-hud-coords");
     var hudArea = document.getElementById("logs-map-hud-area");
     var zoomLabel = document.getElementById("logs-map-zoom-label");
     var modePinsBtn = document.getElementById("logs-map-mode-pins");
     var modeHeatBtn = document.getElementById("logs-map-mode-heat");
+    var dimBtn = document.getElementById("logs-map-dim-btn");
     var clusterCb = document.getElementById("logs-map-cluster-cb");
     var trajCb = document.getElementById("logs-map-traj-cb");
     var zoomInBtn = document.getElementById("logs-map-zoom-in");
     var zoomOutBtn = document.getElementById("logs-map-zoom-out");
     var fitBtn = document.getElementById("logs-map-fit");
     var centerBtn = document.getElementById("logs-map-center-target");
+    var showAllDeckBtn = document.getElementById("logs-map-show-all-deck");
     var inspectorTitle = document.getElementById("logs-map-inspector-title");
     var inspectorSub = document.getElementById("logs-map-inspector-sub");
     var inspectorList = document.getElementById("logs-map-inspector-list");
@@ -490,8 +634,10 @@
     var targetX = ds.targetX ? Number(ds.targetX) : null;
     var targetY = ds.targetY ? Number(ds.targetY) : null;
     var focusLine = ds.focusLine ? Number(ds.focusLine) : null;
-    var filterCkey = (ds.ckey || "").toLowerCase();
+    var filterCkey = normalizeCkeyClient(ds.ckey || "");
     var defaultTilePx = Number(ds.tilePx) || 16;
+
+    var TRACK_COLORS = ["#60a5fa", "#34d399", "#fbbf24", "#f472b6", "#c084fc", "#38bdf8"];
 
     var state = {
       manifest: null,
@@ -500,6 +646,7 @@
       zCounts: {},
       currentZ: targetZ || 1,
       mode: "pins",
+      dimMap: true,
       clusterEnabled: clusterCb ? clusterCb.checked : true,
       trajEnabled: trajCb ? trajCb.checked : Boolean(filterCkey),
       scale: 0.25,
@@ -509,9 +656,12 @@
       cssH: 620,
       dpr: window.devicePixelRatio || 1,
       hoverTile: null,
+      hoverPin: null,
       selectedLineNos: {},
       selectedTile: (targetX && targetY) ? { x: targetX, y: targetY, z: targetZ || 1 } : null,
       renderedPins: [],
+      userMovedView: false,
+      atTargetView: Boolean(targetX && targetY),
       dragging: false,
       dragMoved: false,
       dragStartX: 0,
@@ -559,16 +709,66 @@
       return z > 7 ? ("Сектор / Экспедиция (Z" + z + ")") : "";
     }
 
+    function detectContentBounds(img, lv) {
+      try {
+        var w = Math.max(1, lv.width | 0);
+        var h = Math.max(1, lv.height | 0);
+        var probe = document.createElement("canvas");
+        probe.width = w;
+        probe.height = h;
+        var pctx = probe.getContext("2d");
+        if (!pctx) return null;
+        pctx.imageSmoothingEnabled = false;
+        pctx.drawImage(img, 0, 0, w, h);
+        var data = pctx.getImageData(0, 0, w, h).data;
+        var minX = w + 1;
+        var maxX = 0;
+        var minY = h + 1;
+        var maxY = 0;
+        for (var py = 0; py < h; py++) {
+          var ty = h - py;
+          var rowOff = py * w * 4;
+          for (var px = 0; px < w; px++) {
+            var off = rowOff + px * 4;
+            var a = data[off + 3];
+            if (a < 16) continue;
+            var r = data[off];
+            var g = data[off + 1];
+            var b = data[off + 2];
+            // Void background is #090d14 (9, 13, 20)
+            if (r > 16 || g > 21 || b > 28) {
+              var tx = px + 1;
+              if (tx < minX) minX = tx;
+              if (tx > maxX) maxX = tx;
+              if (ty < minY) minY = ty;
+              if (ty > maxY) maxY = ty;
+            }
+          }
+        }
+        if (minX <= maxX && minY <= maxY) {
+          return { minX: minX, maxX: maxX, minY: minY, maxY: maxY };
+        }
+      } catch (_err) {
+        return null;
+      }
+      return null;
+    }
+
     function loadAssetsForZ(z) {
       var key = String(z);
       var lv = getLevelMeta(z);
       if (lv.image_file && !state.imageCache[key]) {
         var img = new Image();
-        var rec = { status: "loading", img: img };
+        var rec = { status: "loading", img: img, bounds: null };
         state.imageCache[key] = rec;
         img.onload = function () {
           rec.status = "loaded";
-          requestDraw();
+          rec.bounds = detectContentBounds(img, lv);
+          if (state.currentZ === z && !state.userMovedView && !(targetX && targetY && (!targetZ || targetZ === z))) {
+            fitView();
+          } else {
+            requestDraw();
+          }
         };
         img.onerror = function () {
           rec.status = "error";
@@ -603,44 +803,116 @@
       }
     }
 
+    function updateCenterButton(isAtTargetNow) {
+      if (typeof isAtTargetNow === "boolean") {
+        state.atTargetView = isAtTargetNow;
+      }
+      if (!centerBtn) return;
+      if (!targetX || !targetY) {
+        centerBtn.hidden = true;
+        return;
+      }
+      centerBtn.hidden = Boolean(state.atTargetView && (!targetZ || targetZ === state.currentZ));
+    }
+
+    function currentZEvents() {
+      var out = [];
+      for (var i = 0; i < state.events.length; i++) {
+        if (state.events[i].z === state.currentZ) {
+          out.push(state.events[i]);
+        }
+      }
+      return out;
+    }
+
+    function getViewBounds(z, zEvents) {
+      var lv = getLevelMeta(z);
+      var imgRec = state.imageCache[String(z)];
+      var minX = lv.width + 1;
+      var maxX = 0;
+      var minY = lv.height + 1;
+      var maxY = 0;
+
+      if (imgRec && imgRec.bounds) {
+        minX = Math.min(minX, imgRec.bounds.minX);
+        maxX = Math.max(maxX, imgRec.bounds.maxX);
+        minY = Math.min(minY, imgRec.bounds.minY);
+        maxY = Math.max(maxY, imgRec.bounds.maxY);
+      }
+      if (Array.isArray(zEvents)) {
+        for (var i = 0; i < zEvents.length; i++) {
+          var ev = zEvents[i];
+          if (ev.x < minX) minX = ev.x;
+          if (ev.x > maxX) maxX = ev.x;
+          if (ev.y < minY) minY = ev.y;
+          if (ev.y > maxY) maxY = ev.y;
+        }
+      }
+
+      if (minX > maxX || minY > maxY) {
+        return { minX: 1, maxX: lv.width, minY: 1, maxY: lv.height };
+      }
+
+      var padTiles = 4;
+      return {
+        minX: Math.max(1, minX - padTiles),
+        maxX: Math.min(lv.width, maxX + padTiles),
+        minY: Math.max(1, minY - padTiles),
+        maxY: Math.min(lv.height, maxY + padTiles),
+      };
+    }
+
     function fitView() {
       var lv = getLevelMeta(state.currentZ);
-      var imgW = lv.width * lv.tile_px;
-      var imgH = lv.height * lv.tile_px;
-      var pad = 20;
+      var b = getViewBounds(state.currentZ, currentZEvents());
+      var bx0 = (b.minX - 1) * lv.tile_px;
+      var bx1 = b.maxX * lv.tile_px;
+      var by0 = (lv.height - b.maxY) * lv.tile_px;
+      var by1 = (lv.height - b.minY + 1) * lv.tile_px;
+      var boxW = Math.max(lv.tile_px, bx1 - bx0);
+      var boxH = Math.max(lv.tile_px, by1 - by0);
+      var pad = 24;
       var availW = Math.max(100, state.cssW - pad * 2);
       var availH = Math.max(100, state.cssH - pad * 2);
-      var s = Math.min(availW / imgW, availH / imgH);
-      state.scale = Math.max(0.08, Math.min(4.0, s));
-      state.offsetX = (state.cssW - imgW * state.scale) / 2;
-      state.offsetY = (state.cssH - imgH * state.scale) / 2;
+      var s = Math.min(availW / boxW, availH / boxH);
+      state.scale = Math.max(0.15, Math.min(3.5, s));
+      var midX = (bx0 + bx1) / 2;
+      var midY = (by0 + by1) / 2;
+      state.offsetX = state.cssW / 2 - midX * state.scale;
+      state.offsetY = state.cssH / 2 - midY * state.scale;
+      state.userMovedView = false;
+      updateCenterButton(false);
       updateZoomLabel();
       requestDraw();
     }
 
-    function centerOnTile(tx, ty, desiredScale) {
+    function centerOnTile(tx, ty, desiredScale, markAtTarget) {
       var lv = getLevelMeta(state.currentZ);
       if (desiredScale) {
-        state.scale = Math.max(0.08, Math.min(6.0, desiredScale));
-      } else if (state.scale < 0.7) {
+        state.scale = Math.max(0.12, Math.min(6.0, desiredScale));
+      } else if (state.scale < 0.85) {
         state.scale = 1.25;
       }
       var ix = (tx - 0.5) * lv.tile_px;
       var iy = (lv.height - ty + 0.5) * lv.tile_px;
       state.offsetX = state.cssW / 2 - ix * state.scale;
       state.offsetY = state.cssH / 2 - iy * state.scale;
+      state.userMovedView = true;
+      updateCenterButton(Boolean(markAtTarget));
       updateZoomLabel();
       requestDraw();
     }
 
     function zoomAt(factor, cx, cy) {
       var oldScale = state.scale;
-      var newScale = Math.max(0.08, Math.min(6.0, oldScale * factor));
+      var newScale = Math.max(0.12, Math.min(6.0, oldScale * factor));
       if (Math.abs(newScale - oldScale) < 1e-5) return;
       var ratio = newScale / oldScale;
       state.offsetX = cx - (cx - state.offsetX) * ratio;
       state.offsetY = cy - (cy - state.offsetY) * ratio;
       state.scale = newScale;
+      state.userMovedView = true;
+      updateCenterButton(false);
       updateZoomLabel();
       requestDraw();
     }
@@ -675,156 +947,214 @@
       hudArea.textContent = area || "Космос / без зоны";
     }
 
-    function renderInspector(eventsList, title, subtitle) {
-      if (!inspectorList || !inspectorTitle || !inspectorSub) return;
-      inspectorTitle.textContent = title;
-      inspectorSub.textContent = subtitle;
-      inspectorList.innerHTML = "";
-      state.selectedLineNos = {};
+    function buildEventCard(ev) {
+      var card = document.createElement("div");
+      card.className = "logs-map-event-card is-clickable" + (focusLine && ev.line_no === focusLine ? " is-focused" : "");
 
-      if (!eventsList || eventsList.length === 0) {
-        var empty = document.createElement("div");
-        empty.className = "block-empty";
-        empty.textContent = "На этом месте нет событий, подходящих под текущие фильтры.";
-        inspectorList.appendChild(empty);
-        return;
+      card.addEventListener("click", function (clickEv) {
+        if (clickEv.target && clickEv.target.closest("a, button")) return;
+        state.selectedLineNos = {};
+        state.selectedLineNos[String(ev.line_no)] = true;
+        state.selectedTile = { x: ev.x, y: ev.y, z: ev.z };
+        inspectorList.querySelectorAll(".logs-map-event-card.is-focused").forEach(function (el) {
+          el.classList.remove("is-focused");
+        });
+        card.classList.add("is-focused");
+        if (ev.z !== state.currentZ) {
+          selectDeck(ev.z, false, true);
+        }
+        centerOnTile(ev.x, ev.y, Math.max(state.scale, 1.35), false);
+      });
+
+      var metaRow = document.createElement("div");
+      metaRow.className = "logs-map-event-meta";
+
+      var lineLink = document.createElement("a");
+      lineLink.className = "log-ln";
+      lineLink.href = "/logs/round/" + encodeURIComponent(roundUid) + "?" + baseQuery + "&view=stream&focus=" + ev.line_no + "#L" + ev.line_no;
+      lineLink.textContent = "#L" + ev.line_no;
+      metaRow.appendChild(lineLink);
+
+      var tsSpan = document.createElement("span");
+      tsSpan.className = "log-ts";
+      tsSpan.textContent = ev.time_short || ev.timestamp || "";
+      metaRow.appendChild(tsSpan);
+
+      var catSpan = document.createElement("span");
+      catSpan.className = "log-cat-tag " + (ev.cat_css || "cat-misc");
+      catSpan.textContent = ev.category || "";
+      metaRow.appendChild(catSpan);
+
+      var coordSpan = document.createElement("span");
+      coordSpan.className = "mono-val cell-sub";
+      coordSpan.textContent = "(" + ev.x + ", " + ev.y + ", Z" + ev.z + ")" + (ev.area ? " \u2022 " + ev.area : "");
+      metaRow.appendChild(coordSpan);
+
+      card.appendChild(metaRow);
+
+      var msgDiv = document.createElement("div");
+      msgDiv.className = "logs-map-event-msg";
+      if (ev.safe_html) {
+        msgDiv.innerHTML = ev.safe_html;
+      } else {
+        msgDiv.textContent = ev.plain_message || "";
+      }
+      card.appendChild(msgDiv);
+
+      var actionsRow = document.createElement("div");
+      actionsRow.className = "logs-map-event-actions";
+
+      var ctxBtn = document.createElement("button");
+      ctxBtn.type = "button";
+      ctxBtn.className = "log-mini-btn";
+      ctxBtn.textContent = "\u00B120";
+      ctxBtn.dataset.contextUrl =
+        "/logs/round/" +
+        encodeURIComponent(roundUid) +
+        "/context?file=" +
+        encodeURIComponent(selectedFile) +
+        "&line=" +
+        ev.line_no +
+        "&mask_ips=" +
+        (maskIps ? "1" : "0") +
+        "&html=" +
+        (renderHtml ? "1" : "0");
+      ctxBtn.dataset.lineNo = String(ev.line_no);
+      ctxBtn.addEventListener("click", function () {
+        openLogContextModal(ctxBtn.dataset.contextUrl, ctxBtn.dataset.lineNo);
+      });
+      actionsRow.appendChild(ctxBtn);
+
+      if (Array.isArray(ev.ckeys) && ev.ckeys.length > 0) {
+        for (var k = 0; k < ev.ckeys.length; k++) {
+          var ck = ev.ckeys[k];
+          if (filterCkey && ck === filterCkey) continue;
+          var ckBtn = document.createElement("button");
+          ckBtn.type = "button";
+          ckBtn.className = "log-ckey-btn";
+          ckBtn.textContent = ck;
+          ckBtn.title = "Фильтровать карту по ckey";
+          (function (ckeyVal) {
+            ckBtn.addEventListener("click", function () {
+              var filterForm = document.getElementById("logs-filter-form");
+              var ckeyInput = document.getElementById("logs-ckey-input");
+              if (filterForm && ckeyInput) {
+                ckeyInput.value = ckeyVal;
+                submitFilterForm(filterForm);
+              }
+            });
+          })(ck);
+          actionsRow.appendChild(ckBtn);
+        }
       }
 
+      card.appendChild(actionsRow);
+      return card;
+    }
+
+    function appendEventCards(eventsList, markSelected) {
       var slice = eventsList.slice(0, 120);
       for (var i = 0; i < slice.length; i++) {
-        var ev = slice[i];
-        state.selectedLineNos[String(ev.line_no)] = true;
-
-        var card = document.createElement("div");
-        card.className = "logs-map-event-card" + (focusLine && ev.line_no === focusLine ? " is-focused" : "");
-
-        var metaRow = document.createElement("div");
-        metaRow.className = "logs-map-event-meta";
-
-        var lineLink = document.createElement("a");
-        lineLink.className = "log-ln";
-        lineLink.href = "/logs/round/" + encodeURIComponent(roundUid) + "?" + baseQuery + "&view=stream&focus=" + ev.line_no + "#L" + ev.line_no;
-        lineLink.textContent = "#L" + ev.line_no;
-        metaRow.appendChild(lineLink);
-
-        var tsSpan = document.createElement("span");
-        tsSpan.className = "log-ts";
-        tsSpan.textContent = ev.time_short || ev.timestamp || "";
-        metaRow.appendChild(tsSpan);
-
-        var catSpan = document.createElement("span");
-        catSpan.className = "log-cat-tag " + (ev.cat_css || "cat-default");
-        catSpan.textContent = ev.category || "";
-        metaRow.appendChild(catSpan);
-
-        var coordSpan = document.createElement("span");
-        coordSpan.className = "mono-val cell-sub";
-        coordSpan.textContent = "(" + ev.x + ", " + ev.y + ", Z" + ev.z + ")" + (ev.area ? " \u2022 " + ev.area : "");
-        metaRow.appendChild(coordSpan);
-
-        card.appendChild(metaRow);
-
-        var msgDiv = document.createElement("div");
-        msgDiv.className = "logs-map-event-msg";
-        if (ev.safe_html) {
-          msgDiv.innerHTML = ev.safe_html;
-        } else {
-          msgDiv.textContent = ev.plain_message || "";
+        if (markSelected) {
+          state.selectedLineNos[String(slice[i].line_no)] = true;
         }
-        card.appendChild(msgDiv);
-
-        var actionsRow = document.createElement("div");
-        actionsRow.className = "logs-map-event-actions";
-
-        var ctxBtn = document.createElement("button");
-        ctxBtn.type = "button";
-        ctxBtn.className = "log-mini-btn";
-        ctxBtn.textContent = "\u00B120";
-        ctxBtn.dataset.contextUrl =
-          "/logs/round/" +
-          encodeURIComponent(roundUid) +
-          "/context?file=" +
-          encodeURIComponent(selectedFile) +
-          "&line=" +
-          ev.line_no +
-          "&mask_ips=" +
-          (maskIps ? "1" : "0") +
-          "&html=" +
-          (renderHtml ? "1" : "0");
-        ctxBtn.dataset.lineNo = String(ev.line_no);
-        (function (btn) {
-          btn.addEventListener("click", function () {
-            openLogContextModal(btn.dataset.contextUrl, btn.dataset.lineNo);
-          });
-        })(ctxBtn);
-        actionsRow.appendChild(ctxBtn);
-
-        if (Array.isArray(ev.ckeys) && ev.ckeys.length > 0) {
-          for (var k = 0; k < ev.ckeys.length; k++) {
-            var ck = ev.ckeys[k];
-            var ckBtn = document.createElement("button");
-            ckBtn.type = "button";
-            ckBtn.className = "log-ckey-btn";
-            ckBtn.textContent = ck;
-            ckBtn.title = "Фильтровать карту по ckey";
-            (function (ckeyVal) {
-              ckBtn.addEventListener("click", function () {
-                var filterForm = document.getElementById("logs-filter-form");
-                var ckeyInput = document.getElementById("logs-ckey-input");
-                if (filterForm && ckeyInput) {
-                  ckeyInput.value = ckeyVal;
-                  filterForm.submit();
-                }
-              });
-            })(ck);
-            actionsRow.appendChild(ckBtn);
-          }
-        }
-
-        card.appendChild(actionsRow);
-        inspectorList.appendChild(card);
+        inspectorList.appendChild(buildEventCard(slice[i]));
       }
-
       if (eventsList.length > slice.length) {
         var moreNote = document.createElement("div");
         moreNote.className = "cell-sub mono-val";
         moreNote.textContent = "Показаны первые " + slice.length + " из " + eventsList.length + " событий.";
         inspectorList.appendChild(moreNote);
       }
+    }
+
+    function renderInspector(eventsList, title, subtitle, opts) {
+      if (!inspectorList || !inspectorTitle || !inspectorSub) return;
+      var options = opts || {};
+      inspectorTitle.textContent = title;
+      inspectorSub.textContent = subtitle;
+      inspectorList.innerHTML = "";
+      state.selectedLineNos = {};
+      if (showAllDeckBtn) {
+        showAllDeckBtn.hidden = !options.showBackBtn;
+      }
+
+      if (!eventsList || eventsList.length === 0) {
+        var deckEvents = options.fallbackEvents || currentZEvents();
+        if (options.isEmptyTile && deckEvents.length > 0) {
+          var banner = document.createElement("div");
+          banner.className = "logs-map-empty-tile";
+          var msg = document.createElement("span");
+          msg.textContent = "На этом тайле нет событий под текущие фильтры.";
+          banner.appendChild(msg);
+          var backBtn = document.createElement("button");
+          backBtn.type = "button";
+          backBtn.className = "logs-btn logs-btn-sm";
+          backBtn.textContent = "Показать все события палубы (" + deckEvents.length + ")";
+          backBtn.addEventListener("click", showDeckOverview);
+          banner.appendChild(backBtn);
+          inspectorList.appendChild(banner);
+
+          var divLbl = document.createElement("div");
+          divLbl.className = "logs-map-inspector-divider mono-val";
+          divLbl.textContent = "События на палубе Z" + state.currentZ;
+          inspectorList.appendChild(divLbl);
+
+          appendEventCards(deckEvents, false);
+        } else {
+          var empty = document.createElement("div");
+          empty.className = "block-empty";
+          empty.textContent = "Нет событий на этой палубе по текущим фильтрам.";
+          inspectorList.appendChild(empty);
+        }
+        requestDraw();
+        return;
+      }
+
+      appendEventCards(eventsList, !options.overview);
       requestDraw();
     }
 
-    function currentZEvents() {
-      var out = [];
-      for (var i = 0; i < state.events.length; i++) {
-        if (state.events[i].z === state.currentZ) {
-          out.push(state.events[i]);
-        }
-      }
-      return out;
+    function showDeckOverview() {
+      var lv = getLevelMeta(state.currentZ);
+      var zEvents = currentZEvents();
+      var title = "Палуба " + (lv.short_label || ("Z" + state.currentZ));
+      var sub = zEvents.length > 0
+        ? ("Событий: " + zEvents.length + " \u2022 выберите маркер или карточку")
+        : "Нет событий по текущим фильтрам";
+      renderInspector(zEvents, title, sub, { showBackBtn: false, overview: true });
     }
 
     function buildDeckTabs() {
       if (!deckTabs) return;
       deckTabs.innerHTML = "";
-      var zList = [];
+      var primaryZs = [];
+      var extraZs = [];
       var seen = {};
       if (state.manifest && Array.isArray(state.manifest.levels)) {
         for (var i = 0; i < state.manifest.levels.length; i++) {
           var lv = state.manifest.levels[i];
-          zList.push(lv.z);
           seen[String(lv.z)] = true;
+          if (lv.z <= 7) {
+            primaryZs.push(lv.z);
+          } else {
+            extraZs.push(lv.z);
+          }
         }
       }
-      var extraZs = Object.keys(state.zCounts)
+      Object.keys(state.zCounts)
         .map(function (k) { return Number(k); })
         .filter(function (z) { return !seen[String(z)]; })
-        .sort(function (a, b) { return a - b; });
-      zList = zList.concat(extraZs);
-      if (zList.length === 0) zList = [1, 2, 3, 4, 5, 6, 7];
+        .sort(function (a, b) { return a - b; })
+        .forEach(function (z) {
+          if (z <= 7) primaryZs.push(z);
+          else extraZs.push(z);
+        });
+      extraZs.sort(function (a, b) { return a - b; });
+      if (primaryZs.length === 0 && extraZs.length === 0) primaryZs = [1, 2, 3, 4, 5, 6, 7];
 
-      for (var idx = 0; idx < zList.length; idx++) {
-        var z = zList[idx];
+      for (var idx = 0; idx < primaryZs.length; idx++) {
+        var z = primaryZs[idx];
         var meta = getLevelMeta(z);
         var count = state.zCounts[String(z)] || 0;
         var btn = document.createElement("button");
@@ -845,15 +1175,51 @@
         })(z);
         deckTabs.appendChild(btn);
       }
+
+      if (sectorSelect) {
+        if (extraZs.length === 0) {
+          sectorSelect.hidden = true;
+          sectorSelect.innerHTML = "";
+        } else {
+          sectorSelect.hidden = false;
+          sectorSelect.innerHTML = "";
+          var extraTotal = 0;
+          for (var ei = 0; ei < extraZs.length; ei++) {
+            extraTotal += Number(state.zCounts[String(extraZs[ei])] || 0);
+          }
+          var placeholderOpt = document.createElement("option");
+          placeholderOpt.value = "";
+          placeholderOpt.textContent = "Сектора Z" + extraZs[0] + (extraZs.length > 1 ? "\u2013Z" + extraZs[extraZs.length - 1] : "") + " (" + extraTotal + ")";
+          sectorSelect.appendChild(placeholderOpt);
+
+          for (var si = 0; si < extraZs.length; si++) {
+            var ez = extraZs[si];
+            var emeta = getLevelMeta(ez);
+            var ecnt = state.zCounts[String(ez)] || 0;
+            var opt = document.createElement("option");
+            opt.value = String(ez);
+            opt.textContent = (emeta.label || ("Z" + ez)) + " (" + ecnt + ")";
+            sectorSelect.appendChild(opt);
+          }
+          sectorSelect.value = state.currentZ > 7 ? String(state.currentZ) : "";
+          sectorSelect.classList.toggle("is-active", state.currentZ > 7);
+        }
+      }
     }
 
-    function selectDeck(z, centerTarget) {
+    function selectDeck(z, centerTarget, skipOverview) {
       state.currentZ = z;
+      state.selectedTile = centerTarget && targetX && targetY && targetZ === z
+        ? { x: targetX, y: targetY, z: z }
+        : null;
       loadAssetsForZ(z);
       buildDeckTabs();
       fitView();
-      if (centerTarget && targetX && targetY && targetZ === z) {
-        centerOnTile(targetX, targetY, 1.5);
+      if (centerTarget && targetX && targetY && (!targetZ || targetZ === z)) {
+        centerOnTile(targetX, targetY, 1.5, true);
+      }
+      if (!skipOverview && !centerTarget) {
+        showDeckOverview();
       }
       if (state.hoverTile) {
         updateHud(state.hoverTile.x, state.hoverTile.y);
@@ -861,6 +1227,194 @@
         updateHud(null, null);
       }
       requestDraw();
+    }
+
+    function buildTrajectoryTracks(zEvents) {
+      if (filterCkey) {
+        var single = [];
+        for (var i = 0; i < zEvents.length; i++) {
+          var ev = zEvents[i];
+          if (Array.isArray(ev.ckeys) && ev.ckeys.indexOf(filterCkey) !== -1) {
+            single.push(ev);
+          }
+        }
+        return single.length >= 2 ? [{ ckey: filterCkey, color: TRACK_COLORS[0], events: single }] : [];
+      }
+
+      var groups = {};
+      var order = [];
+      for (var j = 0; j < zEvents.length; j++) {
+        var item = zEvents[j];
+        var actor = (Array.isArray(item.ckeys) && item.ckeys[0]) ? item.ckeys[0] : "";
+        if (!actor) continue;
+        if (!groups[actor]) {
+          groups[actor] = [];
+          order.push(actor);
+        }
+        groups[actor].push(item);
+      }
+
+      var tracks = [];
+      for (var k = 0; k < order.length; k++) {
+        var ck = order[k];
+        if (groups[ck].length < 2) continue;
+        tracks.push({
+          ckey: ck,
+          color: TRACK_COLORS[tracks.length % TRACK_COLORS.length],
+          events: groups[ck],
+        });
+      }
+      return tracks;
+    }
+
+    function drawTrajectories(zEvents, lv) {
+      var tracks = buildTrajectoryTracks(zEvents);
+      if (tracks.length === 0) return;
+
+      var showStepPills = tracks.length === 1 || tracks.length <= 3;
+      for (var tIdx = 0; tIdx < tracks.length; tIdx++) {
+        var tr = tracks[tIdx];
+        var evs = tr.events;
+        ctx.save();
+        ctx.strokeStyle = tr.color;
+        ctx.globalAlpha = tracks.length > 1 ? 0.72 : 0.92;
+        ctx.lineWidth = tracks.length > 1 ? 1.8 : 2.4;
+        ctx.lineJoin = "round";
+        ctx.beginPath();
+        var prevPt = null;
+        for (var i = 0; i < evs.length; i++) {
+          var curPt = tileToScreen(evs[i].x, evs[i].y, lv);
+          if (!prevPt) {
+            ctx.moveTo(curPt.x, curPt.y);
+          } else if (Math.hypot(curPt.x - prevPt.x, curPt.y - prevPt.y) > 4) {
+            ctx.lineTo(curPt.x, curPt.y);
+          }
+          prevPt = curPt;
+        }
+        ctx.stroke();
+
+        // Direction arrows
+        ctx.fillStyle = tr.color;
+        for (var k = 1; k < evs.length; k++) {
+          var aPt = tileToScreen(evs[k - 1].x, evs[k - 1].y, lv);
+          var bPt = tileToScreen(evs[k].x, evs[k].y, lv);
+          var dist = Math.hypot(bPt.x - aPt.x, bPt.y - aPt.y);
+          if (dist >= 22) {
+            var mx = (aPt.x + bPt.x) / 2;
+            var my = (aPt.y + bPt.y) / 2;
+            var ang = Math.atan2(bPt.y - aPt.y, bPt.x - aPt.x);
+            ctx.beginPath();
+            ctx.moveTo(mx + Math.cos(ang) * 5, my + Math.sin(ang) * 5);
+            ctx.lineTo(mx + Math.cos(ang + 2.5) * 5, my + Math.sin(ang + 2.5) * 5);
+            ctx.lineTo(mx + Math.cos(ang - 2.5) * 5, my + Math.sin(ang - 2.5) * 5);
+            ctx.closePath();
+            ctx.fill();
+          }
+        }
+
+        // Collapse consecutive same-tile steps into non-overlapping pills like "1–3"
+        if (showStepPills) {
+          var merged = [];
+          for (var s = 0; s < evs.length; s++) {
+            var pt = tileToScreen(evs[s].x, evs[s].y, lv);
+            var last = merged.length > 0 ? merged[merged.length - 1] : null;
+            if (last && (last.tx === evs[s].x && last.ty === evs[s].y || Math.hypot(pt.x - last.sx, pt.y - last.sy) < 10)) {
+              last.endStep = s + 1;
+            } else {
+              merged.push({ tx: evs[s].x, ty: evs[s].y, sx: pt.x, sy: pt.y, startStep: s + 1, endStep: s + 1 });
+            }
+          }
+          if (merged.length <= 30) {
+            ctx.globalAlpha = 1;
+            ctx.font = "700 10px 'JetBrains Mono', Consolas, monospace";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            for (var m = 0; m < merged.length; m++) {
+              var st = merged[m];
+              var lbl = st.startStep === st.endStep ? String(st.startStep) : (st.startStep + "\u2013" + st.endStep);
+              var pillW = Math.max(16, ctx.measureText(lbl).width + 8);
+              var px = st.sx - pillW / 2;
+              var py = st.sy - 21;
+              ctx.fillStyle = "rgba(8, 10, 14, 0.9)";
+              ctx.strokeStyle = tr.color;
+              ctx.lineWidth = 1;
+              ctx.fillRect(px, py, pillW, 13);
+              ctx.strokeRect(px, py, pillW, 13);
+              ctx.fillStyle = "#f1f5f9";
+              ctx.fillText(lbl, st.sx, py + 6.5);
+            }
+          }
+        }
+        ctx.restore();
+      }
+    }
+
+    function drawHeatmap(zEvents, lv, w, h) {
+      if (zEvents.length === 0) return;
+      ctx.save();
+      ctx.globalCompositeOperation = "lighter";
+      var rHeat = Math.max(18, lv.tile_px * state.scale * 2.8);
+      for (var hi = 0; hi < zEvents.length; hi++) {
+        var hev = zEvents[hi];
+        var hpt = tileToScreen(hev.x, hev.y, lv);
+        if (hpt.x < -rHeat || hpt.x > w + rHeat || hpt.y < -rHeat || hpt.y > h + rHeat) continue;
+        var grad = ctx.createRadialGradient(hpt.x, hpt.y, 1, hpt.x, hpt.y, rHeat);
+        grad.addColorStop(0, "rgba(239, 68, 68, 0.45)");
+        grad.addColorStop(0.45, "rgba(245, 158, 11, 0.22)");
+        grad.addColorStop(1, "rgba(245, 158, 11, 0)");
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.arc(hpt.x, hpt.y, rHeat, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+
+    function drawTooltip(pin, w, h) {
+      if (!pin || !pin.events || pin.events.length === 0) return;
+      var cnt = pin.events.length;
+      var first = pin.events[0];
+      var header = cnt === 1
+        ? (first.category + " #L" + first.line_no + (first.time_short ? " \u2022 " + first.time_short : ""))
+        : ("Кластер: " + cnt + " соб. (" + pin.x + ", " + pin.y + ")");
+      var previewRaw = cnt === 1
+        ? (first.plain_message || "")
+        : pin.events.slice(0, 3).map(function (e) { return e.category; }).join(", ") + (cnt > 3 ? " \u2026" : "");
+      var preview = previewRaw.length > 52 ? previewRaw.slice(0, 51) + "\u2026" : previewRaw;
+
+      ctx.save();
+      ctx.font = "700 11px 'JetBrains Mono', Consolas, monospace";
+      var hdrW = ctx.measureText(header).width;
+      ctx.font = "400 11px system-ui, -apple-system, sans-serif";
+      var bodyW = ctx.measureText(preview).width;
+      var boxW = Math.min(340, Math.max(150, Math.max(hdrW, bodyW) + 20));
+      var boxH = preview ? 42 : 24;
+
+      var bx = pin.sx + 14;
+      var by = pin.sy - boxH - 10;
+      if (bx + boxW > w - 8) bx = pin.sx - boxW - 14;
+      if (bx < 8) bx = 8;
+      if (by < 8) by = pin.sy + 14;
+      if (by + boxH > h - 8) by = h - boxH - 8;
+
+      ctx.fillStyle = "rgba(11, 14, 20, 0.94)";
+      ctx.strokeStyle = "#334155";
+      ctx.lineWidth = 1;
+      ctx.fillRect(bx, by, boxW, boxH);
+      ctx.strokeRect(bx, by, boxW, boxH);
+
+      ctx.textAlign = "left";
+      ctx.textBaseline = "top";
+      ctx.font = "700 11px 'JetBrains Mono', Consolas, monospace";
+      ctx.fillStyle = categoryPinColor(first.category);
+      ctx.fillText(header, bx + 9, by + 6, boxW - 18);
+
+      if (preview) {
+        ctx.font = "400 11px system-ui, -apple-system, sans-serif";
+        ctx.fillStyle = "#e2e8f0";
+        ctx.fillText(preview, bx + 9, by + 22, boxW - 18);
+      }
+      ctx.restore();
     }
 
     var drawQueued = false;
@@ -894,6 +1448,10 @@
       var imgRec = state.imageCache[String(state.currentZ)];
       if (imgRec && imgRec.status === "loaded") {
         ctx.drawImage(imgRec.img, x0, y0, drawW, drawH);
+        if (state.dimMap) {
+          ctx.fillStyle = "rgba(8, 10, 14, 0.56)";
+          ctx.fillRect(x0, y0, drawW, drawH);
+        }
       } else {
         ctx.fillStyle = "#12161c";
         ctx.fillRect(x0, y0, drawW, drawH);
@@ -925,201 +1483,125 @@
 
       // 2. Heatmap Overlay
       if (state.mode === "heat") {
-        var rHeat = Math.max(12, lv.tile_px * state.scale * 2.2);
-        for (var hi = 0; hi < zEvents.length; hi++) {
-          var hev = zEvents[hi];
-          var hpt = tileToScreen(hev.x, hev.y, lv);
-          if (hpt.x < -rHeat || hpt.x > w + rHeat || hpt.y < -rHeat || hpt.y > h + rHeat) continue;
-          var grad = ctx.createRadialGradient(hpt.x, hpt.y, 1, hpt.x, hpt.y, rHeat);
-          grad.addColorStop(0, "rgba(217, 38, 56, 0.42)");
-          grad.addColorStop(0.5, "rgba(245, 158, 11, 0.18)");
-          grad.addColorStop(1, "rgba(245, 158, 11, 0)");
-          ctx.fillStyle = grad;
-          ctx.beginPath();
-          ctx.arc(hpt.x, hpt.y, rHeat, 0, Math.PI * 2);
-          ctx.fill();
-        }
+        drawHeatmap(zEvents, lv, w, h);
       }
 
       // 3. Trajectory Path
       if (state.trajEnabled && zEvents.length > 1) {
-        var trajEvents = [];
-        if (filterCkey) {
-          for (var ti = 0; ti < zEvents.length; ti++) {
-            var tev = zEvents[ti];
-            if (Array.isArray(tev.ckeys) && tev.ckeys.indexOf(filterCkey) !== -1) {
-              trajEvents.push(tev);
-            }
-          }
-          if (trajEvents.length === 0) trajEvents = zEvents;
-        } else {
-          trajEvents = zEvents;
+        drawTrajectories(zEvents, lv);
+      }
+
+      // 4. Pins / Clusters (build hit targets in both modes; render pins in pins mode)
+      var renderedPins = [];
+      var byTile = {};
+      var tileKeys = [];
+      for (var pi = 0; pi < zEvents.length; pi++) {
+        var pev = zEvents[pi];
+        var tKey = pev.x + "," + pev.y;
+        if (!byTile[tKey]) {
+          var spt2 = tileToScreen(pev.x, pev.y, lv);
+          byTile[tKey] = {
+            sx: spt2.x,
+            sy: spt2.y,
+            x: pev.x,
+            y: pev.y,
+            events: [],
+            hasFocus: false,
+          };
+          tileKeys.push(tKey);
         }
-
-        if (trajEvents.length > 1) {
-          ctx.strokeStyle = "rgba(96, 165, 250, 0.85)";
-          ctx.lineWidth = 2;
-          ctx.beginPath();
-          var prevPt = null;
-          var stepIdx = 0;
-          for (var tj = 0; tj < trajEvents.length; tj++) {
-            var tItem = trajEvents[tj];
-            var curPt = tileToScreen(tItem.x, tItem.y, lv);
-            if (!prevPt) {
-              ctx.moveTo(curPt.x, curPt.y);
-            } else {
-              if (Math.hypot(curPt.x - prevPt.x, curPt.y - prevPt.y) > 4) {
-                ctx.lineTo(curPt.x, curPt.y);
-              }
-            }
-            prevPt = curPt;
-          }
-          ctx.stroke();
-
-          // Direction arrows & start/end markers
-          for (var tk = 1; tk < trajEvents.length; tk++) {
-            var aPt = tileToScreen(trajEvents[tk - 1].x, trajEvents[tk - 1].y, lv);
-            var bPt = tileToScreen(trajEvents[tk].x, trajEvents[tk].y, lv);
-            var dist = Math.hypot(bPt.x - aPt.x, bPt.y - aPt.y);
-            if (dist >= 18) {
-              var mx = (aPt.x + bPt.x) / 2;
-              var my = (aPt.y + bPt.y) / 2;
-              var ang = Math.atan2(bPt.y - aPt.y, bPt.x - aPt.x);
-              ctx.fillStyle = "#60a5fa";
-              ctx.beginPath();
-              ctx.moveTo(mx + Math.cos(ang) * 5, my + Math.sin(ang) * 5);
-              ctx.lineTo(mx + Math.cos(ang + 2.5) * 5, my + Math.sin(ang + 2.5) * 5);
-              ctx.lineTo(mx + Math.cos(ang - 2.5) * 5, my + Math.sin(ang - 2.5) * 5);
-              ctx.closePath();
-              ctx.fill();
-            }
-            stepIdx++;
-          }
-          if (trajEvents.length <= 40 && stepIdx > 0) {
-            ctx.font = "600 10px 'JetBrains Mono', Consolas, monospace";
-            ctx.textAlign = "center";
-            ctx.textBaseline = "middle";
-            for (var ts = 0; ts < trajEvents.length; ts++) {
-              var spt = tileToScreen(trajEvents[ts].x, trajEvents[ts].y, lv);
-              ctx.fillStyle = "#12161c";
-              ctx.fillRect(spt.x - 8, spt.y - 16, 16, 12);
-              ctx.fillStyle = "#eef2f6";
-              ctx.fillText(String(ts + 1), spt.x, spt.y - 10);
-            }
-          }
+        byTile[tKey].events.push(pev);
+        if ((focusLine && pev.line_no === focusLine) || state.selectedLineNos[String(pev.line_no)]) {
+          byTile[tKey].hasFocus = true;
         }
       }
 
-      // 4. Pins / Clusters
-      var renderedPins = [];
-      if (state.mode === "pins" || state.mode === "heat") {
-        // First group exact same tile
-        var byTile = {};
-        var tileKeys = [];
-        for (var pi = 0; pi < zEvents.length; pi++) {
-          var pev = zEvents[pi];
-          var tKey = pev.x + "," + pev.y;
-          if (!byTile[tKey]) {
-            var spt2 = tileToScreen(pev.x, pev.y, lv);
-            byTile[tKey] = {
-              sx: spt2.x,
-              sy: spt2.y,
-              x: pev.x,
-              y: pev.y,
-              events: [],
-              hasFocus: false,
-            };
-            tileKeys.push(tKey);
-          }
-          byTile[tKey].events.push(pev);
-          if ((focusLine && pev.line_no === focusLine) || state.selectedLineNos[String(pev.line_no)]) {
-            byTile[tKey].hasFocus = true;
-          }
-        }
-
-        var clusters = [];
-        if (state.clusterEnabled) {
-          var clusterDist = 20;
-          for (var ci = 0; ci < tileKeys.length; ci++) {
-            var grp = byTile[tileKeys[ci]];
-            if (grp.sx < -30 || grp.sx > w + 30 || grp.sy < -30 || grp.sy > h + 30) continue;
-            var merged = false;
-            for (var cj = 0; cj < clusters.length; cj++) {
-              var cl = clusters[cj];
-              if (Math.hypot(cl.sx - grp.sx, cl.sy - grp.sy) <= clusterDist) {
-                var totalOld = cl.events.length;
-                var totalAdd = grp.events.length;
-                cl.sx = (cl.sx * totalOld + grp.sx * totalAdd) / (totalOld + totalAdd);
-                cl.sy = (cl.sy * totalOld + grp.sy * totalAdd) / (totalOld + totalAdd);
-                for (var ek = 0; ek < grp.events.length; ek++) cl.events.push(grp.events[ek]);
-                if (grp.hasFocus) cl.hasFocus = true;
-                merged = true;
-                break;
-              }
-            }
-            if (!merged) {
-              clusters.push({
-                sx: grp.sx,
-                sy: grp.sy,
-                x: grp.x,
-                y: grp.y,
-                events: grp.events.slice(),
-                hasFocus: grp.hasFocus,
-              });
+      var clusters = [];
+      if (state.clusterEnabled) {
+        var clusterDist = 20;
+        for (var ci = 0; ci < tileKeys.length; ci++) {
+          var grp = byTile[tileKeys[ci]];
+          if (grp.sx < -30 || grp.sx > w + 30 || grp.sy < -30 || grp.sy > h + 30) continue;
+          var merged = false;
+          for (var cj = 0; cj < clusters.length; cj++) {
+            var cl = clusters[cj];
+            if (Math.hypot(cl.sx - grp.sx, cl.sy - grp.sy) <= clusterDist) {
+              var totalOld = cl.events.length;
+              var totalAdd = grp.events.length;
+              cl.sx = (cl.sx * totalOld + grp.sx * totalAdd) / (totalOld + totalAdd);
+              cl.sy = (cl.sy * totalOld + grp.sy * totalAdd) / (totalOld + totalAdd);
+              for (var ek = 0; ek < grp.events.length; ek++) cl.events.push(grp.events[ek]);
+              if (grp.hasFocus) cl.hasFocus = true;
+              merged = true;
+              break;
             }
           }
-        } else {
-          for (var ui = 0; ui < tileKeys.length; ui++) {
-            var ugrp = byTile[tileKeys[ui]];
-            if (ugrp.sx < -30 || ugrp.sx > w + 30 || ugrp.sy < -30 || ugrp.sy > h + 30) continue;
-            clusters.push(ugrp);
+          if (!merged) {
+            clusters.push({
+              sx: grp.sx,
+              sy: grp.sy,
+              x: grp.x,
+              y: grp.y,
+              events: grp.events.slice(),
+              hasFocus: grp.hasFocus,
+            });
           }
         }
+      } else {
+        for (var ui = 0; ui < tileKeys.length; ui++) {
+          var ugrp = byTile[tileKeys[ui]];
+          if (ugrp.sx < -30 || ugrp.sx > w + 30 || ugrp.sy < -30 || ugrp.sy > h + 30) continue;
+          clusters.push(ugrp);
+        }
+      }
 
-        for (var ri = 0; ri < clusters.length; ri++) {
-          var item = clusters[ri];
-          var cnt = item.events.length;
-          var color = categoryPinColor(item.events[0].category);
-          var radius = cnt > 1 ? Math.min(16, 8 + Math.log2(cnt) * 2.2) : (state.mode === "heat" ? 4 : 5.5);
+      for (var ri = 0; ri < clusters.length; ri++) {
+        var item = clusters[ri];
+        var cnt = item.events.length;
+        var color = categoryPinColor(item.events[0].category);
+        var radius = cnt > 1 ? Math.min(18, 9 + Math.log2(cnt) * 2.4) : 7;
 
+        if (state.mode === "pins" || item.hasFocus) {
           if (item.hasFocus) {
             ctx.strokeStyle = "#d92638";
             ctx.lineWidth = 2.5;
             ctx.beginPath();
-            ctx.arc(item.sx, item.sy, radius + 6, 0, Math.PI * 2);
+            ctx.arc(item.sx, item.sy, radius + 5, 0, Math.PI * 2);
             ctx.stroke();
           }
 
-          ctx.fillStyle = "rgba(0, 0, 0, 0.55)";
-          ctx.beginPath();
-          ctx.arc(item.sx + 1, item.sy + 1, radius + 1.5, 0, Math.PI * 2);
-          ctx.fill();
+          if (state.mode === "pins") {
+            ctx.fillStyle = "rgba(0, 0, 0, 0.72)";
+            ctx.beginPath();
+            ctx.arc(item.sx, item.sy, radius + 2, 0, Math.PI * 2);
+            ctx.fill();
 
-          ctx.fillStyle = color;
-          ctx.strokeStyle = "#eef2f6";
-          ctx.lineWidth = 1.4;
-          ctx.beginPath();
-          ctx.arc(item.sx, item.sy, radius, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.stroke();
+            ctx.fillStyle = color;
+            ctx.strokeStyle = "#f8fafc";
+            ctx.lineWidth = 1.4;
+            ctx.beginPath();
+            ctx.arc(item.sx, item.sy, radius, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
 
-          if (cnt > 1) {
-            ctx.fillStyle = "#080a0e";
-            ctx.font = "700 10px 'JetBrains Mono', Consolas, monospace";
-            ctx.textAlign = "center";
-            ctx.textBaseline = "middle";
-            ctx.fillText(String(cnt), item.sx, item.sy + 0.5);
+            if (cnt > 1) {
+              ctx.fillStyle = "#080a0e";
+              ctx.font = "700 10px 'JetBrains Mono', Consolas, monospace";
+              ctx.textAlign = "center";
+              ctx.textBaseline = "middle";
+              ctx.fillText(String(cnt), item.sx, item.sy + 0.5);
+            }
           }
-
-          renderedPins.push({
-            sx: item.sx,
-            sy: item.sy,
-            radius: Math.max(radius + 4, 12),
-            x: item.x,
-            y: item.y,
-            events: item.events,
-          });
         }
+
+        renderedPins.push({
+          sx: item.sx,
+          sy: item.sy,
+          radius: Math.max(radius + 5, 13),
+          x: item.x,
+          y: item.y,
+          events: item.events,
+        });
       }
       state.renderedPins = renderedPins;
 
@@ -1134,7 +1616,7 @@
         ctx.strokeRect(stX, stY, stSize, stSize);
       }
 
-      if (state.hoverTile) {
+      if (state.hoverTile && !state.hoverPin) {
         var ht = state.hoverTile;
         var htX = x0 + (ht.x - 1) * lv.tile_px * state.scale;
         var htY = y0 + (lv.height - ht.y) * lv.tile_px * state.scale;
@@ -1143,6 +1625,25 @@
         ctx.lineWidth = 1;
         ctx.strokeRect(htX, htY, htSize, htSize);
       }
+
+      // 6. Hovered pin tooltip
+      if (state.hoverPin && !state.dragging) {
+        drawTooltip(state.hoverPin, w, h);
+      }
+    }
+
+    function hitTestPin(mx, my) {
+      var best = null;
+      var bestDist = 99999;
+      for (var i = 0; i < state.renderedPins.length; i++) {
+        var pin = state.renderedPins[i];
+        var d = Math.hypot(mx - pin.sx, my - pin.sy);
+        if (d <= pin.radius && d < bestDist) {
+          best = pin;
+          bestDist = d;
+        }
+      }
+      return best;
     }
 
     function syncCanvasSize() {
@@ -1156,6 +1657,180 @@
       requestDraw();
     }
 
+    function applyMapPayload(data, opts) {
+      var isInitial = opts && opts.isInitial;
+      if (data.manifest) {
+        state.manifest = data.manifest;
+        state.levelsByZ = {};
+        if (Array.isArray(state.manifest.levels)) {
+          for (var i = 0; i < state.manifest.levels.length; i++) {
+            var lv = state.manifest.levels[i];
+            state.levelsByZ[String(lv.z)] = lv;
+          }
+        }
+      }
+      state.events = Array.isArray(data.events) ? data.events : [];
+      state.zCounts = data.z_counts || {};
+      state.hoverPin = null;
+
+      if (isInitial) {
+        if (!targetZ) {
+          var bestZ = 1;
+          var bestCnt = -1;
+          Object.keys(state.zCounts).forEach(function (k) {
+            var c = Number(state.zCounts[k]) || 0;
+            if (c > bestCnt) {
+              bestCnt = c;
+              bestZ = Number(k) || 1;
+            }
+          });
+          if (bestCnt <= 0 && state.manifest && state.manifest.levels && state.manifest.levels.length > 0) {
+            bestZ = state.manifest.levels[0].z;
+          }
+          state.currentZ = bestZ;
+        } else {
+          state.currentZ = targetZ;
+        }
+      } else if (!(state.zCounts[String(state.currentZ)] > 0)) {
+        // Switch deck on filter reload only if current deck has 0 matches and another deck has matches
+        var altZ = state.currentZ;
+        var altCnt = 0;
+        Object.keys(state.zCounts).forEach(function (k) {
+          var c = Number(state.zCounts[k]) || 0;
+          if (c > altCnt) {
+            altCnt = c;
+            altZ = Number(k) || altZ;
+          }
+        });
+        if (altCnt > 0 && altZ !== state.currentZ) {
+          state.currentZ = altZ;
+          state.selectedTile = null;
+          loadAssetsForZ(altZ);
+          syncCanvasSize();
+          fitView();
+        }
+      }
+
+      if (statusEl) {
+        var totalCoords = Number(data.total_with_coords) || state.events.length;
+        var msg = "Событий с координатами: " + totalCoords;
+        if (data.truncated) {
+          msg += " (показаны первые " + state.events.length + " \u2014 уточните фильтры)";
+        }
+        statusEl.textContent = msg;
+      }
+
+      loadAssetsForZ(state.currentZ);
+      buildDeckTabs();
+      if (isInitial) {
+        syncCanvasSize();
+        fitView();
+      }
+
+      if (isInitial && targetX && targetY && (!targetZ || targetZ === state.currentZ)) {
+        state.selectedTile = { x: targetX, y: targetY, z: state.currentZ };
+        centerOnTile(targetX, targetY, 1.5, true);
+        var focusedMatches = [];
+        for (var f = 0; f < state.events.length; f++) {
+          var fev = state.events[f];
+          if (
+            (focusLine && fev.line_no === focusLine) ||
+            (fev.z === state.currentZ && fev.x === targetX && fev.y === targetY)
+          ) {
+            focusedMatches.push(fev);
+          }
+        }
+        var fArea = lookupArea(state.currentZ, targetX, targetY) || (focusedMatches[0] && focusedMatches[0].area) || "";
+        renderInspector(
+          focusedMatches,
+          focusLine && focusedMatches.length ? ("Фокус #L" + focusLine) : ("Точка (" + targetX + ", " + targetY + ", Z" + state.currentZ + ")"),
+          "X:" + targetX + " Y:" + targetY + " Z:" + state.currentZ + (fArea ? " \u2022 " + fArea : ""),
+          { showBackBtn: true, isEmptyTile: focusedMatches.length === 0 }
+        );
+      } else if (state.selectedTile && state.selectedTile.z === state.currentZ && !isInitial) {
+        var st = state.selectedTile;
+        var tileMatches = [];
+        for (var m = 0; m < state.events.length; m++) {
+          var mev = state.events[m];
+          if (mev.z === st.z && mev.x === st.x && mev.y === st.y) tileMatches.push(mev);
+        }
+        if (tileMatches.length > 0) {
+          var mArea = lookupArea(st.z, st.x, st.y) || tileMatches[0].area || "";
+          renderInspector(tileMatches, "Тайл (" + st.x + ", " + st.y + ", Z" + st.z + ")", mArea, { showBackBtn: true });
+        } else {
+          state.selectedTile = null;
+          showDeckOverview();
+        }
+      } else {
+        showDeckOverview();
+      }
+      requestDraw();
+    }
+
+    function reloadFromFilterForm(filterForm, newBaseQuery) {
+      if (!filterForm) return;
+      var formData = new FormData(filterForm);
+      var mapParams = new URLSearchParams();
+      mapParams.set("file", String(formData.get("file") || selectedFile));
+      mapParams.set("preset", String(formData.get("preset") || "gameplay"));
+      formData.getAll("cat").forEach(function (c) {
+        if (c) mapParams.append("cat", String(c));
+      });
+      var newCkey = String(formData.get("ckey") || "").trim();
+      var newQ = String(formData.get("q") || "").trim();
+      var newFrom = String(formData.get("time_from") || "").trim();
+      var newTo = String(formData.get("time_to") || "").trim();
+      var newRegex = Boolean(formData.get("regex"));
+      var newMask = Boolean(formData.get("mask_ips"));
+      if (newCkey) mapParams.set("ckey", newCkey);
+      if (newQ) mapParams.set("q", newQ);
+      if (newRegex) mapParams.set("regex", "1");
+      if (newFrom) mapParams.set("time_from", newFrom);
+      if (newTo) mapParams.set("time_to", newTo);
+      if (newMask) mapParams.set("mask_ips", "1");
+
+      var prevCkey = filterCkey;
+      filterCkey = normalizeCkeyClient(newCkey);
+      maskIps = newMask;
+      renderHtml = String(formData.get("html") || "1") !== "0";
+      if (newBaseQuery) baseQuery = newBaseQuery;
+
+      if (!prevCkey && filterCkey && trajCb) {
+        trajCb.checked = true;
+        state.trajEnabled = true;
+      }
+
+      var ajaxUrl = "/api/v1/logs/rounds/" + encodeURIComponent(roundUid) + "/map-events?" + mapParams.toString();
+      if (statusEl) statusEl.textContent = "Обновление событий...";
+      fetch(ajaxUrl, { credentials: "same-origin" })
+        .then(function (resp) {
+          if (!resp.ok) {
+            return resp.json().catch(function () { return {}; }).then(function (errBody) {
+              throw new Error(errBody.detail || ("HTTP " + resp.status));
+            });
+          }
+          return resp.json();
+        })
+        .then(function (data) {
+          if (errorEl) {
+            errorEl.hidden = true;
+            errorEl.textContent = "";
+          }
+          applyMapPayload(data, { isInitial: false });
+        })
+        .catch(function (err) {
+          if (errorEl) {
+            errorEl.textContent = err && err.message ? err.message : "Ошибка загрузки событий карты.";
+            errorEl.hidden = false;
+          }
+          if (statusEl) {
+            statusEl.textContent = "Ошибка фильтрации карты.";
+          }
+        });
+    }
+
+    window.__logsMapReload = reloadFromFilterForm;
+
     // Bind controls
     if (modePinsBtn && modeHeatBtn) {
       modePinsBtn.addEventListener("click", function () {
@@ -1168,6 +1843,14 @@
         state.mode = "heat";
         modeHeatBtn.classList.add("is-active");
         modePinsBtn.classList.remove("is-active");
+        requestDraw();
+      });
+    }
+    if (dimBtn) {
+      dimBtn.addEventListener("click", function () {
+        state.dimMap = !state.dimMap;
+        dimBtn.classList.toggle("is-active", state.dimMap);
+        dimBtn.setAttribute("aria-pressed", state.dimMap ? "true" : "false");
         requestDraw();
       });
     }
@@ -1202,8 +1885,24 @@
         if (desiredZ !== state.currentZ) {
           selectDeck(desiredZ, true);
         } else {
-          centerOnTile(targetX, targetY, 1.5);
+          state.selectedTile = { x: targetX, y: targetY, z: state.currentZ };
+          centerOnTile(targetX, targetY, 1.5, true);
         }
+      });
+    }
+    if (sectorSelect) {
+      sectorSelect.addEventListener("change", function () {
+        var val = Number(sectorSelect.value);
+        if (val > 0) {
+          selectDeck(val, false);
+        }
+      });
+    }
+    if (showAllDeckBtn) {
+      showAllDeckBtn.addEventListener("click", function () {
+        state.selectedTile = null;
+        showDeckOverview();
+        requestDraw();
       });
     }
 
@@ -1220,19 +1919,22 @@
       if (ev.button !== 0) return;
       state.dragging = true;
       state.dragMoved = false;
+      state.hoverPin = null;
       state.dragStartX = ev.clientX;
       state.dragStartY = ev.clientY;
       state.dragOrigOffsetX = state.offsetX;
       state.dragOrigOffsetY = state.offsetY;
       canvas.classList.add("is-dragging");
+      canvas.classList.remove("is-hover-pin");
     });
 
     canvas.addEventListener("mouseleave", function () {
-      if (state.hoverTile) {
-        state.hoverTile = null;
-        updateHud(null, null);
-        requestDraw();
-      }
+      var needDraw = Boolean(state.hoverTile || state.hoverPin);
+      state.hoverTile = null;
+      state.hoverPin = null;
+      canvas.classList.remove("is-hover-pin");
+      updateHud(null, null);
+      if (needDraw) requestDraw();
     });
 
     window.addEventListener("mousemove", function (ev) {
@@ -1241,10 +1943,13 @@
         var dy = ev.clientY - state.dragStartY;
         if (Math.abs(dx) > 4 || Math.abs(dy) > 4) {
           state.dragMoved = true;
+          state.userMovedView = true;
+          updateCenterButton(false);
         }
         state.offsetX = state.dragOrigOffsetX + dx;
         state.offsetY = state.dragOrigOffsetY + dy;
         requestDraw();
+        return;
       }
       var rect = canvas.getBoundingClientRect();
       if (
@@ -1253,16 +1958,29 @@
         ev.clientY >= rect.top &&
         ev.clientY <= rect.bottom
       ) {
+        var mx = ev.clientX - rect.left;
+        var my = ev.clientY - rect.top;
         var lv = getLevelMeta(state.currentZ);
-        var tile = screenToTile(ev.clientX - rect.left, ev.clientY - rect.top, lv);
-        var prev = state.hoverTile;
-        var changed =
-          (!prev && tile) ||
-          (prev && !tile) ||
-          (prev && tile && (prev.x !== tile.x || prev.y !== tile.y));
-        if (changed) {
+        var tile = screenToTile(mx, my, lv);
+        var pinHit = hitTestPin(mx, my);
+        canvas.classList.toggle("is-hover-pin", Boolean(pinHit));
+
+        var prevPin = state.hoverPin;
+        var prevTile = state.hoverTile;
+        var tileChanged =
+          (!prevTile && tile) ||
+          (prevTile && !tile) ||
+          (prevTile && tile && (prevTile.x !== tile.x || prevTile.y !== tile.y));
+        var pinChanged = prevPin !== pinHit;
+
+        if (tileChanged) {
           state.hoverTile = tile;
           updateHud(tile ? tile.x : null, tile ? tile.y : null);
+        }
+        if (pinChanged) {
+          state.hoverPin = pinHit;
+        }
+        if (tileChanged || pinChanged) {
           requestDraw();
         }
       }
@@ -1279,17 +1997,7 @@
       var my = ev.clientY - rect.top;
       if (mx < 0 || my < 0 || mx > rect.width || my > rect.height) return;
 
-      // Hit test rendered pins/clusters first
-      var best = null;
-      var bestDist = 99999;
-      for (var i = 0; i < state.renderedPins.length; i++) {
-        var pin = state.renderedPins[i];
-        var d = Math.hypot(mx - pin.sx, my - pin.sy);
-        if (d <= pin.radius && d < bestDist) {
-          best = pin;
-          bestDist = d;
-        }
-      }
+      var best = hitTestPin(mx, my);
       if (best) {
         state.selectedTile = { x: best.x, y: best.y, z: state.currentZ };
         var title = best.events.length === 1
@@ -1297,7 +2005,8 @@
           : ("Кластер (" + best.events.length + " событий)");
         var area = lookupArea(state.currentZ, best.x, best.y) || best.events[0].area || "";
         var sub = "X:" + best.x + " Y:" + best.y + " Z:" + state.currentZ + (area ? " \u2022 " + area : "");
-        renderInspector(best.events, title, sub);
+        updateCenterButton(targetX === best.x && targetY === best.y);
+        renderInspector(best.events, title, sub, { showBackBtn: true });
         return;
       }
 
@@ -1313,7 +2022,13 @@
           }
         }
         var tArea = lookupArea(state.currentZ, tile.x, tile.y) || "Космос / без зоны";
-        renderInspector(tileEvents, "Тайл (" + tile.x + ", " + tile.y + ", Z" + state.currentZ + ")", tArea);
+        updateCenterButton(targetX === tile.x && targetY === tile.y);
+        renderInspector(
+          tileEvents,
+          "Тайл (" + tile.x + ", " + tile.y + ", Z" + state.currentZ + ")",
+          tArea,
+          { showBackBtn: true, isEmptyTile: tileEvents.length === 0 }
+        );
       }
     });
 
@@ -1331,69 +2046,7 @@
         return resp.json();
       })
       .then(function (data) {
-        state.manifest = data.manifest || { ready: false, levels: [] };
-        state.levelsByZ = {};
-        if (Array.isArray(state.manifest.levels)) {
-          for (var i = 0; i < state.manifest.levels.length; i++) {
-            var lv = state.manifest.levels[i];
-            state.levelsByZ[String(lv.z)] = lv;
-          }
-        }
-        state.events = Array.isArray(data.events) ? data.events : [];
-        state.zCounts = data.z_counts || {};
-
-        if (!targetZ) {
-          var bestZ = 1;
-          var bestCnt = -1;
-          var keys = Object.keys(state.zCounts);
-          for (var k = 0; k < keys.length; k++) {
-            var c = Number(state.zCounts[keys[k]]) || 0;
-            if (c > bestCnt) {
-              bestCnt = c;
-              bestZ = Number(keys[k]) || 1;
-            }
-          }
-          if (bestCnt <= 0 && state.manifest.levels && state.manifest.levels.length > 0) {
-            bestZ = state.manifest.levels[0].z;
-          }
-          state.currentZ = bestZ;
-        } else {
-          state.currentZ = targetZ;
-        }
-
-        if (statusEl) {
-          var totalCoords = Number(data.total_with_coords) || state.events.length;
-          var msg = "Событий с координатами: " + totalCoords;
-          if (data.truncated) {
-            msg += " (показаны первые " + state.events.length + " — уточните фильтры)";
-          }
-          statusEl.textContent = msg;
-        }
-
-        loadAssetsForZ(state.currentZ);
-        buildDeckTabs();
-        syncCanvasSize();
-        fitView();
-        if (targetX && targetY && (!targetZ || targetZ === state.currentZ)) {
-          state.selectedTile = { x: targetX, y: targetY, z: state.currentZ };
-          centerOnTile(targetX, targetY, 1.5);
-          var focusedMatches = [];
-          for (var f = 0; f < state.events.length; f++) {
-            var fev = state.events[f];
-            if (
-              (focusLine && fev.line_no === focusLine) ||
-              (fev.z === state.currentZ && fev.x === targetX && fev.y === targetY)
-            ) {
-              focusedMatches.push(fev);
-            }
-          }
-          var fArea = lookupArea(state.currentZ, targetX, targetY) || (focusedMatches[0] && focusedMatches[0].area) || "";
-          renderInspector(
-            focusedMatches,
-            focusLine ? ("Фокус #L" + focusLine) : ("Точка (" + targetX + ", " + targetY + ", Z" + state.currentZ + ")"),
-            "X:" + targetX + " Y:" + targetY + " Z:" + state.currentZ + (fArea ? " \u2022 " + fArea : "")
-          );
-        }
+        applyMapPayload(data, { isInitial: true });
       })
       .catch(function () {
         if (statusEl) {
@@ -1439,9 +2092,9 @@
 
   function initAll() {
     initDragAndDropUpload();
+    initRoundMapViewer();
     bindStreamHelpers();
     initKeyboardShortcuts();
-    initRoundMapViewer();
     initAdminMapBuildPolling();
 
     document.body.addEventListener("htmx:afterSwap", function (ev) {

@@ -99,7 +99,13 @@ def test_ckey_extraction_handles_players_and_skips_simple_mobs():
         "AwkwardlyConfusedNeuralNetwork/(Angel Murray) has punched BadGuy/(John Doe)"
     ) == ["awkwardlyconfusedneuralnetwork", "badguy"]
     assert extract_ckeys_from_text("John Doe (DC)/(Capt) said hello") == ["johndoe"]
+    assert extract_ckeys_from_text("Styx/Dikiy_Bonor : эу.") == ["dikiybonor"]
+    assert extract_ckeys_from_text("[Common] Styx/Dikiy_Bonor (DC) : hi") == ["dikiybonor"]
     assert extract_ckeys_from_text("grey baby slime (15)/ : Blorble...") == []
+    assert extract_ckeys_from_text("Ian/ : <B>Ian</B> dances around.") == []
+    assert extract_ckeys_from_text("/obj/item/radio : beep") == []
+    assert extract_ckeys_from_text("foo /bar : baz") == []
+    assert extract_ckeys_from_text("20/40 : ratio") == []
 
 
 def test_mask_sensitive_text():
@@ -838,6 +844,21 @@ async def test_web_map_viewer_and_admin_rebuild(tmp_path, logs_env, monkeypatch)
             assert "logs-sticky-toolbar" in round_resp.text
             assert "log-coord-badge" in round_resp.text
             assert "view=map&z=3&tx=82&ty=104" in round_resp.text or "view=map&amp;z=3&amp;tx=82&amp;ty=104" in round_resp.text
+            assert "is-excluded" in round_resp.text
+            meta_match = re.search(r'<div class="logs-round-meta[^"]*"[^>]*>(.*?)</div>', round_resp.text, re.DOTALL)
+            assert meta_match is not None
+            meta_body = meta_match.group(1)
+            assert meta_body.count("2026-11-08") == 1
+            assert "14:21:29" in meta_body
+            assert "3м" in meta_body
+
+            # Active ckey filter renders summary pill and hides redundant self-badge
+            ck_resp = await client.get(f"/logs/round/{uid}?ckey=AwkwardlyConfusedNeuralNetwork")
+            assert ck_resp.status_code == 200
+            assert "logs-active-ckey-pill" in ck_resp.text
+            assert "data-clear-ckey" in ck_resp.text
+            assert 'data-ckey="awkwardlyconfusedneuralnetwork"' not in ck_resp.text
+            assert 'data-ckey="badguy"' in ck_resp.text
 
             # HTMX partial request returns only the stream partial without full page shell
             htmx_resp = await client.get(f"/logs/round/{uid}?preset=all", headers={"HX-Request": "true"})
@@ -849,6 +870,9 @@ async def test_web_map_viewer_and_admin_rebuild(tmp_path, logs_env, monkeypatch)
             map_page = await client.get(f"/logs/round/{uid}?view=map&z=3&tx=82&ty=104&focus=9")
             assert map_page.status_code == 200
             assert 'id="logs-map-root"' in map_page.text
+            assert 'id="logs-map-dim-btn"' in map_page.text
+            assert 'id="logs-map-sector-select"' in map_page.text
+            assert 'id="logs-map-show-all-deck"' in map_page.text
 
             ev_resp = await client.get(f"/api/v1/logs/rounds/{uid}/map-events")
             assert ev_resp.status_code == 200
@@ -892,4 +916,13 @@ async def test_web_map_viewer_and_admin_rebuild(tmp_path, logs_env, monkeypatch)
             assert "palette" in areas_resp.json()
     finally:
         discord_auth.set_discord_http_transport(None)
+
+
+def test_logs_css_scopes_category_colors_to_tags():
+    css_path = Path(__file__).resolve().parents[1] / "web" / "static" / "css" / "logs.css"
+    css_text = css_path.read_text(encoding="utf-8")
+    # Category color fills belong exclusively on .log-cat-tag pills, never bare .cat-* selectors
+    for cat_cls in ("cat-say", "cat-access", "cat-ooc", "cat-attack", "cat-admin"):
+        assert f".log-cat-tag.{cat_cls}" in css_text
+        assert re.search(rf"(?m)^\.{cat_cls}\b", css_text) is None
 
