@@ -23,10 +23,8 @@ import aiosqlite
 from core.byond_topic import normalize_ckey
 from core.log_parser import (
     TECHNICAL_NOISE_CATEGORIES,
-    category_matches_filters,
     decode_log_bytes,
     extract_ckeys_from_text,
-    inspect_game_log_summary,
     iter_parsed_file_lines,
     primary_coord_from_text,
     sanitize_byond_html,

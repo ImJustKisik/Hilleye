@@ -75,7 +75,49 @@ world/3
         assert s3.port == 0
 
     def test_parse_hub_text_empty(self):
-        assert parse_hub_text("") == []
+        res = parse_hub_text("")
+        assert res == []
+        assert res.errors == 0
+
+    def test_parse_hub_text_players_with_parens_and_escaped_quotes(self):
+        text = (
+            'world/1\n'
+            '\turl = "byond://1.2.3.4:1337/"\n'
+            '\tstatus = "<b>Test Station</b>"\n'
+            '\tplayers = list("Player (1)", "Bob \\"X\\"", "Charlie")\n'
+        )
+        res = parse_hub_text(text)
+        assert len(res) == 1
+        assert res.errors == 0
+        assert res[0].identifier == "byond://1.2.3.4:1337"
+        assert res[0].players == ["Player (1)", 'Bob "X"', "Charlie"]
+        assert res[0].player_count == 3
+        assert res[0].roster_complete is True
+
+    def test_parse_url_address_and_merge_invalid_inputs(self):
+        from core.hub_scraper import _parse_url_address
+
+        assert _parse_url_address("byond://BYOND.world.1234/") == (
+            "byond://BYOND.world.1234",
+            "BYOND.world.1234",
+            0,
+        )
+        with pytest.raises(ValueError):
+            _parse_url_address("byond://1.2.3.4:abc")
+        with pytest.raises(ValueError):
+            _parse_url_address("byond://1.2.3.4:")
+        with pytest.raises(ValueError):
+            _parse_url_address("byond://[::1]:bad")
+
+        merged = merge_custom_servers(
+            [],
+            [
+                {"identifier": "byond://1.2.3.4:notaport", "title": "Bad"},
+                {"identifier": "byond://2.2.2.2:2000", "title": "Good"},
+            ],
+        )
+        assert len(merged) == 1
+        assert merged[0].identifier == "byond://2.2.2.2:2000"
 
 
 class TestHubJsonParsing:

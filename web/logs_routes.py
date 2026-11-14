@@ -16,11 +16,13 @@ from fastapi.templating import Jinja2Templates
 from core import discord_auth
 from core import logs_db
 from core import map_renderer
+from core.byond_topic import normalize_ckey
 from core.config import AppConfig
 from core.log_parser import (
     CATEGORY_META,
     LOG_PRESETS,
     category_info,
+    category_matches_filters,
     collect_round_map_events,
     export_filtered_game_log,
     filter_game_log_file,
@@ -76,8 +78,14 @@ def _entry_to_vm(
     *,
     focus: Optional[int] = None,
     target_line: Optional[int] = None,
+    active_ckey_norm: str = "",
 ) -> Dict[str, Any]:
     meta = category_info(entry.category)
+    visible_ckeys = (
+        [ck for ck in entry.ckeys if ck != active_ckey_norm]
+        if active_ckey_norm
+        else entry.ckeys
+    )
     return {
         "line_no": entry.line_no,
         "timestamp": entry.timestamp,
@@ -86,10 +94,61 @@ def _entry_to_vm(
         "cat_css": meta["css"],
         "safe_html": entry.safe_html,
         "ckeys": entry.ckeys,
+        "visible_ckeys": visible_ckeys,
         "coords": _coord_vm(entry.coords, cache_dir),
         "is_continuation": getattr(entry, "is_continuation", False),
         "is_focused": focus is not None and entry.line_no == focus,
         "is_target": target_line is not None and entry.line_no == target_line,
+    }
+
+
+def _parse_round_dt(raw: str) -> Optional[datetime]:
+    text = (raw or "").strip()
+    if len(text) < 19:
+        return None
+    try:
+        return datetime.strptime(text[:19], "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return None
+
+
+def _fmt_duration(seconds: int) -> str:
+    if seconds < 0:
+        return ""
+    hours, rem = divmod(seconds, 3600)
+    minutes, secs = divmod(rem, 60)
+    if hours > 0:
+        return f"{hours}ч {minutes:02d}м"
+    if minutes > 0:
+        return f"{minutes}м"
+    return f"{secs}с"
+
+
+def _round_time_vm(rnd: Dict[str, Any]) -> Dict[str, str]:
+    date_label = str(rnd.get("round_date") or "").strip()
+    started_raw = str(rnd.get("started_at") or "").strip()
+    ended_raw = str(rnd.get("ended_at") or "").strip()
+
+    def _compact(ts: str, base_date: str) -> str:
+        if not ts:
+            return ""
+        head = ts[:19] if len(ts) >= 19 and ts[10:11] == " " and ts[13:14] == ":" else ts
+        if base_date and head.startswith(base_date + " "):
+            return head[len(base_date) + 1 :]
+        return head
+
+    start_short = _compact(started_raw, date_label)
+    end_short = _compact(ended_raw, date_label)
+    time_range = f"{start_short} – {end_short}" if (start_short and end_short) else (start_short or end_short)
+
+    dt_start = _parse_round_dt(started_raw)
+    dt_end = _parse_round_dt(ended_raw)
+    duration = _fmt_duration(int((dt_end - dt_start).total_seconds())) if (dt_start and dt_end) else ""
+
+    return {
+        "date": date_label,
+        "range": time_range,
+        "duration": duration,
     }
 
 
@@ -121,11 +180,17 @@ def _parse_bool_flag(raw: Optional[str], default: bool = False) -> bool:
     return str(raw).strip().lower() in ("1", "true", "yes", "on")
 
 
-def _ordered_categories(category_counts: Dict[str, int]) -> List[Dict[str, Any]]:
+def _ordered_categories(
+    category_counts: Dict[str, int],
+    *,
+    preset: str = "all",
+    selected_cats: Optional[List[str]] = None,
+) -> List[Dict[str, Any]]:
     priority = list(CATEGORY_META.keys())
     known = [c for c in priority if c in category_counts]
     extra = sorted(c for c in category_counts if c not in CATEGORY_META)
     items = []
+    sel_arg = selected_cats or None
     for cat in known + extra:
         meta = category_info(cat)
         items.append(
@@ -134,6 +199,7 @@ def _ordered_categories(category_counts: Dict[str, int]) -> List[Dict[str, Any]]
                 "count": category_counts[cat],
                 "css": meta["css"],
                 "desc": meta["desc"],
+                "included": category_matches_filters(cat, preset=preset, selected_categories=sel_arg),
             }
         )
     return items
@@ -491,6 +557,8 @@ def create_logs_router(
                 ip_address=discord_auth.get_client_ip(request),
             )
 
+        round_time = _round_time_vm(rnd)
+
         if selected_file == "qdel.log":
             qdel_report = await asyncio.to_thread(
                 parse_qdel_log_file,
@@ -498,6 +566,7 @@ def create_logs_router(
                 q=q,
                 sort_by=sort_by,
                 sort_dir=sort_dir,
+                include_raw=(qdel_view == "raw"),
             )
             return templates.TemplateResponse(
                 request=request,
@@ -506,6 +575,7 @@ def create_logs_router(
                     **shell,
                     "user": user,
                     "round": rnd,
+                    "round_time": round_time,
                     "available_files": available_files,
                     "selected_file": selected_file,
                     "is_qdel": True,
@@ -544,9 +614,17 @@ def create_logs_router(
             render_html=render_html,
         )
 
-        entries_vm = [_entry_to_vm(entry, cache_dir, focus=focus) for entry in result.entries]
+        active_ckey_norm = normalize_ckey(ckey) if ckey else ""
+        entries_vm = [
+            _entry_to_vm(entry, cache_dir, focus=focus, active_ckey_norm=active_ckey_norm)
+            for entry in result.entries
+        ]
 
-        categories_vm = _ordered_categories(result.category_counts)
+        categories_vm = _ordered_categories(
+            result.category_counts,
+            preset=active_preset,
+            selected_cats=selected_cats,
+        )
         query_pairs: List[Tuple[str, str]] = [
             ("file", selected_file),
             ("preset", active_preset),
@@ -581,6 +659,7 @@ def create_logs_router(
                 **shell,
                 "user": user,
                 "round": rnd,
+                "round_time": round_time,
                 "available_files": available_files,
                 "selected_file": selected_file,
                 "is_qdel": False,
@@ -591,6 +670,7 @@ def create_logs_router(
                 "active_preset": active_preset,
                 "presets": LOG_PRESETS,
                 "ckey": ckey,
+                "active_ckey_norm": active_ckey_norm,
                 "q": q,
                 "use_regex": use_regex,
                 "time_from": time_from,
@@ -1251,7 +1331,9 @@ def create_logs_router(
     ):
         await _require_api_user(request)
         _rnd, file_path = await _resolve_round_and_file(round_uid, "qdel.log")
-        report = await asyncio.to_thread(parse_qdel_log_file, file_path, q=q, sort_by=sort_by, sort_dir=sort_dir)
+        report = await asyncio.to_thread(
+            parse_qdel_log_file, file_path, q=q, sort_by=sort_by, sort_dir=sort_dir, include_raw=False
+        )
         return {
             "round_uid": round_uid,
             "total_paths": report.total_paths,

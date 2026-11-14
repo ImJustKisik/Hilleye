@@ -168,6 +168,15 @@ def parse_hub_status_metadata(raw_status: str) -> Dict[str, Any]:
     return meta
 
 
+def _parse_port_str(port_s: str) -> int:
+    if not port_s or not port_s.isdigit() or len(port_s) > 5:
+        raise ValueError("Invalid port")
+    port = int(port_s)
+    if port > 65535:
+        raise ValueError("Invalid port")
+    return port
+
+
 def _parse_url_address(url_str: str) -> Tuple[str, str, int]:
     """
     Parses a BYOND url into (identifier, ip, port).
@@ -183,18 +192,21 @@ def _parse_url_address(url_str: str) -> Tuple[str, str, int]:
         raise ValueError("Invalid BYOND URL")
     addr = raw[8:] if raw.startswith("byond://") else raw
     addr = addr.rstrip("/")
+    if not addr:
+        raise ValueError("Invalid BYOND URL")
 
     # Handle bracketed IPv6 addresses
     if addr.startswith("[") and "]" in addr:
         bracket_end = addr.index("]")
         ip = addr[1:bracket_end]
         rest = addr[bracket_end + 1 :]
+        if not ip:
+            raise ValueError("Invalid BYOND URL")
         port = 0
-        if rest.startswith(":"):
-            port_s = rest[1:]
-            port = int(port_s) if port_s.isdigit() and len(port_s) <= 5 else 0
-        if port > 65535:
-            raise ValueError("Invalid port")
+        if rest:
+            if not rest.startswith(":"):
+                raise ValueError("Invalid BYOND URL")
+            port = _parse_port_str(rest[1:])
         identifier = f"byond://[{ip}]:{port}" if port > 0 else f"byond://[{ip}]"
         return identifier, ip, port
 
@@ -206,19 +218,69 @@ def _parse_url_address(url_str: str) -> Tuple[str, str, int]:
             identifier = f"byond://[{ip}]"
         else:
             ip, _, port_s = addr.partition(":")
-            port = int(port_s) if port_s.isdigit() and len(port_s) <= 5 else 0
-            if port > 65535:
-                raise ValueError("Invalid port")
+            if not ip:
+                raise ValueError("Invalid BYOND URL")
+            port = _parse_port_str(port_s)
             identifier = f"byond://{ip}:{port}" if port > 0 else f"byond://{ip}"
     else:
         ip = addr
         port = 0
-        identifier = f"byond://{ip}" if not raw.startswith("byond://") else raw
+        identifier = f"byond://{ip}"
 
     return identifier, ip, port
 
 
-def parse_hub_text(text: str) -> List[ServerInfo]:
+def _extract_byond_player_list(block: str) -> Optional[Tuple[List[str], bool]]:
+    """Parse `players = list("a", "b", ...)` handling escaped quotes and ')' inside player names."""
+    m = re.search(r"^\s*players\s*=\s*list\(", block, re.MULTILINE)
+    if not m:
+        return None
+    i = m.end()
+    n = len(block)
+    items: List[str] = []
+    complete = True
+    expect_comma_or_end = False
+
+    while i < n:
+        ch = block[i]
+        if ch in " \t\r\n":
+            i += 1
+            continue
+        if ch == ")":
+            return items, complete and all(len(p) <= 128 for p in items)
+        if ch == ",":
+            expect_comma_or_end = False
+            i += 1
+            continue
+        if ch == '"' and not expect_comma_or_end:
+            i += 1
+            buf: List[str] = []
+            closed = False
+            while i < n:
+                c = block[i]
+                if c == "\\" and i + 1 < n:
+                    buf.append(block[i + 1])
+                    i += 2
+                    continue
+                if c == '"':
+                    closed = True
+                    i += 1
+                    break
+                buf.append(c)
+                i += 1
+            if not closed:
+                complete = False
+                break
+            items.append("".join(buf))
+            expect_comma_or_end = True
+            continue
+        complete = False
+        i += 1
+
+    return items, False
+
+
+def parse_hub_text(text: str) -> HubResult:
     """
     Parses the BYOND Hub text payload into structured ServerInfo records.
 
@@ -228,7 +290,7 @@ def parse_hub_text(text: str) -> List[ServerInfo]:
     servers: List[ServerInfo] = []
     errors = 0
     if not text:
-        return servers
+        return HubResult(servers)
 
     # Split by world/ headers
     blocks = re.split(r"(?:^|\n)(?=world/\w+)", text)
@@ -237,7 +299,7 @@ def parse_hub_text(text: str) -> List[ServerInfo]:
         if not block.strip().startswith("world/"):
             continue
 
-        url_match = re.search(r'url\s*=\s*"([^"]+)"', block)
+        url_match = re.search(r'^\s*url\s*=\s*"([^"]+)"', block, re.MULTILINE)
         if not url_match:
             continue
 
@@ -260,18 +322,15 @@ def parse_hub_text(text: str) -> List[ServerInfo]:
         count_val = None
         list_complete = True
 
-        list_match = re.search(r"players\s*=\s*list\((.*?)\)", block, re.DOTALL)
-        if list_match:
-            raw_list = list_match.group(1)
-            found = re.findall(r'"([^"]*)"', raw_list)
+        parsed_list = _extract_byond_player_list(block)
+        if parsed_list is not None:
+            found, list_complete = parsed_list
             players = [p.strip() for p in found if normalize_ckey(p)]
-            remaining = re.sub(r'"[^"]*"', "", raw_list)
-            list_complete = not remaining.strip(" ,\t\r\n") and all(len(p) <= 128 for p in found)
             if not list_complete:
                 errors += 1
             player_count = len(players)
         else:
-            count_match = re.search(r"players\s*=\s*(\d+)", block)
+            count_match = re.search(r"^\s*players\s*=\s*(\d+)", block, re.MULTILINE)
             if count_match:
                 count_val = bounded_int(count_match.group(1))
                 player_count = count_val or 0
@@ -286,8 +345,8 @@ def parse_hub_text(text: str) -> List[ServerInfo]:
                 port=port,
                 players=players,
                 player_count=player_count,
-                roster_known=list_match is not None or count_val == 0,
-                count_known=(list_match is not None and list_complete) or count_val is not None,
+                roster_known=parsed_list is not None or count_val == 0,
+                count_known=(parsed_list is not None and list_complete) or count_val is not None,
                 roster_complete=list_complete,
                 map_name=status_meta.get("map_name"),
                 gamemode=status_meta.get("gamemode"),
@@ -299,7 +358,7 @@ def parse_hub_text(text: str) -> List[ServerInfo]:
     return HubResult(servers, errors=errors + int(truncated))
 
 
-def parse_hub_json(data: Any) -> List[ServerInfo]:
+def parse_hub_json(data: Any) -> HubResult:
     """
     Parses a BYOND Hub JSON structure into structured ServerInfo records.
     Supports list-of-objects and dict-of-objects formats.
@@ -307,21 +366,19 @@ def parse_hub_json(data: Any) -> List[ServerInfo]:
     servers: List[ServerInfo] = []
     errors = 0
     if not data:
-        return servers
+        return HubResult(servers)
 
     entries: List[Dict[str, Any]] = []
     if isinstance(data, list):
         entries = [e for e in data if isinstance(e, dict)]
     elif isinstance(data, dict):
-        for k, v in data.items():
+        for v in data.values():
             if isinstance(v, dict):
                 entries.append(v)
 
     for entry in entries[:MAX_HUB_SERVERS]:
         raw_url_val = entry.get("url")
-        if not raw_url_val:
-            continue
-        if not isinstance(raw_url_val, str):
+        if not raw_url_val or not isinstance(raw_url_val, str):
             continue
         raw_url = raw_url_val.strip()
         if not raw_url or raw_url.lower() == "none":
@@ -331,6 +388,7 @@ def parse_hub_json(data: Any) -> List[ServerInfo]:
             identifier, ip, port = _parse_url_address(raw_url)
         except ValueError:
             logger.warning("Skipping invalid Hub endpoint")
+            errors += 1
             continue
 
         raw_status = entry.get("status") or entry.get("title") or ""
@@ -339,12 +397,19 @@ def parse_hub_json(data: Any) -> List[ServerInfo]:
 
         players: List[str] = []
         player_count = 0
+        roster_known = False
+        count_known = False
+        roster_complete = True
 
         raw_players = entry.get("players")
         if isinstance(raw_players, list):
+            valid_list = all(isinstance(p, str) and len(p) <= 128 for p in raw_players)
             players = [p.strip() for p in raw_players if normalize_ckey(p)]
             player_count = len(players)
-            if any(not isinstance(p, str) or len(p) > 128 for p in raw_players):
+            roster_known = True
+            count_known = valid_list
+            roster_complete = valid_list
+            if not valid_list:
                 logger.warning("Invalid Hub player list elements ignored")
                 errors += 1
         elif isinstance(raw_players, (int, float)):
@@ -354,12 +419,15 @@ def parse_hub_json(data: Any) -> List[ServerInfo]:
                 errors += 1
                 continue
             player_count = count
+            roster_known = count == 0
+            count_known = True
         elif "player_count" in entry and isinstance(entry["player_count"], (int, float)):
             count = bounded_int(entry["player_count"])
             if count is None:
                 errors += 1
                 continue
             player_count = count
+            count_known = True
 
         servers.append(
             ServerInfo(
@@ -369,9 +437,9 @@ def parse_hub_json(data: Any) -> List[ServerInfo]:
                 port=port,
                 players=players,
                 player_count=player_count,
-                roster_known=isinstance(raw_players, list) or bounded_int(raw_players) == 0,
-                count_known=(isinstance(raw_players, list) and all(isinstance(p, str) and len(p) <= 128 for p in raw_players)) or bounded_int(raw_players) is not None or bounded_int(entry.get("player_count")) is not None,
-                roster_complete=not isinstance(raw_players, list) or all(isinstance(p, str) and len(p) <= 128 for p in raw_players),
+                roster_known=roster_known,
+                count_known=count_known,
+                roster_complete=roster_complete,
                 map_name=status_meta.get("map_name"),
                 gamemode=status_meta.get("gamemode"),
                 round_duration=status_meta.get("round_duration"),
@@ -436,13 +504,15 @@ def merge_custom_servers(
 
             # Extract ip and port from identifier if missing or port is 0
             if identifier and (not ip or port == 0):
-                parsed_ident, parsed_ip, parsed_port = _parse_url_address(identifier)
+                try:
+                    _parsed_ident, parsed_ip, parsed_port = _parse_url_address(identifier)
+                except ValueError:
+                    logger.warning("Skipping custom server with invalid identifier")
+                    continue
                 if not ip and parsed_ip:
                     ip = parsed_ip
                 if port == 0 and parsed_port > 0:
                     port = parsed_port
-                if not identifier:
-                    identifier = parsed_ident
 
             if not identifier:
                 if ip and port > 0:
@@ -539,11 +609,11 @@ async def fetch_hub_servers(
     hub_url: str = DEFAULT_HUB_URL,
     fallback_url: str = DEFAULT_TEXT_URL,
     timeout: float = 10.0,
-) -> List[ServerInfo]:
+) -> HubResult:
     """
     Fetches Space Station 13 server listings from the BYOND Hub.
 
-    Queries the JSON endpoint with custom User-Agent 'CyberSynIntel/1.0 (BYOND)'.
+    Queries the JSON endpoint with custom User-Agent 'Hilleye/1.0 (BYOND)'.
     If JSONDecodeError, HTTP status error, HTML redirect, or empty/error JSON occurs,
     automatically falls back to the text format scraper.
     Merges custom servers from configuration, deduplicating records.

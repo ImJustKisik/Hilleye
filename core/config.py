@@ -150,13 +150,15 @@ class AppConfig(BaseModel):
 
             # Extract ip and port from identifier if missing or port is 0
             if identifier and (not ip or port == 0):
-                parsed_ident, parsed_ip, parsed_port = _parse_url_address(identifier)
+                try:
+                    _parsed_ident, parsed_ip, parsed_port = _parse_url_address(identifier)
+                except ValueError:
+                    logger.warning("Skipping custom server with invalid identifier: %s", identifier)
+                    continue
                 if not ip and parsed_ip:
                     ip = parsed_ip
                 if port == 0 and parsed_port > 0:
                     port = parsed_port
-                if not identifier:
-                    identifier = parsed_ident
 
             if not identifier:
                 if ip and port > 0:

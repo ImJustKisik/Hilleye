@@ -155,9 +155,82 @@ def test_parse_qdel_log_file_sorts_and_filters(tmp_path):
     assert report.total_unnecessary == 508
     assert report.entries[0].path == "/datum/light_source"
 
-    filtered = parse_qdel_log_file(qdel_path, q="floor_decal")
+    filtered = parse_qdel_log_file(qdel_path, q="floor_decal", include_raw=False)
     assert len(filtered.entries) == 1
     assert filtered.entries[0].destroy_cost_ms == 326.708
+    assert filtered.raw_text == ""
+
+
+def test_log_parser_edge_cases_and_regressions(tmp_path):
+    # 1. Self-closing tags, misnested tags, comments, links with inner tags, rgb()/!important colors
+    assert sanitize_byond_html("<br/>") == ("&lt;br/&gt;", "<br/>")
+    assert sanitize_byond_html("<img src=x/>") == ("&lt;img src=x/&gt;", "<img src=x/>")
+    assert sanitize_byond_html("<b>hi</font></b>") == ("<strong>hi</strong>", "hi")
+    assert sanitize_byond_html("<font color='red'><b>hi</font></b>") == (
+        '<span class="log-c-red"><strong>hi</strong></span>',
+        "hi",
+    )
+    assert sanitize_byond_html("<!-- note -->") == ("&lt;!-- note --&gt;", "<!-- note -->")
+    assert sanitize_byond_html("<a href='byond://?X=10;Y=20;Z=1'><b>LOC</b></a>") == (
+        '<span class="log-loc-badge">[10, 20, 1]</span>',
+        "[10, 20, 1]",
+    )
+    assert sanitize_byond_html('<span style="color: rgb(255, 0, 0) !important">warn</span>') == (
+        '<span class="log-c-red">warn</span>',
+        "warn",
+    )
+    assert sanitize_byond_html('<span color="#808080">muted</span>') == (
+        '<span class="log-c-gray">muted</span>',
+        "muted",
+    )
+
+    # 2. Ckey and coordinate edge cases
+    assert extract_ckeys_from_text("10/(20) — a/(Alice) and Bob/(Bob)") == ["a", "bob"]
+    assert extract_coords_from_text("rgb (255, 100, 1) date 12-05-24 mismatch (10, 20, 1]") == []
+    assert extract_coords_from_text("Ghost/player - 55-66-2 and [12, 34, 1]") == [(55, 66, 2), (12, 34, 1)]
+
+    # 3. Midnight time filter, plain-text search, ckey word boundaries, ReDoS protection, mixed UTF-8/cp1251 & BOM
+    from core.log_parser import scan_raw_files_for_query
+
+    log_path = tmp_path / "game.log"
+    lines = [
+        "\ufeff[2026-11-08 23:45:00.000] Starting up. (ID: mix1)",
+        "[2026-11-08 23:50:00.000] SAY: Alice/(Alice) : <font color='red'>Привет</font> I walked home",
+        "[2026-11-09 00:10:00.000] ATTACK: " + ("x" * 140) + " Удар BadGuy kicked <a href='byond://?X=82;Y=104;Z=3'>LOC</a>",
+        "[2026-11-09 00:25:00.000] SAY: Bob/(Bob) : secret 10.0.0.5-12345678",
+    ]
+    # Write line 2 in UTF-8 and append a cp1251 line to test per-line decoding resilience
+    raw_bytes = ("\n".join(lines[:2]) + "\n").encode("utf-8") + (lines[2] + "\n").encode("cp1251") + (lines[3] + "\n").encode("utf-8")
+    log_path.write_bytes(raw_bytes)
+
+    # Midnight wrap-around: 23:46 .. 00:15 matches lines 2 and 3
+    res_time = filter_game_log_file(log_path, preset="all", time_from="23:46", time_to="00:15")
+    assert res_time.round_id == "mix1"
+    assert [e.line_no for e in res_time.entries] == [2, 3]
+    assert "Привет" in res_time.entries[0].plain_message
+    assert "Удар" in res_time.entries[1].plain_message
+
+    # Search matches rendered plain text (e.g. [82, 104, 3]) and NOT raw HTML tags like "font"
+    assert filter_game_log_file(log_path, preset="all", q="font").total_matches == 0
+    assert filter_game_log_file(log_path, preset="all", q="[82, 104, 3]").total_matches == 1
+
+    # Ckey filter does not false-positive "al" inside "walked", and works on >128 char lines
+    assert filter_game_log_file(log_path, preset="all", ckey="al").total_matches == 0
+    assert filter_game_log_file(log_path, preset="all", ckey="badguy").total_matches == 1
+
+    # Masked IP cannot be probed via search query
+    assert filter_game_log_file(log_path, preset="all", q="10.0.0.5", mask_ips=True).total_matches == 0
+
+    # ReDoS nested quantifier rejected cleanly while valid IPv4 regex is allowed
+    res_redos = filter_game_log_file(log_path, preset="all", q="(a+)+b", use_regex=True)
+    assert res_redos.regex_error is not None
+    res_ip_rx = filter_game_log_file(log_path, preset="all", q=r"(\d{1,3}\.){3}\d{1,3}", use_regex=True)
+    assert res_ip_rx.regex_error is None
+    assert res_ip_rx.total_matches == 1
+
+    # scan_raw_files_for_query with limit=0 returns []
+    rnd_stub = [{"round_uid": "u1", "round_id": "mix1", "round_date": "2026-11-08", "source_type": "disk", "has_game_log": True, "dir_path": str(tmp_path)}]
+    assert scan_raw_files_for_query(rnd_stub, query="Alice", limit=0) == []
 
 
 # ---------------------------------------------------------------------------

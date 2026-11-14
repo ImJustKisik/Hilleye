@@ -14,9 +14,19 @@
 
 <!-- Filtered Summary & Top Pagination -->
 <div class="logs-pagination">
-  <span class="mono-val cell-sub">
-    <strong>{{ result.total_matches }}</strong> / {{ result.total_lines }} строк &middot; стр. {{ result.page }} / {{ result.total_pages }}
-  </span>
+  <div class="logs-pagination-summary">
+    <span class="mono-val cell-sub">
+      <strong>{{ result.total_matches }}</strong> / {{ result.total_lines }} строк &middot; стр. {{ result.page }} / {{ result.total_pages }}
+    </span>
+    {% if active_ckey_norm %}
+    <span class="logs-active-ckey-pill mono-val">
+      <span class="cell-sub">Игрок:</span>
+      <strong>{{ ckey or active_ckey_norm }}</strong>
+      <a href="/player/{{ active_ckey_norm }}" class="log-ckey-dossier" target="_blank" rel="noopener" title="Открыть досье игрока">Досье &nearr;</a>
+      <button type="button" class="logs-pill-clear" data-clear-ckey title="Сбросить фильтр по игроку">&times;</button>
+    </span>
+    {% endif %}
+  </div>
   <div class="logs-topbar-left">
     {% if result.page > 1 %}
     <a href="/logs/round/{{ round.round_uid }}?{{ base_query_str }}&page={{ result.page - 1 }}"
@@ -44,9 +54,10 @@
     <span class="log-ts" title="{{ entry.timestamp }}">{{ entry.time_short or entry.timestamp }}</span>
     <span class="log-cat-cell"><span class="log-cat-tag {{ entry.cat_css }}">{{ entry.category }}</span></span>
     <div class="log-msg-cell">
-      <div>{{ entry.safe_html | safe }}</div>
-      {% if entry.coords or entry.ckeys %}
-      <div class="log-meta-badges">
+      <span class="log-msg-body">{{ entry.safe_html | safe }}</span>
+      {% set entry_ckeys = entry.visible_ckeys if entry.visible_ckeys is defined else entry.ckeys %}
+      {% if entry.coords or entry_ckeys %}
+      <span class="log-meta-badges">
         {% if entry.coords %}
         <a href="/logs/round/{{ round.round_uid }}?{{ base_query_str }}&view=map&z={{ entry.coords.z }}&tx={{ entry.coords.x }}&ty={{ entry.coords.y }}&focus={{ entry.line_no }}"
            class="log-coord-badge"
@@ -54,13 +65,13 @@
           {{ entry.coords.x }}, {{ entry.coords.y }}, Z{{ entry.coords.z }}{% if entry.coords.area %} &middot; {{ entry.coords.area }}{% endif %}
         </a>
         {% endif %}
-        {% for ck in entry.ckeys %}
+        {% for ck in entry_ckeys %}
         <span class="log-ckey-inline">
           <button type="button" class="log-ckey-btn" data-ckey="{{ ck }}" title="Фильтровать по ckey">{{ ck }}</button>
           <a href="/player/{{ ck }}" class="log-ckey-dossier" target="_blank" rel="noopener" title="Досье игрока">&nearr;</a>
         </span>
         {% endfor %}
-      </div>
+      </span>
       {% endif %}
     </div>
     <div class="log-row-actions">
