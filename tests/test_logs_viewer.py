@@ -851,12 +851,17 @@ async def test_web_map_viewer_and_admin_rebuild(tmp_path, logs_env, monkeypatch)
             assert meta_body.count("2026-11-08") == 1
             assert "14:21:29" in meta_body
             assert "3м" in meta_body
+            assert "стр. 1 / 1" not in round_resp.text
+            assert ">диск<" not in round_resp.text
+            assert 'id="logs-raw-html-cb"' in round_resp.text
+            assert re.search(r'id="logs-filter-reset"[^>]*\bhidden\b', round_resp.text) is not None
 
-            # Active ckey filter renders summary pill and hides redundant self-badge
+            # Active ckey filter renders summary pill, shows reset button, and hides redundant self-badge
             ck_resp = await client.get(f"/logs/round/{uid}?ckey=AwkwardlyConfusedNeuralNetwork")
             assert ck_resp.status_code == 200
             assert "logs-active-ckey-pill" in ck_resp.text
             assert "data-clear-ckey" in ck_resp.text
+            assert re.search(r'id="logs-filter-reset"[^>]*\bhidden\b', ck_resp.text) is None
             assert 'data-ckey="awkwardlyconfusedneuralnetwork"' not in ck_resp.text
             assert 'data-ckey="badguy"' in ck_resp.text
 

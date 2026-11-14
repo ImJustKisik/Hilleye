@@ -228,6 +228,33 @@
       }
       chip.classList.toggle("is-excluded", !included);
     });
+
+    var htmlInput = document.getElementById("logs-html-mode");
+    var rawHtmlCb = document.getElementById("logs-raw-html-cb");
+    if (htmlInput && rawHtmlCb) {
+      htmlInput.value = rawHtmlCb.checked ? "0" : "1";
+    }
+
+    var resetBtn = document.getElementById("logs-filter-reset");
+    if (resetBtn) {
+      var qVal = (filterForm.querySelector('input[name="q"]') || {}).value || "";
+      var ckVal = (filterForm.querySelector('input[name="ckey"]') || {}).value || "";
+      var tfVal = (filterForm.querySelector('input[name="time_from"]') || {}).value || "";
+      var ttVal = (filterForm.querySelector('input[name="time_to"]') || {}).value || "";
+      var rxCb = filterForm.querySelector('input[name="regex"]');
+      var mkCb = filterForm.querySelector('input[name="mask_ips"]');
+      var hasActiveFilters =
+        anyCatChecked ||
+        (activePreset && activePreset !== "gameplay") ||
+        Boolean(qVal.trim()) ||
+        Boolean(ckVal.trim()) ||
+        Boolean(tfVal.trim()) ||
+        Boolean(ttVal.trim()) ||
+        Boolean(rxCb && rxCb.checked) ||
+        Boolean(mkCb && mkCb.checked) ||
+        Boolean(rawHtmlCb && rawHtmlCb.checked);
+      resetBtn.hidden = !hasActiveFilters;
+    }
   }
 
   function submitFilterForm(filterForm) {
@@ -281,13 +308,21 @@
         }
       });
 
-      filterForm.querySelectorAll('select, input[name="regex"], input[name="mask_ips"]').forEach(function (ctrl) {
+      filterForm.querySelectorAll('select, input[name="regex"], input[name="mask_ips"], #logs-raw-html-cb').forEach(function (ctrl) {
         if (ctrl.dataset.autoBound) return;
         ctrl.dataset.autoBound = "1";
         ctrl.addEventListener("change", function () {
           var pageInput = filterForm.querySelector('input[name="page"]');
           if (pageInput) pageInput.value = "1";
           submitFilterForm(filterForm);
+        });
+      });
+
+      filterForm.querySelectorAll('input[type="text"]').forEach(function (inp) {
+        if (inp.dataset.resetBound) return;
+        inp.dataset.resetBound = "1";
+        inp.addEventListener("input", function () {
+          syncToolbarActiveStates(filterForm);
         });
       });
     }

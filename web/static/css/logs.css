@@ -18,7 +18,7 @@
 .logs-page-stack {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
 
 .logs-topbar {
@@ -27,7 +27,7 @@
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
-  padding: 8px 12px;
+  padding: 6px 12px;
   background-color: var(--bg-surface);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
@@ -132,6 +132,10 @@
 .logs-btn:hover {
   background: var(--bg-row-hover);
   border-color: var(--border-input-focus);
+}
+
+.logs-btn[hidden] {
+  display: none;
 }
 
 .logs-btn-primary {
@@ -254,13 +258,13 @@
   position: sticky;
   top: 0;
   z-index: 25;
-  padding: 8px 14px;
+  padding: 7px 14px;
   background-color: var(--bg-surface);
   border-bottom: 1px solid var(--border-subtle);
 }
 
 .logs-toolbar-compact {
-  padding: 8px 14px;
+  padding: 7px 14px;
   background-color: var(--bg-surface);
   border-bottom: 1px solid var(--border-subtle);
 }
@@ -269,9 +273,9 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 8px 10px;
   flex-wrap: wrap;
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 
 .logs-form-grid {
@@ -289,7 +293,7 @@
 .logs-field {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
   min-width: 140px;
   flex: 1 1 160px;
 }
@@ -300,18 +304,13 @@
 }
 
 .logs-field-ckey {
-  flex: 0 1 155px;
-  min-width: 130px;
+  flex: 0 1 165px;
+  min-width: 135px;
 }
 
 .logs-field-xs {
-  flex: 0 0 92px;
-  min-width: 86px;
-}
-
-.logs-field-format {
-  flex: 0 0 172px;
-  min-width: 162px;
+  flex: 0 0 84px;
+  min-width: 78px;
 }
 
 .logs-label {
@@ -474,7 +473,7 @@
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
-  padding: 10px 14px;
+  padding: 8px 14px;
   border-bottom: 1px solid var(--border-subtle);
 }
 

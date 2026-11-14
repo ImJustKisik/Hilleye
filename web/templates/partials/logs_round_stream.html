@@ -16,7 +16,7 @@
 <div class="logs-pagination">
   <div class="logs-pagination-summary">
     <span class="mono-val cell-sub">
-      <strong>{{ result.total_matches }}</strong> / {{ result.total_lines }} строк &middot; стр. {{ result.page }} / {{ result.total_pages }}
+      <strong>{{ result.total_matches }}</strong> / {{ result.total_lines }} строк{% if result.total_pages > 1 %} &middot; стр. {{ result.page }} / {{ result.total_pages }}{% endif %}
     </span>
     {% if active_ckey_norm %}
     <span class="logs-active-ckey-pill mono-val">

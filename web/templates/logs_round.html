@@ -17,7 +17,9 @@
       <div>
         <div class="logs-round-title-row">
           <h1 class="logs-round-title">Раунд {{ round.round_id }}</h1>
-          <span class="logs-source-tag">{% if round.source_type == 'upload' %}загружен{% else %}диск{% endif %}</span>
+          {% if round.source_type == 'upload' %}
+          <span class="logs-source-tag">загружен</span>
+          {% endif %}
           {% if round.label %}
           <span class="logs-source-tag">{{ round.label }}</span>
           {% endif %}
@@ -37,15 +39,17 @@
           <span>{{ round.started_at }}</span>
           {% endif %}
           <span class="logs-meta-sep" aria-hidden="true">&middot;</span>
-          <span>{{ round.gameplay_line_count }} / {{ round.line_count }} строк</span>
+          <span title="Игровых строк: {{ round.gameplay_line_count }} из {{ round.line_count }}">{{ round.line_count }} строк</span>
         </div>
       </div>
 
       <div class="logs-file-tabs">
+        {% if available_files|length > 1 %}
         {% for fname in available_files %}
         <a href="/logs/round/{{ round.round_uid }}?file={{ fname|urlencode }}{% if view_mode == 'map' and fname != 'qdel.log' %}&view=map{% endif %}"
            class="logs-nav-pill {% if selected_file == fname %}is-active{% endif %}">{{ fname }}</a>
         {% endfor %}
+        {% endif %}
         {% if is_qdel %}
         <a href="/api/v1/logs/rounds/{{ round.round_uid }}/download?file=qdel.log&mode=raw" class="logs-btn logs-btn-sm">Скачать raw</a>
         {% else %}
@@ -157,14 +161,15 @@
 
     {% else %}
     <!-- game.log / initialize.log Filter Toolbar -->
+    {% set has_active_filters = (active_preset != 'gameplay') or selected_cats or q or ckey or time_from or time_to or use_regex or mask_ips or (not render_html) %}
     <div id="logs-round-toolbar" class="logs-panel-body {% if view_mode == 'map' %}logs-toolbar-compact{% else %}logs-sticky-toolbar{% endif %}">
       <form id="logs-filter-form" action="/logs/round/{{ round.round_uid }}" method="get">
         <input type="hidden" name="file" value="{{ selected_file }}">
         <input type="hidden" id="logs-preset-input" name="preset" value="{{ active_preset }}">
         <input type="hidden" id="logs-view-input" name="view" value="{{ view_mode }}">
+        <input type="hidden" id="logs-html-mode" name="html" value="{{ '1' if render_html else '0' }}">
         <input type="hidden" name="page" value="1">
         {% if view_mode == 'map' %}
-        <input type="hidden" id="logs-html-mode" name="html" value="{{ '1' if render_html else '0' }}">
         <input type="hidden" id="logs-per-page" name="per_page" value="{{ per_page }}">
         {% endif %}
 
@@ -189,34 +194,31 @@
               <input type="checkbox" name="mask_ips" value="1" {% if mask_ips %}checked{% endif %}>
               <span>Скрыть IP/CID</span>
             </label>
+            <label class="logs-check-label" title="Отображать исходный текст без BYOND-разметки и цветов">
+              <input type="checkbox" id="logs-raw-html-cb" {% if not render_html %}checked{% endif %}>
+              <span>Без разметки</span>
+            </label>
           </div>
         </div>
 
         <div class="logs-form-grid">
           <div class="logs-field">
-            <label for="logs-q-input" class="logs-label">Поиск / regex</label>
+            <label for="logs-q-input" class="logs-label">Поиск</label>
             <input type="text" id="logs-q-input" name="q" value="{{ q }}" class="logs-input" placeholder="Текст или шаблон (нажмите /)">
           </div>
           <div class="logs-field logs-field-ckey">
-            <label for="logs-ckey-input" class="logs-label">Игрок (ckey)</label>
+            <label for="logs-ckey-input" class="logs-label">Игрок</label>
             <input type="text" id="logs-ckey-input" name="ckey" value="{{ ckey }}" class="logs-input" placeholder="ckey...">
           </div>
           <div class="logs-field logs-field-xs">
-            <label for="logs-time-from" class="logs-label">С (ЧЧ:ММ)</label>
+            <label for="logs-time-from" class="logs-label" title="Начало интервала (ЧЧ:ММ)">С</label>
             <input type="text" id="logs-time-from" name="time_from" value="{{ time_from }}" class="logs-input" placeholder="ЧЧ:ММ">
           </div>
           <div class="logs-field logs-field-xs">
-            <label for="logs-time-to" class="logs-label">По (ЧЧ:ММ)</label>
+            <label for="logs-time-to" class="logs-label" title="Конец интервала (ЧЧ:ММ)">По</label>
             <input type="text" id="logs-time-to" name="time_to" value="{{ time_to }}" class="logs-input" placeholder="ЧЧ:ММ">
           </div>
           {% if view_mode != 'map' %}
-          <div class="logs-field logs-field-format">
-            <label for="logs-html-mode" class="logs-label">Отображение</label>
-            <select id="logs-html-mode" name="html" class="logs-select">
-              <option value="1" {% if render_html %}selected{% endif %}>Форматированный</option>
-              <option value="0" {% if not render_html %}selected{% endif %}>Без разметки</option>
-            </select>
-          </div>
           <div class="logs-field logs-field-xs">
             <label for="logs-per-page" class="logs-label">Строк</label>
             <select id="logs-per-page" name="per_page" class="logs-select">
@@ -227,7 +229,10 @@
           </div>
           {% endif %}
           <button type="submit" class="logs-btn logs-btn-primary">Применить</button>
-          <a id="logs-filter-reset" href="/logs/round/{{ round.round_uid }}?file={{ selected_file|urlencode }}{% if view_mode == 'map' %}&view=map{% endif %}" class="logs-btn">Сбросить</a>
+          <a id="logs-filter-reset"
+             href="/logs/round/{{ round.round_uid }}?file={{ selected_file|urlencode }}{% if view_mode == 'map' %}&view=map{% endif %}"
+             class="logs-btn"
+             {% if not has_active_filters %}hidden{% endif %}>Сбросить</a>
         </div>
 
         <div class="logs-cat-chips" aria-label="Фильтр по категориям">
