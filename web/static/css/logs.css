@@ -2023,6 +2023,24 @@ tr:hover .admin-copy-btn,
   line-height: 1;
 }
 
+.logs-badge-count[hidden] {
+  display: none;
+}
+
+.logs-auth-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+  padding: 3px 8px;
+  border-radius: 2px;
+  background: var(--bg-recessed);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  letter-spacing: 0.05em;
+}
+
 /* Dashboard Quick Date Chips & Rounds Table */
 .logs-quick-chips {
   display: flex;
@@ -2149,6 +2167,46 @@ tr:hover .admin-copy-btn,
   gap: 10px;
 }
 
+.logs-filter-drawer[hidden] {
+  display: none;
+}
+
+/* qdel Share Bar */
+.qdel-unnec-warn {
+  color: #fcd34d;
+}
+
+.qdel-share-cell {
+  width: 130px;
+  white-space: nowrap;
+}
+
+.qdel-share-wrap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.qdel-share-bar {
+  width: 56px;
+  height: 6px;
+  border: none;
+  border-radius: 2px;
+  background: var(--bg-recessed);
+  accent-color: var(--accent-red);
+}
+
+.qdel-share-bar::-webkit-progress-bar {
+  background: var(--bg-recessed);
+  border-radius: 2px;
+}
+
+.qdel-share-bar::-webkit-progress-value {
+  background: var(--accent-red);
+  border-radius: 2px;
+}
+
 .logs-drawer-controls {
   display: flex;
   align-items: flex-end;
@@ -2175,6 +2233,26 @@ tr:hover .admin-copy-btn,
   cursor: pointer;
   user-select: none;
   list-style: none;
+}
+
+.logs-search-adv-summary::-webkit-details-marker,
+.logs-search-group-head::-webkit-details-marker {
+  display: none;
+}
+
+.logs-search-adv-summary > span:first-child::before,
+.logs-search-group-left::before {
+  content: "\25B8";
+  display: inline-block;
+  margin-right: 6px;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  transition: transform 0.14s ease;
+}
+
+.logs-search-adv[open] > .logs-search-adv-summary > span:first-child::before,
+.logs-search-group[open] > .logs-search-group-head .logs-search-group-left::before {
+  transform: rotate(90deg);
 }
 
 .logs-search-adv-summary:hover {
@@ -2250,9 +2328,13 @@ tr:hover .admin-copy-btn,
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding: 8px 12px;
+  padding: 8px 14px;
   background: var(--bg-recessed);
   border-bottom: 1px solid var(--border-subtle);
+}
+
+.logs-map-timeline[hidden] {
+  display: none;
 }
 
 .logs-map-timeline-head {
@@ -2271,12 +2353,28 @@ tr:hover .admin-copy-btn,
 .logs-map-timeline-sliders {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 10px;
+  gap: 14px;
   align-items: center;
+}
+
+.logs-map-slider-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.logs-map-slider-lbl {
+  font-size: 0.73rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .logs-range {
   width: 100%;
+  flex: 1 1 auto;
+  min-width: 0;
   accent-color: var(--accent-red);
   cursor: pointer;
 }

@@ -320,7 +320,7 @@
         }
       });
 
-      filterForm.querySelectorAll('select, input[name="regex"], input[name="mask_ips"], #logs-raw-html-cb').forEach(function (ctrl) {
+      filterForm.querySelectorAll('select, input[name="regex"], input[name="mask_ips"], #logs-raw-html-cb, input[name="time_from"], input[name="time_to"]').forEach(function (ctrl) {
         if (ctrl.dataset.autoBound) return;
         ctrl.dataset.autoBound = "1";
         ctrl.addEventListener("change", function () {
@@ -468,7 +468,9 @@
     row.classList.add("has-context-open");
     row.insertAdjacentElement("afterend", drawer);
 
-    var fetchUrl = url + (url.indexOf("?") === -1 ? "?" : "&") + "inline=1";
+    var fetchUrl = url.indexOf("inline=") === -1
+      ? url + (url.indexOf("?") === -1 ? "?" : "&") + "inline=1"
+      : url;
     fetch(fetchUrl, { credentials: "same-origin" })
       .then(function (resp) {
         if (!resp.ok) throw new Error("HTTP " + resp.status);
@@ -476,6 +478,7 @@
       })
       .then(function (html) {
         drawer.innerHTML = html;
+        initCopyButtons();
         var closeBtn = drawer.querySelector(".js-close-inline-context");
         if (closeBtn) {
           closeBtn.addEventListener("click", function () {
@@ -712,6 +715,8 @@
     var timeStartInput = document.getElementById("logs-map-time-start");
     var timeEndInput = document.getElementById("logs-map-time-end");
     var timeReadout = document.getElementById("logs-map-time-readout");
+    var timeFromLbl = document.getElementById("logs-map-time-from-lbl");
+    var timeToLbl = document.getElementById("logs-map-time-to-lbl");
     var timeCount = document.getElementById("logs-map-time-count");
     var timeResetBtn = document.getElementById("logs-map-time-reset");
 
@@ -909,22 +914,30 @@
 
     function parseEventSeconds(ev) {
       var raw = String((ev && (ev.ts || ev.timestamp)) || "");
+      var full = raw.match(/(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2}):(\d{2})/);
+      if (full) {
+        return {
+          hasDate: true,
+          sec: Date.UTC(Number(full[1]), Number(full[2]) - 1, Number(full[3]), Number(full[4]), Number(full[5]), Number(full[6])) / 1000
+        };
+      }
       var m = raw.match(/(\d{2}):(\d{2}):(\d{2})/);
       if (!m) return null;
-      return Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]);
+      return {
+        hasDate: false,
+        sec: Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3])
+      };
     }
 
     function fmtSecondsHMS(sec) {
       var s = Math.max(0, Math.round(sec));
-      var h = Math.floor(s / 3600) % 24;
-      var m = Math.floor((s % 3600) / 60);
-      var rem = s % 60;
+      var d = new Date(s * 1000);
       return (
-        String(h).padStart(2, "0") +
+        String(d.getUTCHours()).padStart(2, "0") +
         ":" +
-        String(m).padStart(2, "0") +
+        String(d.getUTCMinutes()).padStart(2, "0") +
         ":" +
-        String(rem).padStart(2, "0")
+        String(d.getUTCSeconds()).padStart(2, "0")
       );
     }
 
@@ -946,9 +959,13 @@
       var span = Math.max(1, timelineState.maxSec - timelineState.minSec);
       var fromSec = timelineState.minSec + span * timelineState.startRatio;
       var toSec = timelineState.minSec + span * timelineState.endRatio;
+      var fromStr = fmtSecondsHMS(fromSec);
+      var toStr = fmtSecondsHMS(toSec);
       if (timeReadout) {
-        timeReadout.textContent = fmtSecondsHMS(fromSec) + " \u2014 " + fmtSecondsHMS(toSec);
+        timeReadout.textContent = fromStr + " \u2014 " + toStr;
       }
+      if (timeFromLbl) timeFromLbl.textContent = fromStr;
+      if (timeToLbl) timeToLbl.textContent = toStr;
       var isFiltered = timelineState.startRatio > 0 || timelineState.endRatio < 1;
       if (timeResetBtn) timeResetBtn.hidden = !isFiltered;
       if (timeCount) {
@@ -960,9 +977,19 @@
     function setupTimelineForEvents(events) {
       var minSec = Infinity;
       var maxSec = -Infinity;
+      var prevNoDateSec = null;
+      var dayOffset = 0;
       for (var i = 0; i < events.length; i++) {
-        var s = parseEventSeconds(events[i]);
-        if (s !== null) {
+        var parsed = parseEventSeconds(events[i]);
+        if (parsed !== null) {
+          var s = parsed.sec;
+          if (!parsed.hasDate) {
+            if (prevNoDateSec !== null && s + dayOffset < prevNoDateSec - 43200) {
+              dayOffset += 86400;
+            }
+            s += dayOffset;
+            prevNoDateSec = s;
+          }
           events[i]._sec = s;
           if (s < minSec) minSec = s;
           if (s > maxSec) maxSec = s;
@@ -995,6 +1022,9 @@
         timelineState.startRatio = sVal / 1000;
         timelineState.endRatio = eVal / 1000;
         syncTimelineUI();
+        if (!state.selectedTile) {
+          showDeckOverview();
+        }
         requestDraw();
       };
       timeStartInput.addEventListener("input", function () { onSlider(true); });
@@ -1009,6 +1039,9 @@
         if (timeStartInput) timeStartInput.value = "0";
         if (timeEndInput) timeEndInput.value = "1000";
         syncTimelineUI();
+        if (!state.selectedTile) {
+          showDeckOverview();
+        }
         requestDraw();
       });
     }
@@ -1419,6 +1452,7 @@
         : null;
       loadAssetsForZ(z);
       buildDeckTabs();
+      syncTimelineUI();
       fitView();
       if (centerTarget && targetX && targetY && (!targetZ || targetZ === z)) {
         centerOnTile(targetX, targetY, 1.5, true);
@@ -1579,13 +1613,30 @@
       if (!pin || !pin.events || pin.events.length === 0) return;
       var cnt = pin.events.length;
       var first = pin.events[0];
+      var primaryCkey = (Array.isArray(first.ckeys) && first.ckeys[0]) ? first.ckeys[0] : "";
       var header = cnt === 1
-        ? (first.category + " #L" + first.line_no + (first.time_short ? " \u2022 " + first.time_short : ""))
+        ? (first.category + " #L" + first.line_no + (first.time_short ? " \u2022 " + first.time_short : "") + (primaryCkey ? " \u2022 " + primaryCkey : ""))
         : ("Кластер: " + cnt + " соб. (" + pin.x + ", " + pin.y + ")");
-      var previewRaw = cnt === 1
-        ? (first.plain_message || "")
-        : pin.events.slice(0, 3).map(function (e) { return e.category; }).join(", ") + (cnt > 3 ? " \u2026" : "");
-      var preview = previewRaw.length > 52 ? previewRaw.slice(0, 51) + "\u2026" : previewRaw;
+      var previewRaw = "";
+      if (cnt === 1) {
+        previewRaw = first.plain_message || "";
+      } else {
+        var catFreq = {};
+        var catOrder = [];
+        for (var ci = 0; ci < pin.events.length; ci++) {
+          var cname = pin.events[ci].category || "OTHER";
+          if (!catFreq[cname]) {
+            catFreq[cname] = 0;
+            catOrder.push(cname);
+          }
+          catFreq[cname] += 1;
+        }
+        catOrder.sort(function (a, b) { return catFreq[b] - catFreq[a]; });
+        previewRaw = catOrder.slice(0, 3).map(function (c) {
+          return c + "\u00D7" + catFreq[c];
+        }).join(", ") + (catOrder.length > 3 ? " \u2026" : "");
+      }
+      var preview = previewRaw.length > 56 ? previewRaw.slice(0, 55) + "\u2026" : previewRaw;
 
       ctx.save();
       ctx.font = "700 11px 'JetBrains Mono', Consolas, monospace";
@@ -2633,7 +2684,7 @@
     var qInput = document.getElementById("logs-rounds-q");
     var resetLink = document.getElementById("logs-rounds-reset");
     var chips = document.querySelectorAll("[data-quick-date]");
-    if (!form || !dateSelect || chips.length === 0) return;
+    if (!form || !dateSelect) return;
 
     function syncResetAndChips() {
       var curDate = dateSelect.value || "";
@@ -2643,6 +2694,21 @@
       if (resetLink) {
         var hasFilter = Boolean(curDate || (sourceSelect && sourceSelect.value) || (qInput && qInput.value.trim()));
         resetLink.hidden = !hasFilter;
+      }
+    }
+
+    function submitRoundsDirectory() {
+      syncResetAndChips();
+      var container = document.getElementById("logs-rounds-container");
+      if (container && window.htmx && typeof window.htmx.ajax === "function") {
+        var params = buildCleanFilterParams(form);
+        var qs = params.toString();
+        var action = form.getAttribute("action") || "/logs";
+        var url = action + (qs ? "?" + qs : "");
+        window.history.pushState({}, "", url);
+        window.htmx.ajax("GET", url, { target: "#logs-rounds-container", swap: "innerHTML" });
+      } else {
+        form.submit();
       }
     }
 
@@ -2658,20 +2724,29 @@
           dateSelect.appendChild(opt);
         }
         dateSelect.value = val;
-        syncResetAndChips();
-        if (window.htmx && typeof window.htmx.trigger === "function") {
-          window.htmx.trigger(form, "submit");
-        } else {
-          form.submit();
-        }
+        submitRoundsDirectory();
       });
     });
 
     if (!form.dataset.chipSyncBound) {
       form.dataset.chipSyncBound = "1";
-      dateSelect.addEventListener("change", syncResetAndChips);
-      if (sourceSelect) sourceSelect.addEventListener("change", syncResetAndChips);
-      if (qInput) qInput.addEventListener("input", syncResetAndChips);
+      var qDebounce = null;
+      form.addEventListener("submit", function (ev) {
+        var container = document.getElementById("logs-rounds-container");
+        if (container && window.htmx && typeof window.htmx.ajax === "function") {
+          ev.preventDefault();
+          submitRoundsDirectory();
+        }
+      });
+      dateSelect.addEventListener("change", submitRoundsDirectory);
+      if (sourceSelect) sourceSelect.addEventListener("change", submitRoundsDirectory);
+      if (qInput) {
+        qInput.addEventListener("input", function () {
+          syncResetAndChips();
+          clearTimeout(qDebounce);
+          qDebounce = setTimeout(submitRoundsDirectory, 280);
+        });
+      }
     }
     syncResetAndChips();
   }

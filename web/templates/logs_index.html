@@ -83,7 +83,7 @@
   <!-- Rounds Directory -->
   <section class="panel" aria-label="Список раундов">
     <div class="panel-header">
-      <h2 class="panel-title">Раунды ({{ total_rounds }})</h2>
+      <h2 class="panel-title">Раунды <span id="logs-rounds-header-count" class="mono-val cell-sub">({{ total_rounds }})</span></h2>
       <span class="mono-val cell-sub">{{ stats.total_size_label }} &middot; {{ "{:,}".format(stats.indexed_entries) }} строк в индексе</span>
     </div>
     <div class="logs-toolbar-compact">
@@ -101,10 +101,6 @@
       <form id="logs-rounds-filter-form"
             action="/logs"
             method="get"
-            hx-get="/logs"
-            hx-target="#logs-rounds-container"
-            hx-push-url="true"
-            hx-trigger="change from:select, submit, keyup changed delay:280ms from:#logs-rounds-q"
             class="logs-form-grid">
         <div class="logs-field logs-field-md">
           <select id="logs-rounds-date" name="date" class="logs-select" aria-label="Фильтр по дате">

@@ -121,6 +121,9 @@
           </select>
         </div>
         <button type="submit" class="logs-btn logs-btn-primary">Применить</button>
+        {% if q %}
+        <a href="/logs/round/{{ round.round_uid }}?file=qdel.log&sort_by={{ sort_by|urlencode }}&sort_dir={{ sort_dir|urlencode }}&qdel_view={{ qdel_view|urlencode }}" class="logs-btn">Сброс</a>
+        {% endif %}
       </form>
     </div>
 
@@ -136,17 +139,25 @@
             <th class="col-num">qdel()</th>
             <th class="col-num">Лишних</th>
             <th class="col-num">Destroy()</th>
+            <th class="col-num">Доля</th>
           </tr>
         </thead>
         <tbody>
           {% for item in qdel_report.entries %}
+          {% set cost_share = ((item.destroy_cost_ms / qdel_report.total_destroy_ms) * 100) if qdel_report.total_destroy_ms > 0 else 0 %}
           <tr>
             <td class="mono-val cell-sub">#L{{ item.line_no }}</td>
             <td class="mono-val">{{ item.path }}</td>
             <td class="mono-val col-num">{{ "{:,}".format(item.qdel_count) }}</td>
-            <td class="mono-val col-num">{{ "{:,}".format(item.unnecessary_count) }}</td>
+            <td class="mono-val col-num {% if item.unnecessary_count > 0 %}qdel-unnec-warn{% endif %}">{{ "{:,}".format(item.unnecessary_count) }}</td>
             <td class="mono-val col-num {% if item.destroy_cost_ms >= 5000 %}qdel-cost-high{% elif item.destroy_cost_ms >= 1000 %}qdel-cost-med{% endif %}">
               {{ "{:,.3f}".format(item.destroy_cost_ms) }} ms
+            </td>
+            <td class="col-num qdel-share-cell">
+              <div class="qdel-share-wrap" title="{{ '%.1f'|format(cost_share) }}% от общего времени Destroy()">
+                <progress class="qdel-share-bar" max="100" value="{{ '%.1f'|format(cost_share) }}"></progress>
+                <span class="mono-val cell-sub">{{ "%.1f"|format(cost_share) }}%</span>
+              </div>
             </td>
           </tr>
           {% endfor %}
@@ -343,10 +354,14 @@
           <button type="button" id="logs-map-time-reset" class="logs-btn logs-btn-sm" hidden>Весь раунд</button>
         </div>
         <div class="logs-map-timeline-sliders">
-          <label class="sr-only" for="logs-map-time-start">Начало окна времени</label>
-          <input type="range" id="logs-map-time-start" class="logs-range" min="0" max="1000" value="0" step="1">
-          <label class="sr-only" for="logs-map-time-end">Конец окна времени</label>
-          <input type="range" id="logs-map-time-end" class="logs-range" min="0" max="1000" value="1000" step="1">
+          <div class="logs-map-slider-group">
+            <label class="logs-map-slider-lbl mono-val" for="logs-map-time-start">От <span id="logs-map-time-from-lbl">&mdash;</span></label>
+            <input type="range" id="logs-map-time-start" class="logs-range" min="0" max="1000" value="0" step="1">
+          </div>
+          <div class="logs-map-slider-group">
+            <label class="logs-map-slider-lbl mono-val" for="logs-map-time-end">До <span id="logs-map-time-to-lbl">&mdash;</span></label>
+            <input type="range" id="logs-map-time-end" class="logs-range" min="0" max="1000" value="1000" step="1">
+          </div>
         </div>
       </div>
 

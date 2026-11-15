@@ -1122,6 +1122,8 @@ async def test_logs_ux_overhaul_partials_and_csp(logs_env):
         assert dash_htmx.status_code == 200
         assert "<!DOCTYPE html>" not in dash_htmx.text
         assert "logs-rounds-table" in dash_htmx.text
+        assert 'id="logs-rounds-header-count"' in dash_htmx.text
+        assert 'hx-swap-oob="true"' in dash_htmx.text
 
         # 2. Round viewer renders collapsible filter drawer & inline context URLs
         rnd_page = await client.get(f"/logs/round/{round_uid}")
@@ -1130,20 +1132,45 @@ async def test_logs_ux_overhaul_partials_and_csp(logs_env):
         assert 'id="logs-filter-drawer-toggle"' in rnd_page.text
         assert "&inline=1" in rnd_page.text
 
-        # 3. Map view renders timeline scrubber
+        ctx_inline = await client.get(f"/logs/round/{round_uid}/context?file=game.log&line=5&inline=1")
+        assert ctx_inline.status_code == 200
+        assert "logs-context-wrap" in ctx_inline.text
+        assert "js-close-inline-context" in ctx_inline.text
+
+        # 3. qdel.log view renders visual share bar
+        qdel_page = await client.get(f"/logs/round/{round_uid}?file=qdel.log")
+        assert qdel_page.status_code == 200
+        assert "qdel-share-bar" in qdel_page.text
+
+        # 4. Map view renders labeled timeline scrubber
         map_page = await client.get(f"/logs/round/{round_uid}?view=map")
         assert map_page.status_code == 200
         assert 'id="logs-map-timeline"' in map_page.text
         assert 'id="logs-map-time-start"' in map_page.text
         assert 'id="logs-map-time-end"' in map_page.text
+        assert 'id="logs-map-time-from-lbl"' in map_page.text
+        assert 'id="logs-map-time-to-lbl"' in map_page.text
 
-        # 4. Global search groups results by round and provides inline ±20 context trigger
+        # 5. Global search groups results by round and provides inline ±20 context trigger
         search_page = await client.get("/logs/search?q=punched&preset=all")
         assert search_page.status_code == 200
         assert "logs-search-group" in search_page.text
         assert "&inline=1" in search_page.text
 
-        # 5. CSP check: no inline <style> or <script> blocks in rendered /logs pages
-        for html_text in (dash.text, rnd_page.text, map_page.text, search_page.text):
+        # 6. Admin page renders unified icons & section tabs
+        admin_page = await client.get("/logs/admin")
+        assert admin_page.status_code == 200
+        assert "admin-section-tabs" in admin_page.text
+        assert "logs-ico" in admin_page.text
+
+        # 7. Unauthenticated auth gate renders access badge
+        async with AsyncClient(transport=ASGITransport(app=web_app.app), base_url="http://test") as anon:
+            auth_page = await anon.get("/logs")
+            assert auth_page.status_code == 401
+            assert "logs-auth-badge" in auth_page.text
+
+        # 8. CSP check: no inline <style> or <script> blocks or inline style="" in rendered /logs pages
+        for html_text in (dash.text, rnd_page.text, qdel_page.text, map_page.text, search_page.text, admin_page.text, auth_page.text):
             assert "<style" not in html_text.lower()
             assert "<script>" not in html_text.lower()
+            assert ' style="' not in html_text.lower()
