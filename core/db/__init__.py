@@ -45,11 +45,13 @@ from core.db.servers import (
     expire_stale_servers,
     get_active_servers,
     get_collector_state,
+    get_preferred_topic_queries,
     prune_server_snapshots,
     record_collector_cycle,
     record_server_snapshot,
     save_manifest,
     save_observation,
+    set_preferred_topic_query,
     upsert_server,
 )
 from core.db.sessions import update_player_sessions
@@ -94,6 +96,8 @@ __all__ = [
     "record_server_snapshot",
     "prune_server_snapshots",
     "get_active_servers",
+    "get_preferred_topic_queries",
+    "set_preferred_topic_query",
     "update_player_sessions",
     "get_player_dossier",
     "search_players",

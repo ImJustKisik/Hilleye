@@ -42,6 +42,15 @@ DEFAULT_CUSTOM_SERVERS: List[Dict[str, Any]] = [
 ]
 
 
+DEFAULT_TOPIC_PROBE_QUERIES: List[str] = [
+    "?status=2",
+    "?status",
+    "?status=1",
+    "?playing",
+    "?who",
+    "?ping",
+]
+
 class AppConfig(BaseModel):
     """Application configuration schema with fallback defaults and field synchronization."""
 
@@ -54,6 +63,21 @@ class AppConfig(BaseModel):
     topic_timeout_seconds: float = Field(default=3.0, gt=0, le=300, allow_inf_nan=False, description="Alias for socket_timeout")
     topic_concurrency: int = Field(default=30, ge=1, le=256, description="Maximum concurrent topic socket queries")
     topic_semaphore_limit: int = Field(default=30, ge=1, le=256, description="Alias for topic_concurrency")
+    topic_probe_queries: List[str] = Field(
+        default_factory=lambda: list(DEFAULT_TOPIC_PROBE_QUERIES),
+        min_length=1,
+        description="Ordered BYOND world/Topic() queries to probe per server",
+    )
+    pager_endpoints_source: str = Field(
+        default="",
+        description="Optional local file path or HTTP(S) URL to pager_endpoints.json",
+    )
+    pager_endpoints_refresh_seconds: int = Field(
+        default=600,
+        ge=30,
+        le=86400,
+        description="Refresh interval in seconds for pager_endpoints_source",
+    )
     cycle_timeout_seconds: float = Field(default=300, gt=0, le=3600, allow_inf_nan=False)
     stale_server_seconds: int = Field(default=900, ge=1)
     min_free_disk_mb: int = Field(default=100, ge=0)
@@ -102,6 +126,26 @@ class AppConfig(BaseModel):
     maps_auto_build_on_startup: bool = Field(default=True, description="Automatically build map cache on startup if missing")
 
     model_config = {"extra": "allow"}
+
+    @field_validator("topic_probe_queries", mode="before")
+    @classmethod
+    def validate_topic_probe_queries(cls, v: Any) -> List[str]:
+        if isinstance(v, str):
+            raw_items = [part.strip() for part in v.split(",")]
+        elif isinstance(v, (list, tuple)):
+            raw_items = [str(part).strip() for part in v if part is not None]
+        else:
+            return list(DEFAULT_TOPIC_PROBE_QUERIES)
+        cleaned: List[str] = []
+        seen = set()
+        for item in raw_items:
+            if not item:
+                continue
+            normalized = item if item.startswith("?") else f"?{item}"
+            if normalized not in seen:
+                seen.add(normalized)
+                cleaned.append(normalized)
+        return cleaned or list(DEFAULT_TOPIC_PROBE_QUERIES)
 
     @field_validator("discord_superadmin_ids", mode="before")
     @classmethod

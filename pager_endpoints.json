@@ -1,0 +1,664 @@
+{
+  "updated_at": 1794762211,
+  "count": 94,
+  "endpoints": {
+    "byond://BYOND.world.1759448188": {
+      "ip": "92.63.189.15",
+      "port": 7888,
+      "title": "[RU] BlueMoon — Delta Station",
+      "topic_query": "?status",
+      "updated_at": 1794761564
+    },
+    "byond://BYOND.world.1567254410": {
+      "ip": "31.192.105.214",
+      "port": 7834,
+      "title": "[RU] Twilight Axis (18+) - (WL -",
+      "topic_query": "?status=2",
+      "updated_at": 1794761566
+    },
+    "byond://BYOND.world.1753850212": {
+      "ip": "92.63.189.6",
+      "port": 7721,
+      "title": "[RU] SS1984 Paradise Main",
+      "topic_query": "?status=2",
+      "updated_at": 1794761569
+    },
+    "byond://BYOND.world.613355885": {
+      "ip": "104.243.45.106",
+      "port": 22096,
+      "title": "Ratwood Keep 2.0",
+      "topic_query": "?status=2",
+      "updated_at": 1794761828
+    },
+    "byond://BYOND.world.968190905": {
+      "ip": "5.196.83.43",
+      "port": 1984,
+      "title": "RU] The Fluffy Frontier 18+ MRP",
+      "topic_query": "?status=2",
+      "updated_at": 1794761831
+    },
+    "byond://BYOND.world.64556663": {
+      "ip": "104.243.37.225",
+      "port": 5223,
+      "title": "AZURE PEAK",
+      "topic_query": null,
+      "updated_at": 1794761840
+    },
+    "byond://BYOND.world.1750185015": {
+      "ip": "116.202.156.155",
+      "port": 2200,
+      "title": "[SS220][RU] BandaStation",
+      "topic_query": "?status=2",
+      "updated_at": 1794761843
+    },
+    "byond://BYOND.world.1036240576": {
+      "ip": "94.130.134.38",
+      "port": 1347,
+      "title": "[RU] CorvaxStation - Crimson Grid",
+      "topic_query": "?status=2",
+      "updated_at": 1794761849
+    },
+    "byond://BYOND.world.2091661633": {
+      "ip": "104.194.9.21",
+      "port": 3121,
+      "title": "? Medium Rare - Monkestation - The mix of classic and modern SS13, for goofy and chaotic fun.",
+      "topic_query": "?status=2",
+      "updated_at": 1794761853
+    },
+    "byond://BYOND.world.937097989": {
+      "ip": "92.63.189.34",
+      "port": 55554,
+      "title": "TerraGov Mark. V",
+      "topic_query": "?status=2",
+      "updated_at": 1794761857
+    },
+    "byond://BYOND.world.1172977271": {
+      "ip": "46.229.213.2",
+      "port": 2512,
+      "title": "RU StoneKeep",
+      "topic_query": "?status=2",
+      "updated_at": 1794761860
+    },
+    "byond://BYOND.world.1114862297": {
+      "ip": "104.194.9.21",
+      "port": 6967,
+      "title": "Crimson Grid - Monkestation World of Darkness!",
+      "topic_query": null,
+      "updated_at": 1794761867
+    },
+    "byond://BYOND.world.1462664943": {
+      "ip": "172.93.109.46",
+      "port": 1400,
+      "title": "Colonial Marines | CM-SS13 | 24/7 Distress Signal",
+      "topic_query": "?status",
+      "updated_at": 1794761872
+    },
+    "byond://BYOND.world.597924773": {
+      "ip": "94.130.237.220",
+      "port": 42069,
+      "title": "S.P.L.U.R.T 2.0: Gooning Boogaloo",
+      "topic_query": "?status=2",
+      "updated_at": 1794761879
+    },
+    "byond://BYOND.world.1647985120": {
+      "ip": "116.202.156.155",
+      "port": 3254,
+      "title": "[SS220][RU] Primera WL",
+      "topic_query": "?status=2",
+      "updated_at": 1794761884
+    },
+    "byond://BYOND.world.625451682": {
+      "ip": "15.235.86.196",
+      "port": 26400,
+      "title": "Goonstation 4 Roleplay: Sylvester",
+      "topic_query": "?status=2",
+      "updated_at": 1794761891
+    },
+    "byond://BYOND.world.438617635": {
+      "ip": "104.194.9.21",
+      "port": 1541,
+      "title": "Vanderlin (Hosted by Monkestation)",
+      "topic_query": "?status=2",
+      "updated_at": 1794761901
+    },
+    "byond://BYOND.world.1527519610": {
+      "ip": "206.72.203.254",
+      "port": 3000,
+      "title": "Bubberstation [18+ enforced, furry RP w/ antags!]",
+      "topic_query": "?status=2",
+      "updated_at": 1794761920
+    },
+    "byond://BYOND.world.480271309": {
+      "ip": "45.93.200.206",
+      "port": 7957,
+      "title": "[RU] Fallout 13 - CBET ATOMA [REDUX]",
+      "topic_query": "?status=2",
+      "updated_at": 1794761923
+    },
+    "byond://BYOND.world.420252028": {
+      "ip": "31.56.179.130",
+      "port": 50252,
+      "title": "[RU/ENG] MassMeta REDUX [LRP /tg/]",
+      "topic_query": null,
+      "updated_at": 1794761930
+    },
+    "byond://BYOND.world.1867628951": {
+      "ip": "15.235.86.196",
+      "port": 26100,
+      "title": "Goonstation 1 Classic: Heisenbee",
+      "topic_query": "?status=2",
+      "updated_at": 1794761942
+    },
+    "byond://BYOND.world.722308418": {
+      "ip": "51.79.52.10",
+      "port": 1447,
+      "title": "[US-Central] [MRP] /tg/station Manuel",
+      "topic_query": "?status=2",
+      "updated_at": 1794761945
+    },
+    "byond://BYOND.world.1019058778": {
+      "ip": "45.93.200.145",
+      "port": 1337,
+      "title": "[RU] Celadon Shiptest: Alpha",
+      "topic_query": "?status=2",
+      "updated_at": 1794761948
+    },
+    "byond://BYOND.world.796919113": {
+      "ip": "172.93.101.245",
+      "port": 6666,
+      "title": "Paradise Station",
+      "topic_query": null,
+      "updated_at": 1794761956
+    },
+    "byond://BYOND.world.818039076": {
+      "ip": "92.63.189.34",
+      "port": 55558,
+      "title": "[RU] DARKNESS: The Collapse — (18+)",
+      "topic_query": "?status=2",
+      "updated_at": 1794761958
+    },
+    "byond://BYOND.world.1370548571": {
+      "ip": "45.141.208.222",
+      "port": 41060,
+      "title": "[RU-EN] SS107 - ORBITALIS",
+      "topic_query": "?status",
+      "updated_at": 1794761961
+    },
+    "byond://BYOND.world.2088222940": {
+      "ip": "15.235.106.6",
+      "port": 44150,
+      "title": "Citadel Station 13 - Roleplay",
+      "topic_query": "?status=2",
+      "updated_at": 1794761964
+    },
+    "byond://BYOND.world.1587810522": {
+      "ip": "31.184.218.102",
+      "port": 2506,
+      "title": "Tau Ceti Classic (RU) — NSS Exodus",
+      "topic_query": "?status",
+      "updated_at": 1794761967
+    },
+    "byond://BYOND.world.1461329179": {
+      "ip": "78.29.55.150",
+      "port": 1337,
+      "title": "[RU] Howling Void 18+ Russian RP server",
+      "topic_query": "?status=2",
+      "updated_at": 1794761969
+    },
+    "byond://BYOND.world.1065473146": {
+      "ip": "144.76.219.90",
+      "port": 42069,
+      "title": "Veilbreak Frontier",
+      "topic_query": "?status=2",
+      "updated_at": 1794761972
+    },
+    "byond://BYOND.world.1264162183": {
+      "ip": "88.99.198.158",
+      "port": 3131,
+      "title": "Psychonaut Station",
+      "topic_query": "?status=2",
+      "updated_at": 1794761975
+    },
+    "byond://BYOND.world.37729296": {
+      "ip": "145.239.149.184",
+      "port": 5050,
+      "title": "SURREALIS",
+      "topic_query": null,
+      "updated_at": 1794761981
+    },
+    "byond://BYOND.world.1299642982": {
+      "ip": "172.93.105.88",
+      "port": 22095,
+      "title": "Nova Sector",
+      "topic_query": "?status=2",
+      "updated_at": 1794761985
+    },
+    "byond://BYOND.world.1072459942": {
+      "ip": "95.217.91.188",
+      "port": 1337,
+      "title": "Lobotomy Corporation 13",
+      "topic_query": "?status=2",
+      "updated_at": 1794761988
+    },
+    "byond://BYOND.world.199092914": {
+      "ip": "116.202.156.155",
+      "port": 5679,
+      "title": "[SS220][RU] BandaTroopers (CM-PVE)",
+      "topic_query": "?status",
+      "updated_at": 1794761991
+    },
+    "byond://BYOND.world.1853172128": {
+      "ip": "104.194.9.21",
+      "port": 3122,
+      "title": "? Monke's Paw - Monkestation - Higher roleplay, more player freedom.",
+      "topic_query": "?status=2",
+      "updated_at": 1794761994
+    },
+    "byond://BYOND.world.1691351507": {
+      "ip": "109.155.5.160",
+      "port": 8880,
+      "title": "Auld Lang Syne",
+      "topic_query": "?status=2",
+      "updated_at": 1794761997
+    },
+    "byond://BYOND.world.1995372651": {
+      "ip": "78.47.208.70",
+      "port": 7878,
+      "title": "BeeStation Sage - Roleplay",
+      "topic_query": null,
+      "updated_at": 1794762003
+    },
+    "byond://BYOND.world.791114546": {
+      "ip": "203.161.63.125",
+      "port": 30002,
+      "title": "ENCORE Heavy Roleplay (Hosted by the Workshop of Telescopes)",
+      "topic_query": "?status=2",
+      "updated_at": 1794762007
+    },
+    "byond://BYOND.world.679312394": {
+      "ip": "15.235.86.196",
+      "port": 26300,
+      "title": "Goonstation 3 Roleplay: Morty",
+      "topic_query": "?status=2",
+      "updated_at": 1794762010
+    },
+    "byond://BYOND.world.2126882226": {
+      "ip": "23.95.199.178",
+      "port": 1337,
+      "title": "Voidcrew Reborn",
+      "topic_query": "?status=2",
+      "updated_at": 1794762014
+    },
+    "byond://BYOND.world.113452973": {
+      "ip": "116.202.156.155",
+      "port": 5678,
+      "title": "[SS220][RU] BandaMarines(CM)",
+      "topic_query": "?status",
+      "updated_at": 1794762017
+    },
+    "byond://BYOND.world.1954488660": {
+      "ip": "51.79.52.10",
+      "port": 1337,
+      "title": "[US-Central] /tg/station Sybil",
+      "topic_query": "?status=2",
+      "updated_at": 1794762021
+    },
+    "byond://BYOND.world.1608635126": {
+      "ip": "37.27.129.146",
+      "port": 1338,
+      "title": "ApocryphaXIII",
+      "topic_query": "?status=2",
+      "updated_at": 1794762023
+    },
+    "byond://BYOND.world.684647456": {
+      "ip": "135.148.47.238",
+      "port": 1338,
+      "title": "SWAT13 | Co-op Police Raids (Discord)",
+      "topic_query": "?status",
+      "updated_at": 1794762027
+    },
+    "byond://BYOND.world.1116099958": {
+      "ip": "188.187.22.146",
+      "port": 25565,
+      "title": "[RU]HAKCAlin",
+      "topic_query": "?status=2",
+      "updated_at": 1794762030
+    },
+    "byond://BYOND.world.969152147": {
+      "ip": "104.243.41.36",
+      "port": 1343,
+      "title": "[ES] Vanderlin - Yunque (Hosted by Kotiro22)",
+      "topic_query": "?status=2",
+      "updated_at": 1794762033
+    },
+    "byond://BYOND.world.236683535": {
+      "ip": "92.63.189.15",
+      "port": 7892,
+      "title": "[RU] Whitemoon",
+      "topic_query": "?status=2",
+      "updated_at": 1794762035
+    },
+    "byond://BYOND.world.849064256": {
+      "ip": "45.152.241.75",
+      "port": 1337,
+      "title": "Meridian-Rift",
+      "topic_query": "?status=2",
+      "updated_at": 1794762038
+    },
+    "byond://BYOND.world.549616456": {
+      "ip": "45.77.104.119",
+      "port": 42069,
+      "title": "Toolbox Station",
+      "topic_query": null,
+      "updated_at": 1794762045
+    },
+    "byond://BYOND.world.136876601": {
+      "ip": "148.113.193.129",
+      "port": 8000,
+      "title": "Baystation",
+      "topic_query": "?status=2",
+      "updated_at": 1794762048
+    },
+    "byond://BYOND.world.1038611274": {
+      "ip": "104.243.45.106",
+      "port": 22094,
+      "title": "Skyrat SS13 - Roleplay Server for Serious and Silly RP [Weekly events, 18+]",
+      "topic_query": "?status=2",
+      "updated_at": 1794762051
+    },
+    "byond://BYOND.world.1032961108": {
+      "ip": "135.148.137.81",
+      "port": 2701,
+      "title": "Offical Halo: Space Station Evolved (Med-High RP)",
+      "topic_query": "?status=2",
+      "updated_at": 1794762054
+    },
+    "byond://BYOND.world.9151321": {
+      "ip": "5.78.184.148",
+      "port": 1338,
+      "title": "Blastwave Station",
+      "topic_query": "?status=2",
+      "updated_at": 1794762058
+    },
+    "byond://BYOND.world.155528507": {
+      "ip": "172.93.111.242",
+      "port": 2351,
+      "title": "HogStation",
+      "topic_query": "?status=2",
+      "updated_at": 1794762061
+    },
+    "byond://BYOND.world.1417211559": {
+      "ip": "24.235.232.171",
+      "port": 50942,
+      "title": "Traitor Deathmatch",
+      "topic_query": "?status",
+      "updated_at": 1794762065
+    },
+    "byond://BYOND.world.707608215": {
+      "ip": "92.63.189.15",
+      "port": 7980,
+      "title": "[RU]Coffeé colony - Sojourn 13",
+      "topic_query": "?status=2",
+      "updated_at": 1794762068
+    },
+    "byond://BYOND.world.1214187403": {
+      "ip": "149.56.241.49",
+      "port": 1337,
+      "title": "[MRP] Pentest SS13 - A Shiptest based server",
+      "topic_query": "?status=2",
+      "updated_at": 1794762071
+    },
+    "byond://BYOND.world.30318817": {
+      "ip": "104.225.250.142",
+      "port": 1337,
+      "title": "Riviera Station 13",
+      "topic_query": "?status=2",
+      "updated_at": 1794762074
+    },
+    "byond://BYOND.world.1222239319": {
+      "ip": "65.108.8.160",
+      "port": 51078,
+      "title": "Adventure Mode",
+      "topic_query": "?status",
+      "updated_at": 1794762078
+    },
+    "byond://BYOND.world.1582529866": {
+      "ip": "172.93.109.46",
+      "port": 1800,
+      "title": "Colonial Marines | CM-SS13 | Event Server",
+      "topic_query": "?status",
+      "updated_at": 1794762083
+    },
+    "byond://BYOND.world.276039217": {
+      "ip": "65.108.4.94",
+      "port": 1337,
+      "title": "Nocturne - [18+, Furry World of Darkness]",
+      "topic_query": "?status=2",
+      "updated_at": 1794762086
+    },
+    "byond://BYOND.world.386398313": {
+      "ip": "45.93.200.145",
+      "port": 7731,
+      "title": "[RU] [LRP] Celadon Skyrat",
+      "topic_query": "?status=2",
+      "updated_at": 1794762088
+    },
+    "byond://BYOND.world.1350684115": {
+      "ip": "174.117.104.37",
+      "port": 6060,
+      "title": "CRXB-Industries Experimental",
+      "topic_query": "?status=2",
+      "updated_at": 1794762091
+    },
+    "byond://BYOND.world.334981468": {
+      "ip": "91.99.62.34",
+      "port": 1337,
+      "title": "Lobotomy Corporation 13 - Official",
+      "topic_query": "?status=2",
+      "updated_at": 1794762094
+    },
+    "byond://BYOND.world.1967525268": {
+      "ip": "135.148.47.238",
+      "port": 1339,
+      "title": "Zombies13 | Co-op Zombie Survival (Discord)",
+      "topic_query": "?status",
+      "updated_at": 1794762098
+    },
+    "byond://BYOND.world.101181092": {
+      "ip": "162.35.242.221",
+      "port": 13380,
+      "title": "Babel Station [Auto-Translate] - Lawful Green",
+      "topic_query": "?status=2",
+      "updated_at": 1794762101
+    },
+    "byond://BYOND.world.969193262": {
+      "ip": "57.129.188.110",
+      "port": 25566,
+      "title": "Mixite/13",
+      "topic_query": "?status=2",
+      "updated_at": 1794762104
+    },
+    "byond://BYOND.world.1877177082": {
+      "ip": "135.148.32.205",
+      "port": 1337,
+      "title": "Fallout 13: The Long Crossing - Newest features in F13!",
+      "topic_query": "?status=2",
+      "updated_at": 1794762108
+    },
+    "byond://BYOND.world.1275271136": {
+      "ip": "96.20.137.183",
+      "port": 53909,
+      "title": "BlackAn",
+      "topic_query": "?status=2",
+      "updated_at": 1794762111
+    },
+    "byond://BYOND.world.548427615": {
+      "ip": "45.63.60.196",
+      "port": 1337,
+      "title": "Lumos Station 13",
+      "topic_query": "?status=2",
+      "updated_at": 1794762114
+    },
+    "byond://BYOND.world.1555395936": {
+      "ip": "172.93.101.77",
+      "port": 7777,
+      "title": "/vg/station",
+      "topic_query": "?status",
+      "updated_at": 1794762118
+    },
+    "byond://BYOND.world.1478724541": {
+      "ip": "188.245.253.9",
+      "port": 8085,
+      "title": "Coolstation LLJK 2",
+      "topic_query": "?status=2",
+      "updated_at": 1794762121
+    },
+    "byond://BYOND.world.889331134": {
+      "ip": "74.201.216.45",
+      "port": 41373,
+      "title": "ShiptestAuth",
+      "topic_query": "?status=2",
+      "updated_at": 1794762124
+    },
+    "byond://BYOND.world.1281950006": {
+      "ip": "92.63.189.15",
+      "port": 7894,
+      "title": "[RU] PaleMoon",
+      "topic_query": "?status=2",
+      "updated_at": 1794762126
+    },
+    "byond://BYOND.world.537372382": {
+      "ip": "62.84.176.153",
+      "port": 1361,
+      "title": "Babylon13",
+      "topic_query": null,
+      "updated_at": 1794762133
+    },
+    "byond://BYOND.world.1415539636": {
+      "ip": "206.72.203.254",
+      "port": 1337,
+      "title": "BUBBERSTATION OVERFLOW [18+ Furry Lowpop]",
+      "topic_query": "?status=2",
+      "updated_at": 1794762136
+    },
+    "byond://BYOND.world.1863788742": {
+      "ip": "104.243.38.223",
+      "port": 35565,
+      "title": "Sojourn 13",
+      "topic_query": "?status=2",
+      "updated_at": 1794762140
+    },
+    "byond://BYOND.world.238303723": {
+      "ip": "179.252.219.187",
+      "port": 42600,
+      "title": "Onyxbay",
+      "topic_query": "?status=2",
+      "updated_at": 1794762143
+    },
+    "byond://BYOND.world.1729249419": {
+      "ip": "64.20.37.50",
+      "port": 1234,
+      "title": "Official Burgerstation Server]",
+      "topic_query": "?ping",
+      "updated_at": 1794762150
+    },
+    "byond://BYOND.world.800976155": {
+      "ip": "185.183.12.76",
+      "port": 7724,
+      "title": "[RU] SS220 Paradise Extended eXperimental",
+      "topic_query": "?status=2",
+      "updated_at": 1794762153
+    },
+    "byond://BYOND.world.1757988185": {
+      "ip": "45.79.208.108",
+      "port": 3000,
+      "title": "Unknown Station",
+      "topic_query": "?status=2",
+      "updated_at": 1794762156
+    },
+    "byond://BYOND.world.634183887": {
+      "ip": "68.39.132.151",
+      "port": 25500,
+      "title": "NSS Exodus",
+      "topic_query": "?status",
+      "updated_at": 1794762161
+    },
+    "byond://BYOND.world.1880077254": {
+      "ip": "78.47.208.70",
+      "port": 1337,
+      "title": "NSV 13 | Official | MRP | 98% Free Lag | Spaceship Combat Server",
+      "topic_query": null,
+      "updated_at": 1794762167
+    },
+    "byond://BYOND.world.567741696": {
+      "ip": "92.63.189.6",
+      "port": 7726,
+      "title": "[RU] SS1984 Paradise Secondary",
+      "topic_query": "?status=2",
+      "updated_at": 1794762169
+    },
+    "byond://BYOND.world.1259122789": {
+      "ip": "51.161.199.66",
+      "port": 2337,
+      "title": "AuStation",
+      "topic_query": "?ping",
+      "updated_at": 1794762179
+    },
+    "byond://BYOND.world.725276160": {
+      "ip": "104.28.228.105",
+      "port": 25664,
+      "title": "[RU] Howling Void 18+ Russian RP server",
+      "topic_query": null,
+      "updated_at": 1794762184
+    },
+    "byond://BYOND.world.1519832961": {
+      "ip": "185.251.91.36",
+      "port": 65535,
+      "title": "A L E P H - NOW SUPPORTS ENGLISH",
+      "topic_query": "?status=2",
+      "updated_at": 1794762187
+    },
+    "byond://BYOND.world.1607083180": {
+      "ip": "152.53.122.132",
+      "port": 42069,
+      "title": "Oculis Station",
+      "topic_query": "?status=2",
+      "updated_at": 1794762190
+    },
+    "byond://BYOND.world.1160050408": {
+      "ip": "217.174.245.131",
+      "port": 19104,
+      "title": "Iskhod Outpost",
+      "topic_query": "?status=2",
+      "updated_at": 1794762193
+    },
+    "byond://BYOND.world.1395230632": {
+      "ip": "145.239.149.184",
+      "port": 1337,
+      "title": "Temperance13",
+      "topic_query": null,
+      "updated_at": 1794762200
+    },
+    "byond://BYOND.world.322771113": {
+      "ip": "92.63.189.21",
+      "port": 7777,
+      "title": "[RU] SS13 Dark Paradise",
+      "topic_query": "?status=2",
+      "updated_at": 1794762202
+    },
+    "byond://BYOND.world.213973024": {
+      "ip": "15.204.180.11",
+      "port": 10001,
+      "title": "fstation",
+      "topic_query": null,
+      "updated_at": 1794762208
+    },
+    "byond://BYOND.world.280470736": {
+      "ip": "188.245.253.9",
+      "port": 3336,
+      "title": "[EU] /tg/station Terry",
+      "topic_query": "?status=2",
+      "updated_at": 1794762211
+    }
+  }
+}

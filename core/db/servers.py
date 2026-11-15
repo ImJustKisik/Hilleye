@@ -285,3 +285,30 @@ async def get_active_servers() -> List[Dict[str, Any]]:
             }
             for r in rows
         ]
+
+
+@_read_snapshot
+async def get_preferred_topic_queries() -> Dict[str, str]:
+    """Returns mapping of server identifier -> preferred_topic_query for cached probes."""
+    import core.db as _db
+
+    conn = await _db.get_connection()
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "SELECT identifier, preferred_topic_query FROM servers WHERE preferred_topic_query IS NOT NULL;"
+        )
+        rows = await cur.fetchall()
+        return {str(r["identifier"]): str(r["preferred_topic_query"]) for r in rows if r["preferred_topic_query"]}
+
+
+@_write_transaction
+async def set_preferred_topic_query(identifier: str, query: Optional[str]) -> None:
+    """Persists or clears the preferred_topic_query for a server identifier."""
+    import core.db as _db
+
+    conn = await _db.get_connection()
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "UPDATE servers SET preferred_topic_query = ? WHERE identifier = ?;",
+            (query, identifier),
+        )

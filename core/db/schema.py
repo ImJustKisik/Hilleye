@@ -35,7 +35,8 @@ CREATE TABLE IF NOT EXISTS servers (
     enter_allowed BOOLEAN,
     respawn_allowed BOOLEAN,
     admin_list_json TEXT,
-    manifest_json TEXT
+    manifest_json TEXT,
+    preferred_topic_query TEXT
 );
 
 -- Server Online History Snapshots (Timeseries)
@@ -109,6 +110,7 @@ _SERVER_MIGRATION_COLUMNS: List[Tuple[str, str]] = [
     ("roster_observed_at", "REAL"),
     ("telemetry_observed_at", "REAL"),
     ("manifest_observed_at", "REAL"),
+    ("preferred_topic_query", "TEXT"),
 ]
 
 _DEPT_LABELS: Dict[str, str] = {

@@ -6,6 +6,8 @@
     "max_concurrent_sockets": 30,
     "byond_hub_url": "http://www.byond.com/games/Exadv1/SpaceStation13?format=text"
   },
+  "pager_endpoints_source": "pager_endpoints.json",
+  "pager_endpoints_refresh_seconds": 600,
   "custom_servers": [
     {
       "identifier": "byond://BYOND.world.1659081175",

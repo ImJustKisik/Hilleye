@@ -10,13 +10,14 @@ import logging
 from pathlib import Path
 import shutil
 import time
-from typing import Any, Dict, List, Optional, Set, Union
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 import httpx
 
 from core.byond_topic import (
     bounded_int,
     extract_player_list,
+    probe_server_topic,
     public_topic_ip,
     parse_adminlist_value,
     parse_manifest_response,
@@ -25,7 +26,7 @@ from core.byond_topic import (
 )
 from core import db as core_db
 from core.collector_lock import CollectorLock
-from core.config import AppConfig, get_config
+from core.config import AppConfig, DEFAULT_TOPIC_PROBE_QUERIES, get_config
 from core.db import (
     get_active_servers,
     normalize_ckey,
@@ -34,7 +35,7 @@ from core.db import (
     update_player_sessions,
     upsert_server,
 )
-from core.hub_scraper import ServerInfo, fetch_hub_servers
+from core.hub_scraper import ServerInfo, fetch_hub_servers, load_pager_endpoints, merge_custom_servers
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +102,17 @@ class Tracker:
         self.topic_concurrency: int = int(
             getattr(self.config, "topic_concurrency", 30)
         )
+        self.topic_probe_queries: List[str] = list(
+            getattr(self.config, "topic_probe_queries", DEFAULT_TOPIC_PROBE_QUERIES)
+        )
+        self.pager_endpoints_source: str = str(
+            getattr(self.config, "pager_endpoints_source", "") or ""
+        ).strip()
+        self.pager_endpoints_refresh_seconds: int = int(
+            getattr(self.config, "pager_endpoints_refresh_seconds", 600)
+        )
+        self._cached_pager_endpoints: Dict[str, Tuple[str, int]] = {}
+        self._pager_endpoints_fetched_at: float = 0.0
         self.custom_servers: List[Dict[str, Any]] = list(
             getattr(self.config, "custom_servers", [])
         )
@@ -194,6 +206,15 @@ class Tracker:
         started = time.monotonic()
         errors_before = self._errors_count
         self._degraded_reasons = []
+        if self.pager_endpoints_source and (
+            started - self._pager_endpoints_fetched_at >= self.pager_endpoints_refresh_seconds
+            or self._pager_endpoints_fetched_at == 0.0
+        ):
+            loaded = await load_pager_endpoints(self.pager_endpoints_source)
+            if loaded:
+                self._cached_pager_endpoints = loaded
+            self._pager_endpoints_fetched_at = started
+
         discovered_servers = []
         hub_healthy = False
         try:
@@ -204,6 +225,12 @@ class Tracker:
                 )
             hub_healthy = getattr(discovered_servers, "healthy", True)
             self._errors_count += getattr(discovered_servers, "errors", 0)
+            if self._cached_pager_endpoints:
+                discovered_servers = merge_custom_servers(
+                    discovered_servers,
+                    self.custom_servers,
+                    extra_pager_endpoints=self._cached_pager_endpoints,
+                )
             if not hub_healthy:
                 self._degraded_reasons.append("Hub discovery unavailable or partial")
         except Exception:
@@ -211,11 +238,18 @@ class Tracker:
             self._degraded_reasons.append("Hub discovery failed")
             logger.exception("Hub discovery failed")
             # Trusted custom endpoints still get polled during a Hub outage.
-            from core.hub_scraper import merge_custom_servers
-            discovered_servers = merge_custom_servers([], self.custom_servers)
+            discovered_servers = merge_custom_servers(
+                [],
+                self.custom_servers,
+                extra_pager_endpoints=self._cached_pager_endpoints,
+            )
 
         self._servers_tracked = len(discovered_servers)
         total_online_seen: Set[str] = set()
+        try:
+            preferred_queries = await core_db.get_preferred_topic_queries()
+        except Exception:
+            preferred_queries = {}
 
         def trusted(srv):
             return srv.trusted or any(
@@ -232,23 +266,20 @@ class Tracker:
             if srv.ip and 0 < srv.port <= 65535:
                 try:
                     ip = srv.ip if trusted(srv) else await asyncio.wait_for(public_topic_ip(srv.ip, srv.port), self.socket_timeout)
-                    for query in ("?status=2", "?status"):
-                        candidate = await query_topic(ip=ip, port=srv.port, query=query,
-                                                      timeout=self.socket_timeout, semaphore=self.semaphore)
-                        if isinstance(candidate, dict):
-                            candidate = {str(k).lower(): v for k, v in candidate.items()}
-                            roster_response = extract_player_list(candidate)
-                            usable = roster_response is not None or any(
-                                bounded_int(candidate.get(k)) is not None
-                                for k in ("players", "player_count", "admins", "active_players")
-                            ) or any(isinstance(candidate.get(k), str) and candidate[k].strip()
-                                     for k in ("version", "map", "map_name", "mode", "gamemode")) or any(
-                                parse_round_duration(candidate.get(k)) is not None
-                                for k in ("round_duration", "roundduration")
-                            )
-                            if usable:
-                                data = candidate
-                                break
+                    preferred = preferred_queries.get(srv.identifier)
+                    data, winning_query, should_clear = await probe_server_topic(
+                        ip=ip,
+                        port=srv.port,
+                        queries=self.topic_probe_queries,
+                        preferred_query=preferred,
+                        timeout=self.socket_timeout,
+                        semaphore=self.semaphore,
+                        query_fn=query_topic,
+                    )
+                    if winning_query and winning_query != preferred:
+                        await core_db.set_preferred_topic_query(srv.identifier, winning_query)
+                    elif should_clear:
+                        await core_db.set_preferred_topic_query(srv.identifier, None)
                     if data is None:
                         self._errors_count += 1
                 except Exception:

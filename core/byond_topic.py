@@ -14,7 +14,7 @@ import re
 import socket
 import struct
 import urllib.parse
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 from core.text_encoding import decode_byond_text
 
 logger = logging.getLogger(__name__)
@@ -467,6 +467,7 @@ async def query_topic(
     query: str = "?status",
     timeout: float = 3.0,
     semaphore: Optional[asyncio.Semaphore] = None,
+    raise_on_transport_error: bool = False,
 ) -> Union[Dict[str, Any], float, None]:
     """
     Connects asynchronously to a BYOND server, sends a Topic query packet,
@@ -544,6 +545,8 @@ async def query_topic(
         OSError,
         socket.gaierror,
     ):
+        if raise_on_transport_error:
+            raise
         return None
     except asyncio.CancelledError:
         raise
@@ -571,3 +574,101 @@ async def query_topic(
             return {"raw": parsed_str}
 
     return None
+
+
+def normalize_topic_payload(raw_result: Any) -> Optional[Dict[str, Any]]:
+    """Normalizes dict, list (?who/?playing), or numeric (?ping) Topic responses."""
+    if isinstance(raw_result, dict):
+        normalized = {str(k).lower(): v for k, v in raw_result.items()}
+        if set(normalized.keys()) == {"raw"}:
+            raw_count = bounded_int(normalized["raw"], maximum=100_000)
+            if raw_count is not None:
+                return {"players": raw_count}
+        return normalized
+    if isinstance(raw_result, list):
+        players = [p for p in raw_result if isinstance(p, str) and normalize_ckey(p)]
+        if players or len(raw_result) == 0:
+            return {"playerlist": PlayerList(players), "players": len(players)}
+        return None
+    if isinstance(raw_result, (int, float)) and not isinstance(raw_result, bool):
+        if math.isfinite(raw_result) and 0 <= raw_result <= 100_000:
+            return {"players": int(raw_result)}
+    return None
+
+
+def is_usable_topic_payload(data: Dict[str, Any]) -> bool:
+    """Returns True if a normalized Topic payload contains usable server telemetry."""
+    if extract_player_list(data) is not None:
+        return True
+    if any(bounded_int(data.get(k)) is not None for k in ("players", "player_count", "admins", "active_players")):
+        return True
+    if any(
+        isinstance(data.get(k), str) and data[k].strip()
+        for k in ("version", "map", "map_name", "mode", "gamemode")
+    ):
+        return True
+    if any(parse_round_duration(data.get(k)) is not None for k in ("round_duration", "roundduration")):
+        return True
+    return False
+
+
+async def probe_server_topic(
+    ip: str,
+    port: int,
+    queries: Sequence[str],
+    preferred_query: Optional[str] = None,
+    timeout: float = 3.0,
+    semaphore: Optional[asyncio.Semaphore] = None,
+    query_fn: Optional[Any] = None,
+) -> Tuple[Optional[Dict[str, Any]], Optional[str], bool]:
+    """
+    Probes a BYOND server with an ordered list of Topic queries, trying preferred_query first.
+
+    Returns:
+        (normalized_payload, winning_query, should_clear_preferred)
+        - Stops immediately on transport/socket errors without clearing preferred_query.
+        - Falls back across remaining queries if the server responds with unusable data.
+        - Sets should_clear_preferred=True if preferred_query was set and all probes
+          responded with unusable data.
+    """
+    ordered_queries: List[str] = []
+    if preferred_query:
+        ordered_queries.append(preferred_query)
+    for q in queries:
+        if q and q not in ordered_queries:
+            ordered_queries.append(q)
+
+    active_query_fn = query_fn or query_topic
+    for query in ordered_queries:
+        try:
+            if active_query_fn is query_topic:
+                candidate = await active_query_fn(
+                    ip=ip,
+                    port=port,
+                    query=query,
+                    timeout=timeout,
+                    semaphore=semaphore,
+                    raise_on_transport_error=True,
+                )
+            else:
+                candidate = await active_query_fn(
+                    ip=ip,
+                    port=port,
+                    query=query,
+                    timeout=timeout,
+                    semaphore=semaphore,
+                )
+        except (
+            asyncio.TimeoutError,
+            ConnectionRefusedError,
+            ConnectionResetError,
+            OSError,
+            socket.gaierror,
+        ):
+            return None, None, False
+
+        normalized = normalize_topic_payload(candidate)
+        if normalized is not None and is_usable_topic_payload(normalized):
+            return normalized, query, False
+
+    return None, None, bool(preferred_query)

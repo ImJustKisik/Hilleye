@@ -9,6 +9,7 @@ import html
 import asyncio
 import json
 import logging
+from pathlib import Path
 import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -449,8 +450,75 @@ def parse_hub_json(data: Any) -> HubResult:
     return HubResult(servers, errors=errors + int(len(entries) > MAX_HUB_SERVERS))
 
 
+def parse_pager_endpoints_payload(raw: Any) -> Dict[str, Tuple[str, int]]:
+    """Parses a pager_endpoints.json payload into {identifier: (ip, port)}."""
+    if isinstance(raw, dict) and isinstance(raw.get("endpoints"), dict):
+        source_map = raw["endpoints"]
+    elif isinstance(raw, dict):
+        source_map = raw
+    else:
+        return {}
+
+    parsed: Dict[str, Tuple[str, int]] = {}
+    for raw_ident, target in source_map.items():
+        if not isinstance(raw_ident, str) or not raw_ident.strip():
+            continue
+        ident = raw_ident.strip()
+        if not ident.lower().startswith("byond://"):
+            ident = f"byond://{ident}"
+
+        ip = ""
+        port = 0
+        if isinstance(target, dict):
+            ip = str(target.get("ip") or "").strip()
+            port = bounded_int(target.get("port"), maximum=65535) or 0
+        elif isinstance(target, (list, tuple)) and len(target) >= 2:
+            ip = str(target[0] or "").strip()
+            port = bounded_int(target[1], maximum=65535) or 0
+        elif isinstance(target, str) and ":" in target:
+            host_part, _, port_part = target.rpartition(":")
+            ip = host_part.strip()
+            port = bounded_int(port_part.strip(), maximum=65535) or 0
+
+        if ip and 1 <= port <= 65535:
+            parsed[ident] = (ip, port)
+    return parsed
+
+
+async def load_pager_endpoints(source: str, timeout: float = 5.0) -> Dict[str, Tuple[str, int]]:
+    """Loads resolved BYOND.world.<id> -> (ip, port) mappings from a local file or HTTP(S) URL."""
+    src = (source or "").strip()
+    if not src:
+        return {}
+    try:
+        if src.lower().startswith(("http://", "https://")):
+            async with httpx.AsyncClient(
+                timeout=timeout,
+                follow_redirects=True,
+                headers={"User-Agent": USER_AGENT},
+            ) as client:
+                resp = await client.get(src)
+                resp.raise_for_status()
+                if len(resp.content) > MAX_HUB_BYTES:
+                    logger.warning("pager_endpoints_source response too large (%d bytes)", len(resp.content))
+                    return {}
+                data = resp.json()
+        else:
+            path = Path(src)
+            if not path.is_file():
+                logger.debug("pager_endpoints_source file not found: %s", src)
+                return {}
+            data = json.loads(path.read_text(encoding="utf-8"))
+        return parse_pager_endpoints_payload(data)
+    except Exception as exc:
+        logger.warning("Failed to load pager_endpoints_source (%s): %s", src, exc)
+        return {}
+
+
 def merge_custom_servers(
-    hub_servers: List[ServerInfo], custom_servers: Optional[List[Dict[str, Any]]] = None
+    hub_servers: List[ServerInfo],
+    custom_servers: Optional[List[Dict[str, Any]]] = None,
+    extra_pager_endpoints: Optional[Dict[str, Tuple[str, int]]] = None,
 ) -> List[ServerInfo]:
     """
     Merges custom user-defined servers with hub-discovered servers.
@@ -566,6 +634,10 @@ def merge_custom_servers(
             if port > 0 and ip:
                 seen_endpoints.add((ip, port))
 
+    pager_map: Dict[str, Tuple[str, int]] = dict(KNOWN_PAGER_ENDPOINTS)
+    if extra_pager_endpoints:
+        pager_map.update(extra_pager_endpoints)
+
     # Add remaining hub servers that weren't matched by custom servers
     # Deduplicates hub servers even when custom_servers is empty or omitted
     for s in hub_servers:
@@ -575,8 +647,8 @@ def merge_custom_servers(
             continue
 
         # Upgrade known pager addresses to their real TCP endpoints if not already overridden
-        if s.port == 0 and s.identifier in KNOWN_PAGER_ENDPOINTS:
-            known_ip, known_port = KNOWN_PAGER_ENDPOINTS[s.identifier]
+        if s.port == 0 and s.identifier in pager_map:
+            known_ip, known_port = pager_map[s.identifier]
             if (known_ip, known_port) not in seen_endpoints:
                 s = ServerInfo(
                     identifier=s.identifier,
@@ -587,7 +659,7 @@ def merge_custom_servers(
                     player_count=s.player_count,
                     roster_known=s.roster_known,
                     from_hub=s.from_hub,
-                    trusted=True,
+                    trusted=(s.identifier in KNOWN_PAGER_ENDPOINTS),
                     count_known=s.count_known,
                     roster_complete=s.roster_complete,
                     map_name=s.map_name,
