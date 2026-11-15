@@ -26,3 +26,20 @@
     </form>
   </div>
 </div>
+
+<div id="logs-boot-overlay" class="logs-boot-overlay" hidden aria-hidden="true">
+  <div class="logs-boot-card">
+    <div class="logs-boot-brand">
+      <img src="/static/img/logo.svg" alt="" width="30" height="30" class="logs-boot-logo">
+      <span class="logs-boot-title mono-val">HILLEYE // LOGS</span>
+    </div>
+    <div class="logs-boot-status mono-val">
+      <span class="status-dot online" aria-hidden="true"></span>
+      <span>{{ user.display_name }}</span>
+      <span class="logs-user-role">({{ user.role }})</span>
+    </div>
+    <div class="logs-boot-track" aria-hidden="true">
+      <div class="logs-boot-bar"></div>
+    </div>
+  </div>
+</div>

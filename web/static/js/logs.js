@@ -2412,6 +2412,54 @@
     });
   }
 
+  function initLogsBootOverlay() {
+    var overlay = document.getElementById("logs-boot-overlay");
+    if (!overlay) return;
+
+    var reducedMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reducedMotion) {
+      overlay.remove();
+      return;
+    }
+
+    var storageKey = "hilleye_logs_boot_v1";
+    try {
+      if (window.sessionStorage.getItem(storageKey) === "1") {
+        overlay.remove();
+        return;
+      }
+      window.sessionStorage.setItem(storageKey, "1");
+    } catch (_err) {
+      overlay.remove();
+      return;
+    }
+
+    overlay.hidden = false;
+    var closed = false;
+    var timer = null;
+
+    function dismiss() {
+      if (closed) return;
+      closed = true;
+      if (timer) clearTimeout(timer);
+      document.removeEventListener("keydown", onKey);
+      overlay.classList.add("is-leaving");
+      setTimeout(function () {
+        overlay.remove();
+      }, 260);
+    }
+
+    function onKey(ev) {
+      if (ev.key === "Escape" || ev.key === "Enter" || ev.key === " ") {
+        dismiss();
+      }
+    }
+
+    overlay.addEventListener("click", dismiss);
+    document.addEventListener("keydown", onKey);
+    timer = setTimeout(dismiss, 900);
+  }
+
   function bindStreamHelpers() {
     initRoundFilterHelpers();
     initContextModal();
@@ -2420,6 +2468,7 @@
   }
 
   function initAll() {
+    initLogsBootOverlay();
     initDragAndDropUpload();
     initRoundMapViewer();
     bindStreamHelpers();

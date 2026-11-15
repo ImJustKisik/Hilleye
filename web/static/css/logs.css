@@ -1893,3 +1893,111 @@ tr:hover .admin-copy-btn,
     grid-column: span 1;
   }
 }
+
+/* ==========================================================================
+   Session Boot Overlay (one-time per tab session)
+   ========================================================================== */
+
+.logs-boot-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-canvas);
+  border-top: 2px solid var(--accent-red);
+  opacity: 1;
+  transition: opacity 0.24s ease, transform 0.24s ease;
+  cursor: pointer;
+}
+
+.logs-boot-overlay[hidden] {
+  display: none;
+}
+
+.logs-boot-overlay.is-leaving {
+  opacity: 0;
+  transform: translateY(-6px);
+  pointer-events: none;
+}
+
+.logs-boot-card {
+  width: min(320px, calc(100vw - 40px));
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 20px 22px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  animation: logs-boot-enter 0.22s ease-out both;
+}
+
+.logs-boot-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.logs-boot-logo {
+  display: block;
+  flex-shrink: 0;
+}
+
+.logs-boot-title {
+  font-size: 0.96rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--text-primary);
+}
+
+.logs-boot-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.logs-boot-track {
+  height: 2px;
+  width: 100%;
+  background: var(--border-subtle);
+  overflow: hidden;
+  border-radius: 1px;
+}
+
+.logs-boot-bar {
+  height: 100%;
+  width: 100%;
+  background: var(--accent-red);
+  transform-origin: left center;
+  animation: logs-boot-sweep 0.82s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+@keyframes logs-boot-enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes logs-boot-sweep {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .logs-boot-overlay {
+    display: none !important;
+  }
+}
