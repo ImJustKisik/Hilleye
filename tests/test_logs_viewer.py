@@ -1100,3 +1100,50 @@ async def test_admin_dashboard_audit_filtering_export_and_htmx(logs_env):
 
 
 
+
+
+async def test_logs_ux_overhaul_partials_and_csp(logs_env):
+    cfg = logs_env["cfg"]
+    await logs_db.sync_and_index_rounds(cfg.resolved_logs_root_dir(), cfg.resolved_logs_uploads_dir())
+    rounds, _ = await logs_db.list_rounds()
+    assert rounds
+    round_uid = rounds[0]["round_uid"]
+
+    async with AsyncClient(transport=ASGITransport(app=web_app.app), base_url="http://test") as client:
+        await _login_via_discord(client, "111111111111111111", "admin_user")
+
+        # 1. Dashboard renders quick date chips and HTMX returns partial table without full HTML shell
+        dash = await client.get("/logs")
+        assert dash.status_code == 200
+        assert "data-quick-date" in dash.text
+        assert 'id="logs-rounds-container"' in dash.text
+
+        dash_htmx = await client.get("/logs?source=disk", headers={"HX-Request": "true"})
+        assert dash_htmx.status_code == 200
+        assert "<!DOCTYPE html>" not in dash_htmx.text
+        assert "logs-rounds-table" in dash_htmx.text
+
+        # 2. Round viewer renders collapsible filter drawer & inline context URLs
+        rnd_page = await client.get(f"/logs/round/{round_uid}")
+        assert rnd_page.status_code == 200
+        assert 'id="logs-filter-drawer"' in rnd_page.text
+        assert 'id="logs-filter-drawer-toggle"' in rnd_page.text
+        assert "&inline=1" in rnd_page.text
+
+        # 3. Map view renders timeline scrubber
+        map_page = await client.get(f"/logs/round/{round_uid}?view=map")
+        assert map_page.status_code == 200
+        assert 'id="logs-map-timeline"' in map_page.text
+        assert 'id="logs-map-time-start"' in map_page.text
+        assert 'id="logs-map-time-end"' in map_page.text
+
+        # 4. Global search groups results by round and provides inline ±20 context trigger
+        search_page = await client.get("/logs/search?q=punched&preset=all")
+        assert search_page.status_code == 200
+        assert "logs-search-group" in search_page.text
+        assert "&inline=1" in search_page.text
+
+        # 5. CSP check: no inline <style> or <script> blocks in rendered /logs pages
+        for html_text in (dash.text, rnd_page.text, map_page.text, search_page.text):
+            assert "<style" not in html_text.lower()
+            assert "<script>" not in html_text.lower()

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlencode
 
@@ -61,6 +62,7 @@ def register_viewer_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
         for r in rounds:
             r["size_label"] = _fmt_bytes(int(r.get("game_log_size") or 0) + int(r.get("qdel_log_size") or 0))
             r["uploaded_at_str"] = _fmt_ts_utc(r.get("uploaded_at"))
+            r["duration_str"] = _round_time_vm(r).get("duration", "")
 
         stats = await logs_db.get_logs_stats()
         stats["total_size_label"] = _fmt_bytes(stats["total_bytes"])
@@ -68,10 +70,19 @@ def register_viewer_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
         root_dir = config.resolved_logs_root_dir()
         root_dir_exists = bool(root_dir and root_dir.is_dir())
         total_pages = max(1, (total_rounds + per_page - 1) // per_page)
+        now_utc = datetime.now(timezone.utc)
+        today_utc = now_utc.strftime("%Y-%m-%d")
+        yesterday_utc = (now_utc - timedelta(days=1)).strftime("%Y-%m-%d")
+
+        template_name = (
+            "partials/logs_rounds_table.html"
+            if request.headers.get("HX-Request") == "true"
+            else "logs_index.html"
+        )
 
         return ctx.templates.TemplateResponse(
             request=request,
-            name="logs_index.html",
+            name=template_name,
             context={
                 **shell,
                 "user": user,
@@ -83,6 +94,8 @@ def register_viewer_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
                 "date_filter": date,
                 "source_filter": source,
                 "q_filter": q,
+                "today_utc": today_utc,
+                "yesterday_utc": yesterday_utc,
                 "notice": notice,
                 "logs_root_dir": str(root_dir) if root_dir else "",
                 "root_dir_exists": root_dir_exists,
@@ -443,6 +456,22 @@ def register_viewer_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
                 }
             )
 
+        grouped_hits: List[Dict[str, Any]] = []
+        groups_by_uid: Dict[str, Dict[str, Any]] = {}
+        for item in hits_vm:
+            ruid = str(item.get("round_uid") or "")
+            grp = groups_by_uid.get(ruid)
+            if grp is None:
+                grp = {
+                    "round_uid": ruid,
+                    "round_id": item.get("round_id") or ruid,
+                    "round_date": item.get("round_date") or "",
+                    "hits": [],
+                }
+                groups_by_uid[ruid] = grp
+                grouped_hits.append(grp)
+            grp["hits"].append(item)
+
         total_pages = max(1, (total_hits + per_page - 1) // per_page)
         search_pairs: List[Tuple[str, str]] = [("preset", active_preset)]
         if q:
@@ -474,6 +503,7 @@ def register_viewer_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
                 **shell,
                 "user": user,
                 "hits": hits_vm,
+                "grouped_hits": grouped_hits,
                 "total_hits": total_hits,
                 "has_query": has_query,
                 "q": q,

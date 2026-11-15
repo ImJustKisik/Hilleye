@@ -10,16 +10,18 @@
   {% set logs_nav_active = 'search' %}
   {% include "partials/logs_topbar.html" %}
 
+  {% set has_adv_search = date_from or date_to or round_uid or z_level or only_coords or scan_debug or mask_ips or selected_cats %}
   <section class="panel" aria-label="Параметры поиска по раундам">
     <div class="panel-header">
       <h1 class="panel-title">Поиск по всем раундам</h1>
+      <span class="mono-val cell-sub">FTS5 индекс + опциональный скан DEBUG</span>
     </div>
     <div class="logs-panel-body">
-      <form action="/logs/search" method="get">
+      <form action="/logs/search" method="get" class="logs-search-form">
         <div class="logs-form-grid">
           <div class="logs-field">
             <label for="gsearch-q" class="logs-label">Запрос</label>
-            <input type="text" id="gsearch-q" name="q" value="{{ q }}" class="logs-input" placeholder="Текст, команда, объект...">
+            <input type="text" id="gsearch-q" name="q" value="{{ q }}" class="logs-input" placeholder="Текст, команда, объект... (нажмите /)">
           </div>
           <div class="logs-field logs-field-sm">
             <label for="gsearch-ckey" class="logs-label">Игрок (ckey)</label>
@@ -33,54 +35,69 @@
               {% endfor %}
             </select>
           </div>
-          <div class="logs-field logs-field-sm">
-            <label for="gsearch-df" class="logs-label">Дата от</label>
-            <input type="date" id="gsearch-df" name="date_from" value="{{ date_from }}" class="logs-input">
-          </div>
-          <div class="logs-field logs-field-sm">
-            <label for="gsearch-dt" class="logs-label">Дата до</label>
-            <input type="date" id="gsearch-dt" name="date_to" value="{{ date_to }}" class="logs-input">
-          </div>
-          <div class="logs-field logs-field-sm">
-            <label for="gsearch-round" class="logs-label">UID раунда</label>
-            <input type="text" id="gsearch-round" name="round_uid" value="{{ round_uid }}" class="logs-input" placeholder="Опционально">
-          </div>
-          <div class="logs-field logs-field-sm">
-            <label for="gsearch-z" class="logs-label">Палуба (Z)</label>
-            <select id="gsearch-z" name="z_level" class="logs-select">
-              <option value="">Любая</option>
-              {% for lv in z_levels %}
-              <option value="{{ lv.z }}" {% if z_level == lv.z %}selected{% endif %}>{{ lv.label }}</option>
-              {% endfor %}
-            </select>
-          </div>
           <button type="submit" class="logs-btn logs-btn-primary">Искать</button>
+          {% if has_query %}
           <a href="/logs/search" class="logs-btn">Сбросить</a>
+          {% endif %}
         </div>
 
-        <div class="logs-check-row">
-          <label class="logs-check-label">
-            <input type="checkbox" name="only_coords" value="1" {% if only_coords %}checked{% endif %}>
-            <span>Только с координатами</span>
-          </label>
-          <label class="logs-check-label" title="Сканировать неиндексированные DEBUG/SS строки на диске">
-            <input type="checkbox" name="scan_debug" value="1" {% if scan_debug %}checked{% endif %}>
-            <span>Включая DEBUG/SS (дольше)</span>
-          </label>
-          <label class="logs-check-label">
-            <input type="checkbox" name="mask_ips" value="1" {% if mask_ips %}checked{% endif %}>
-            <span>Скрыть IP/CID</span>
-          </label>
-        </div>
+        <details class="logs-search-adv" {% if has_adv_search %}open{% endif %}>
+          <summary class="logs-search-adv-summary">
+            <span>Дополнительные параметры (даты, палуба, категории, DEBUG)</span>
+            {% if has_adv_search %}
+            <span class="logs-badge-count mono-val">активны</span>
+            {% endif %}
+          </summary>
+          <div class="logs-search-adv-body">
+            <div class="logs-form-grid">
+              <div class="logs-field logs-field-sm">
+                <label for="gsearch-df" class="logs-label">Дата от</label>
+                <input type="date" id="gsearch-df" name="date_from" value="{{ date_from }}" class="logs-input">
+              </div>
+              <div class="logs-field logs-field-sm">
+                <label for="gsearch-dt" class="logs-label">Дата до</label>
+                <input type="date" id="gsearch-dt" name="date_to" value="{{ date_to }}" class="logs-input">
+              </div>
+              <div class="logs-field logs-field-sm">
+                <label for="gsearch-round" class="logs-label">UID раунда</label>
+                <input type="text" id="gsearch-round" name="round_uid" value="{{ round_uid }}" class="logs-input" placeholder="Опционально">
+              </div>
+              <div class="logs-field logs-field-sm">
+                <label for="gsearch-z" class="logs-label">Палуба (Z)</label>
+                <select id="gsearch-z" name="z_level" class="logs-select">
+                  <option value="">Любая</option>
+                  {% for lv in z_levels %}
+                  <option value="{{ lv.z }}" {% if z_level == lv.z %}selected{% endif %}>{{ lv.label }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+            </div>
 
-        <div class="logs-cat-chips" aria-label="Фильтр по категориям">
-          {% for cat in all_categories_vm %}
-          <label class="logs-cat-chip {% if cat.name in selected_cats %}is-selected{% endif %}" title="{{ cat.desc }}">
-            <input type="checkbox" name="cat" value="{{ cat.name }}" class="sr-only" {% if cat.name in selected_cats %}checked{% endif %}>
-            <span class="log-cat-tag {{ cat.css }}">{{ cat.name }}</span>
-          </label>
-          {% endfor %}
-        </div>
+            <div class="logs-check-row">
+              <label class="logs-check-label">
+                <input type="checkbox" name="only_coords" value="1" {% if only_coords %}checked{% endif %}>
+                <span>Только с координатами</span>
+              </label>
+              <label class="logs-check-label" title="Сканировать неиндексированные DEBUG/SS строки на диске">
+                <input type="checkbox" name="scan_debug" value="1" {% if scan_debug %}checked{% endif %}>
+                <span>Включая DEBUG/SS (дольше)</span>
+              </label>
+              <label class="logs-check-label">
+                <input type="checkbox" name="mask_ips" value="1" {% if mask_ips %}checked{% endif %}>
+                <span>Скрыть IP/CID</span>
+              </label>
+            </div>
+
+            <div class="logs-cat-chips" aria-label="Фильтр по категориям">
+              {% for cat in all_categories_vm %}
+              <label class="logs-cat-chip {% if cat.name in selected_cats %}is-selected{% endif %}" title="{{ cat.desc }}">
+                <input type="checkbox" name="cat" value="{{ cat.name }}" class="sr-only" {% if cat.name in selected_cats %}checked{% endif %}>
+                <span class="log-cat-tag {{ cat.css }}">{{ cat.name }}</span>
+              </label>
+              {% endfor %}
+            </div>
+          </div>
+        </details>
       </form>
     </div>
   </section>
@@ -89,49 +106,69 @@
   <section class="panel" aria-label="Результаты поиска">
     <div class="panel-header">
       <h2 class="panel-title">Найдено совпадений: {{ total_hits }}</h2>
-      <span class="mono-val cell-sub">стр. {{ page }} / {{ total_pages }}</span>
+      <span class="mono-val cell-sub">раундов на стр.: {{ grouped_hits|length }} &middot; стр. {{ page }} / {{ total_pages }}</span>
     </div>
 
-    {% if hits %}
-    <div class="log-stream">
-      {% for h in hits %}
-      <div class="log-row is-search-hit {{ h.cat_css }}">
-        <a href="/logs/round/{{ h.round_uid }}?file=game.log&preset=all&focus={{ h.line_no }}#L{{ h.line_no }}" class="log-ln" title="Открыть строку в раунде">#L{{ h.line_no }}</a>
-        <span class="log-ts" title="{{ h.timestamp }}">
-          <div>{{ h.round_date }}</div>
-          <div>{{ h.timestamp[11:] if h.timestamp|length > 11 else h.timestamp }}</div>
-        </span>
-        <span class="log-cat-cell">
-          <span class="log-cat-tag {{ h.cat_css }}">{{ h.category }}</span>
-          <a href="/logs/round/{{ h.round_uid }}?file=game.log" class="log-hit-round mono-val" title="Открыть раунд">#{{ h.round_id }}</a>
-        </span>
-        <div class="log-msg-cell">
-          <div>{{ h.safe_html | safe }}</div>
-          {% if h.coords or h.ckeys %}
-          <div class="log-meta-badges">
-            {% if h.coords %}
-            <a href="/logs/round/{{ h.round_uid }}?file=game.log&preset=all&view=map&z={{ h.coords.z }}&tx={{ h.coords.x }}&ty={{ h.coords.y }}&focus={{ h.line_no }}"
-               class="log-coord-badge"
-               title="Показать точку ({{ h.coords.x }}, {{ h.coords.y }}, Z{{ h.coords.z }}) на карте">
-              {{ h.coords.x }}, {{ h.coords.y }}, Z{{ h.coords.z }}{% if h.coords.area %} &middot; {{ h.coords.area }}{% endif %}
-            </a>
-            {% endif %}
-            {% for ck in h.ckeys %}
-            <span class="log-ckey-inline">
-              <a href="/logs/search?ckey={{ ck|urlencode }}&preset={{ active_preset|urlencode }}" class="log-ckey-btn" title="Искать по ckey">{{ ck }}</a>
-              <a href="/player/{{ ck }}" class="log-ckey-dossier" target="_blank" rel="noopener" title="Досье игрока">&nearr;</a>
-            </span>
-            {% endfor %}
+    {% if grouped_hits %}
+    <div class="logs-search-groups">
+      {% for grp in grouped_hits %}
+      <details open class="logs-search-group">
+        <summary class="logs-search-group-head">
+          <div class="logs-search-group-left">
+            <span class="mono-val logs-search-group-id">Раунд #{{ grp.round_id }}</span>
+            <span class="mono-val cell-sub">{{ grp.round_date }}</span>
+            <span class="logs-badge-count mono-val">{{ grp.hits|length }}</span>
           </div>
-          {% endif %}
+          <div class="logs-search-group-links">
+            <a href="/logs/round/{{ grp.round_uid }}?file=game.log" class="log-mini-btn">Открыть раунд</a>
+          </div>
+        </summary>
+
+        <div class="log-stream">
+          {% for h in grp.hits %}
+          <div class="log-row is-search-hit {{ h.cat_css }}">
+            <a href="/logs/round/{{ h.round_uid }}?file=game.log&preset=all&focus={{ h.line_no }}#L{{ h.line_no }}" class="log-ln" title="Открыть строку в раунде">#L{{ h.line_no }}</a>
+            <span class="log-ts" title="{{ h.timestamp }}">
+              {{ h.timestamp[11:] if h.timestamp|length > 11 else h.timestamp }}
+            </span>
+            <span class="log-cat-cell">
+              <span class="log-cat-tag {{ h.cat_css }}">{{ h.category }}</span>
+            </span>
+            <div class="log-msg-cell">
+              <div class="log-msg-body">{{ h.safe_html | safe }}</div>
+              {% if h.coords or h.ckeys %}
+              <div class="log-meta-badges">
+                {% if h.coords %}
+                <a href="/logs/round/{{ h.round_uid }}?file=game.log&preset=all&view=map&z={{ h.coords.z }}&tx={{ h.coords.x }}&ty={{ h.coords.y }}&focus={{ h.line_no }}"
+                   class="log-coord-badge"
+                   title="Показать точку ({{ h.coords.x }}, {{ h.coords.y }}, Z{{ h.coords.z }}) на карте">
+                  {{ h.coords.x }}, {{ h.coords.y }}, Z{{ h.coords.z }}{% if h.coords.area %} &middot; {{ h.coords.area }}{% endif %}
+                </a>
+                {% endif %}
+                {% for ck in h.ckeys %}
+                <span class="log-ckey-inline">
+                  <a href="/logs/search?ckey={{ ck|urlencode }}&preset={{ active_preset|urlencode }}" class="log-ckey-btn" title="Искать по ckey">{{ ck }}</a>
+                  <a href="/player/{{ ck }}" class="log-ckey-dossier" target="_blank" rel="noopener" title="Досье игрока">&nearr;</a>
+                </span>
+                {% endfor %}
+              </div>
+              {% endif %}
+            </div>
+            <div class="log-row-actions">
+              <button type="button"
+                      class="log-mini-btn"
+                      data-context-url="/logs/round/{{ h.round_uid }}/context?file=game.log&line={{ h.line_no }}&mask_ips={{ 1 if mask_ips else 0 }}&inline=1"
+                      data-line-no="{{ h.line_no }}"
+                      title="Показать соседние ±20 строк (включая DEBUG)">&plusmn;20</button>
+              <a href="/logs/round/{{ h.round_uid }}?file=game.log&preset=all&focus={{ h.line_no }}#L{{ h.line_no }}" class="log-mini-btn">Открыть</a>
+              {% if h.coords %}
+              <a href="/logs/round/{{ h.round_uid }}?file=game.log&preset=all&view=map&z={{ h.coords.z }}&tx={{ h.coords.x }}&ty={{ h.coords.y }}&focus={{ h.line_no }}" class="log-mini-btn">На карте</a>
+              {% endif %}
+            </div>
+          </div>
+          {% endfor %}
         </div>
-        <div class="log-row-actions">
-          <a href="/logs/round/{{ h.round_uid }}?file=game.log&preset=all&focus={{ h.line_no }}#L{{ h.line_no }}" class="log-mini-btn">Открыть</a>
-          {% if h.coords %}
-          <a href="/logs/round/{{ h.round_uid }}?file=game.log&preset=all&view=map&z={{ h.coords.z }}&tx={{ h.coords.x }}&ty={{ h.coords.y }}&focus={{ h.line_no }}" class="log-mini-btn">На карте</a>
-          {% endif %}
-        </div>
-      </div>
+      </details>
       {% endfor %}
     </div>
 
@@ -150,7 +187,7 @@
     {% endif %}
     {% else %}
     <div class="logs-panel-body">
-      <div class="block-empty">Совпадений не найдено. Для поиска в <code>DEBUG/SS</code> отметьте «Включая DEBUG/SS».</div>
+      <div class="block-empty">Совпадений не найдено. Попробуйте другой запрос или пресет «Все категории».</div>
     </div>
     {% endif %}
   </section>

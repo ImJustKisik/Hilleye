@@ -1983,3 +1983,340 @@ tr:hover .admin-copy-btn,
     display: none !important;
   }
 }
+
+
+/* ==========================================================================
+   /logs UX Overhaul Additions (Icons, Quick Chips, Filter Drawer, Timeline,
+   Grouped Search, Inline Context, Responsive Polish)
+   ========================================================================== */
+
+.logs-ico {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  opacity: 0.85;
+}
+
+.logs-inline-form {
+  display: inline-flex;
+  margin: 0;
+}
+
+.logs-user-name {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.logs-badge-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: rgba(217, 38, 56, 0.22);
+  border: 1px solid rgba(217, 38, 56, 0.5);
+  color: var(--text-primary);
+  font-size: 0.72rem;
+  font-weight: 600;
+  line-height: 1;
+}
+
+/* Dashboard Quick Date Chips & Rounds Table */
+.logs-quick-chips {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.logs-quick-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color 0.12s ease, background-color 0.12s ease, color 0.12s ease;
+}
+
+.logs-quick-chip:hover {
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+}
+
+.logs-quick-chip.is-active {
+  border-color: var(--accent-red);
+  background: rgba(217, 38, 56, 0.14);
+  color: var(--text-primary);
+}
+
+.logs-rounds-meta-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 7px 14px;
+  border-top: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-recessed);
+  font-size: 0.78rem;
+}
+
+.logs-count-em {
+  color: var(--text-primary);
+}
+
+.logs-round-id-link {
+  font-weight: 600;
+}
+
+.logs-source-tag.is-error {
+  border-color: rgba(239, 68, 68, 0.5);
+  color: #fca5a5;
+  background: rgba(239, 68, 68, 0.12);
+}
+
+.logs-time-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.logs-duration-pill {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 2px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  font-size: 0.72rem;
+}
+
+.col-actions {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.logs-row-quick-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+/* Round Viewer Compact Primary Toolbar & Collapsible Drawer */
+.logs-toolbar-primary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.logs-primary-inputs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 420px;
+  flex-wrap: wrap;
+}
+
+.logs-field-search {
+  flex: 1 1 200px;
+  min-width: 160px;
+}
+
+.logs-btn.is-active {
+  border-color: var(--accent-red);
+  background: rgba(217, 38, 56, 0.14);
+  color: var(--text-primary);
+}
+
+.logs-filter-drawer {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.logs-drawer-controls {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* Global Search Advanced & Grouped Rounds */
+.logs-search-adv {
+  margin-top: 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-recessed);
+}
+
+.logs-search-adv-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+}
+
+.logs-search-adv-summary:hover {
+  color: var(--text-primary);
+}
+
+.logs-search-adv-body {
+  padding: 10px 12px 12px;
+  border-top: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.logs-search-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 12px;
+}
+
+.logs-search-group {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  overflow: hidden;
+}
+
+.logs-search-group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 12px;
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border-subtle);
+  cursor: pointer;
+  list-style: none;
+}
+
+.logs-search-group:not([open]) .logs-search-group-head {
+  border-bottom: none;
+}
+
+.logs-search-group-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.logs-search-group-id {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.logs-search-group-links {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Inline Context Wrap */
+.logs-context-wrap {
+  padding: 8px 12px;
+  background: var(--bg-recessed);
+  border-top: 1px solid var(--border-strong);
+  border-bottom: 1px solid var(--border-strong);
+}
+
+/* Map Timeline Scrubber */
+.logs-map-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 12px;
+  background: var(--bg-recessed);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.logs-map-timeline-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.logs-map-time-readout {
+  font-size: 0.8rem;
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.logs-map-timeline-sliders {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  align-items: center;
+}
+
+.logs-range {
+  width: 100%;
+  accent-color: var(--accent-red);
+  cursor: pointer;
+}
+
+/* Responsive Adjustments */
+@media (max-width: 900px) {
+  .logs-toolbar-primary {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .logs-primary-inputs {
+    flex: 1 1 auto;
+  }
+
+  .logs-map-timeline-sliders {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+}
+
+@media (max-width: 640px) {
+  .logs-topbar {
+    padding: 8px 10px;
+  }
+
+  .logs-user-meta {
+    display: none;
+  }
+
+  .logs-field-search,
+  .logs-field-ckey {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+
+  .logs-rounds-table th:nth-child(4),
+  .logs-rounds-table td:nth-child(4),
+  .logs-rounds-table th:nth-child(6),
+  .logs-rounds-table td:nth-child(6) {
+    display: none;
+  }
+}

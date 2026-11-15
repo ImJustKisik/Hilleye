@@ -244,17 +244,27 @@
       var ttVal = (filterForm.querySelector('input[name="time_to"]') || {}).value || "";
       var rxCb = filterForm.querySelector('input[name="regex"]');
       var mkCb = filterForm.querySelector('input[name="mask_ips"]');
+      var advCount =
+        (radVal > 0 ? 1 : 0) +
+        (tfVal.trim() ? 1 : 0) +
+        (ttVal.trim() ? 1 : 0) +
+        (rxCb && rxCb.checked ? 1 : 0) +
+        (mkCb && mkCb.checked ? 1 : 0) +
+        (rawHtmlCb && rawHtmlCb.checked ? 1 : 0) +
+        filterForm.querySelectorAll('input[name="cat"]:checked').length;
+
+      var drawerBadge = document.getElementById("logs-filter-drawer-badge");
+      if (drawerBadge) {
+        drawerBadge.textContent = String(advCount);
+        drawerBadge.hidden = advCount === 0;
+      }
+
       var hasActiveFilters =
         anyCatChecked ||
         (activePreset && activePreset !== "gameplay") ||
         Boolean(qVal.trim()) ||
         Boolean(ckVal.trim()) ||
-        radVal > 0 ||
-        Boolean(tfVal.trim()) ||
-        Boolean(ttVal.trim()) ||
-        Boolean(rxCb && rxCb.checked) ||
-        Boolean(mkCb && mkCb.checked) ||
-        Boolean(rawHtmlCb && rawHtmlCb.checked);
+        advCount > 0;
       resetBtn.hidden = !hasActiveFilters;
     }
   }
@@ -320,11 +330,36 @@
         });
       });
 
+      var drawerToggle = document.getElementById("logs-filter-drawer-toggle");
+      var drawerEl = document.getElementById("logs-filter-drawer");
+      if (drawerToggle && drawerEl && !drawerToggle.dataset.bound) {
+        drawerToggle.dataset.bound = "1";
+        drawerToggle.addEventListener("click", function () {
+          var willOpen = drawerEl.hidden;
+          drawerEl.hidden = !willOpen;
+          drawerToggle.setAttribute("aria-expanded", willOpen ? "true" : "false");
+          drawerToggle.classList.toggle("is-active", willOpen);
+        });
+      }
+
+      var liveSearchTimer = null;
       filterForm.querySelectorAll('input[type="text"]').forEach(function (inp) {
         if (inp.dataset.resetBound) return;
         inp.dataset.resetBound = "1";
         inp.addEventListener("input", function () {
           syncToolbarActiveStates(filterForm);
+          if (
+            (inp.id === "logs-q-input" || inp.id === "logs-ckey-input") &&
+            document.getElementById("logs-stream-container") &&
+            window.htmx
+          ) {
+            clearTimeout(liveSearchTimer);
+            liveSearchTimer = setTimeout(function () {
+              var pageInput = filterForm.querySelector('input[name="page"]');
+              if (pageInput) pageInput.value = "1";
+              submitFilterForm(filterForm);
+            }, 320);
+          }
         });
       });
     }
@@ -497,23 +532,25 @@
     var modal = document.getElementById("log-context-modal");
     var modalBody = document.getElementById("log-context-modal-body");
     var closeBtn = document.getElementById("log-context-modal-close");
-    if (!modal || !modalBody) return;
 
     function closeModal() {
+      if (!modal || !modalBody) return;
       modal.hidden = true;
       modalBody.innerHTML = "";
     }
 
-    if (closeBtn && !closeBtn.dataset.bound) {
-      closeBtn.dataset.bound = "1";
-      closeBtn.addEventListener("click", closeModal);
-    }
+    if (modal && modalBody) {
+      if (closeBtn && !closeBtn.dataset.bound) {
+        closeBtn.dataset.bound = "1";
+        closeBtn.addEventListener("click", closeModal);
+      }
 
-    if (!modal.dataset.bound) {
-      modal.dataset.bound = "1";
-      modal.addEventListener("click", function (ev) {
-        if (ev.target === modal) closeModal();
-      });
+      if (!modal.dataset.bound) {
+        modal.dataset.bound = "1";
+        modal.addEventListener("click", function (ev) {
+          if (ev.target === modal) closeModal();
+        });
+      }
     }
 
     document.querySelectorAll("[data-context-url]").forEach(function (btn) {
@@ -551,6 +588,15 @@
           searchInput.select();
         }
         return;
+      }
+
+      if ((ev.key === "f" || ev.key === "F" || ev.key === "\u0430" || ev.key === "\u0410") && !isTyping && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {
+        var drawerBtn = document.getElementById("logs-filter-drawer-toggle");
+        if (drawerBtn) {
+          ev.preventDefault();
+          drawerBtn.click();
+          return;
+        }
       }
 
       if (ev.key === "Escape") {
@@ -662,6 +708,12 @@
     var inspectorTitle = document.getElementById("logs-map-inspector-title");
     var inspectorSub = document.getElementById("logs-map-inspector-sub");
     var inspectorList = document.getElementById("logs-map-inspector-list");
+    var timelineEl = document.getElementById("logs-map-timeline");
+    var timeStartInput = document.getElementById("logs-map-time-start");
+    var timeEndInput = document.getElementById("logs-map-time-end");
+    var timeReadout = document.getElementById("logs-map-time-readout");
+    var timeCount = document.getElementById("logs-map-time-count");
+    var timeResetBtn = document.getElementById("logs-map-time-reset");
 
     var ds = root.dataset;
     var eventsUrl = ds.eventsUrl || "";
@@ -855,12 +907,125 @@
       centerBtn.hidden = Boolean(state.atTargetView && (!targetZ || targetZ === state.currentZ));
     }
 
+    function parseEventSeconds(ev) {
+      var raw = String((ev && (ev.ts || ev.timestamp)) || "");
+      var m = raw.match(/(\d{2}):(\d{2}):(\d{2})/);
+      if (!m) return null;
+      return Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]);
+    }
+
+    function fmtSecondsHMS(sec) {
+      var s = Math.max(0, Math.round(sec));
+      var h = Math.floor(s / 3600) % 24;
+      var m = Math.floor((s % 3600) / 60);
+      var rem = s % 60;
+      return (
+        String(h).padStart(2, "0") +
+        ":" +
+        String(m).padStart(2, "0") +
+        ":" +
+        String(rem).padStart(2, "0")
+      );
+    }
+
+    var timelineState = {
+      hasTime: false,
+      minSec: 0,
+      maxSec: 0,
+      startRatio: 0,
+      endRatio: 1
+    };
+
+    function syncTimelineUI() {
+      if (!timelineEl || !timeStartInput || !timeEndInput) return;
+      if (!timelineState.hasTime || state.events.length < 2) {
+        timelineEl.hidden = true;
+        return;
+      }
+      timelineEl.hidden = false;
+      var span = Math.max(1, timelineState.maxSec - timelineState.minSec);
+      var fromSec = timelineState.minSec + span * timelineState.startRatio;
+      var toSec = timelineState.minSec + span * timelineState.endRatio;
+      if (timeReadout) {
+        timeReadout.textContent = fmtSecondsHMS(fromSec) + " \u2014 " + fmtSecondsHMS(toSec);
+      }
+      var isFiltered = timelineState.startRatio > 0 || timelineState.endRatio < 1;
+      if (timeResetBtn) timeResetBtn.hidden = !isFiltered;
+      if (timeCount) {
+        var deckEvs = currentZEvents();
+        timeCount.textContent = "на палубе: " + deckEvs.length;
+      }
+    }
+
+    function setupTimelineForEvents(events) {
+      var minSec = Infinity;
+      var maxSec = -Infinity;
+      for (var i = 0; i < events.length; i++) {
+        var s = parseEventSeconds(events[i]);
+        if (s !== null) {
+          events[i]._sec = s;
+          if (s < minSec) minSec = s;
+          if (s > maxSec) maxSec = s;
+        }
+      }
+      timelineState.hasTime = isFinite(minSec) && isFinite(maxSec) && maxSec > minSec;
+      timelineState.minSec = timelineState.hasTime ? minSec : 0;
+      timelineState.maxSec = timelineState.hasTime ? maxSec : 0;
+      timelineState.startRatio = 0;
+      timelineState.endRatio = 1;
+      if (timeStartInput) timeStartInput.value = "0";
+      if (timeEndInput) timeEndInput.value = "1000";
+      syncTimelineUI();
+    }
+
+    if (timeStartInput && timeEndInput && !timeStartInput.dataset.bound) {
+      timeStartInput.dataset.bound = "1";
+      var onSlider = function (isStart) {
+        var sVal = Number(timeStartInput.value);
+        var eVal = Number(timeEndInput.value);
+        if (sVal > eVal) {
+          if (isStart) {
+            eVal = sVal;
+            timeEndInput.value = String(eVal);
+          } else {
+            sVal = eVal;
+            timeStartInput.value = String(sVal);
+          }
+        }
+        timelineState.startRatio = sVal / 1000;
+        timelineState.endRatio = eVal / 1000;
+        syncTimelineUI();
+        requestDraw();
+      };
+      timeStartInput.addEventListener("input", function () { onSlider(true); });
+      timeEndInput.addEventListener("input", function () { onSlider(false); });
+    }
+
+    if (timeResetBtn && !timeResetBtn.dataset.bound) {
+      timeResetBtn.dataset.bound = "1";
+      timeResetBtn.addEventListener("click", function () {
+        timelineState.startRatio = 0;
+        timelineState.endRatio = 1;
+        if (timeStartInput) timeStartInput.value = "0";
+        if (timeEndInput) timeEndInput.value = "1000";
+        syncTimelineUI();
+        requestDraw();
+      });
+    }
+
     function currentZEvents() {
       var out = [];
+      var useWindow = timelineState.hasTime && (timelineState.startRatio > 0 || timelineState.endRatio < 1);
+      var span = Math.max(1, timelineState.maxSec - timelineState.minSec);
+      var minAllowed = timelineState.minSec + span * timelineState.startRatio - 0.5;
+      var maxAllowed = timelineState.minSec + span * timelineState.endRatio + 0.5;
       for (var i = 0; i < state.events.length; i++) {
-        if (state.events[i].z === state.currentZ) {
-          out.push(state.events[i]);
+        var ev = state.events[i];
+        if (ev.z !== state.currentZ) continue;
+        if (useWindow && typeof ev._sec === "number") {
+          if (ev._sec < minAllowed || ev._sec > maxAllowed) continue;
         }
+        out.push(ev);
       }
       return out;
     }
@@ -1712,6 +1877,7 @@
       state.events = Array.isArray(data.events) ? data.events : [];
       state.zCounts = data.z_counts || {};
       state.hoverPin = null;
+      setupTimelineForEvents(state.events);
 
       if (isInitial) {
         if (!targetZ) {
@@ -2460,6 +2626,56 @@
     timer = setTimeout(dismiss, 900);
   }
 
+  function initQuickDateChips() {
+    var form = document.getElementById("logs-rounds-filter-form");
+    var dateSelect = document.getElementById("logs-rounds-date");
+    var sourceSelect = document.getElementById("logs-rounds-source");
+    var qInput = document.getElementById("logs-rounds-q");
+    var resetLink = document.getElementById("logs-rounds-reset");
+    var chips = document.querySelectorAll("[data-quick-date]");
+    if (!form || !dateSelect || chips.length === 0) return;
+
+    function syncResetAndChips() {
+      var curDate = dateSelect.value || "";
+      chips.forEach(function (ch) {
+        ch.classList.toggle("is-active", (ch.dataset.quickDate || "") === curDate);
+      });
+      if (resetLink) {
+        var hasFilter = Boolean(curDate || (sourceSelect && sourceSelect.value) || (qInput && qInput.value.trim()));
+        resetLink.hidden = !hasFilter;
+      }
+    }
+
+    chips.forEach(function (chip) {
+      if (chip.dataset.bound) return;
+      chip.dataset.bound = "1";
+      chip.addEventListener("click", function () {
+        var val = chip.dataset.quickDate || "";
+        if (val && !Array.prototype.some.call(dateSelect.options, function (o) { return o.value === val; })) {
+          var opt = document.createElement("option");
+          opt.value = val;
+          opt.textContent = val;
+          dateSelect.appendChild(opt);
+        }
+        dateSelect.value = val;
+        syncResetAndChips();
+        if (window.htmx && typeof window.htmx.trigger === "function") {
+          window.htmx.trigger(form, "submit");
+        } else {
+          form.submit();
+        }
+      });
+    });
+
+    if (!form.dataset.chipSyncBound) {
+      form.dataset.chipSyncBound = "1";
+      dateSelect.addEventListener("change", syncResetAndChips);
+      if (sourceSelect) sourceSelect.addEventListener("change", syncResetAndChips);
+      if (qInput) qInput.addEventListener("input", syncResetAndChips);
+    }
+    syncResetAndChips();
+  }
+
   function bindStreamHelpers() {
     initRoundFilterHelpers();
     initContextModal();
@@ -2470,6 +2686,7 @@
   function initAll() {
     initLogsBootOverlay();
     initDragAndDropUpload();
+    initQuickDateChips();
     initRoundMapViewer();
     bindStreamHelpers();
     initKeyboardShortcuts();
@@ -2483,6 +2700,8 @@
         bindStreamHelpers();
       } else if (target.id === "admin-audit-container") {
         initAdminAuditHelpers();
+      } else if (target.id === "logs-rounds-container") {
+        initQuickDateChips();
       }
     });
   }

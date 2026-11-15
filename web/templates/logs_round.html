@@ -161,7 +161,9 @@
 
     {% else %}
     <!-- game.log / initialize.log Filter Toolbar -->
-    {% set has_active_filters = (active_preset != 'gameplay') or selected_cats or q or ckey or (radius and radius > 0) or time_from or time_to or use_regex or mask_ips or (not render_html) %}
+    {% set adv_count = (1 if (radius and radius > 0) else 0) + (1 if time_from else 0) + (1 if time_to else 0) + (1 if use_regex else 0) + (1 if mask_ips else 0) + (1 if not render_html else 0) + (selected_cats|length) %}
+    {% set has_active_filters = (active_preset != 'gameplay') or q or ckey or (adv_count > 0) %}
+    {% set drawer_open = (adv_count > 0) %}
     <div id="logs-round-toolbar" class="logs-panel-body {% if view_mode == 'map' %}logs-toolbar-compact{% else %}logs-sticky-toolbar{% endif %}">
       <form id="logs-filter-form" action="/logs/round/{{ round.round_uid }}" method="get">
         <input type="hidden" name="file" value="{{ selected_file }}">
@@ -173,7 +175,8 @@
         <input type="hidden" id="logs-per-page" name="per_page" value="{{ per_page }}">
         {% endif %}
 
-        <div class="logs-toolbar-top">
+        <!-- Primary Compact Row -->
+        <div class="logs-toolbar-primary">
           <div class="logs-preset-bar" aria-label="Пресеты категорий">
             {% for pid, pinfo in presets.items() %}
             <button type="button"
@@ -185,77 +188,92 @@
             {% endfor %}
           </div>
 
-          <div class="logs-check-row">
-            <label class="logs-check-label" title="Интерпретировать строку поиска как регулярное выражение">
-              <input type="checkbox" name="regex" value="1" {% if use_regex %}checked{% endif %}>
-              <span>Regex</span>
-            </label>
-            <label class="logs-check-label" title="Скрыть IP-адреса и CID игроков в выводе">
-              <input type="checkbox" name="mask_ips" value="1" {% if mask_ips %}checked{% endif %}>
-              <span>Скрыть IP/CID</span>
-            </label>
-            <label class="logs-check-label" title="Отображать исходный текст без BYOND-разметки и цветов">
-              <input type="checkbox" id="logs-raw-html-cb" {% if not render_html %}checked{% endif %}>
-              <span>Без разметки</span>
-            </label>
+          <div class="logs-primary-inputs">
+            <div class="logs-field logs-field-search">
+              <label for="logs-q-input" class="sr-only">Поиск</label>
+              <input type="text" id="logs-q-input" name="q" value="{{ q }}" class="logs-input" placeholder="Поиск по строке... (/)">
+            </div>
+            <div class="logs-field logs-field-ckey">
+              <label for="logs-ckey-input" class="sr-only">Игрок (ckey)</label>
+              <input type="text" id="logs-ckey-input" name="ckey" value="{{ ckey }}" class="logs-input" placeholder="ckey...">
+            </div>
+            <button type="submit" class="logs-btn logs-btn-primary">Найти</button>
+            <button type="button"
+                    id="logs-filter-drawer-toggle"
+                    class="logs-btn {% if drawer_open %}is-active{% endif %}"
+                    aria-expanded="{{ 'true' if drawer_open else 'false' }}"
+                    aria-controls="logs-filter-drawer"
+                    title="Дополнительные фильтры и категории (F)">
+              <svg class="logs-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+              <span>Фильтры</span>
+              <span id="logs-filter-drawer-badge" class="logs-badge-count mono-val" {% if adv_count == 0 %}hidden{% endif %}>{{ adv_count }}</span>
+            </button>
+            <a id="logs-filter-reset"
+               href="/logs/round/{{ round.round_uid }}?file={{ selected_file|urlencode }}{% if view_mode == 'map' %}&view=map{% endif %}"
+               class="logs-btn"
+               {% if not has_active_filters %}hidden{% endif %}>Сброс</a>
           </div>
         </div>
 
-        <div class="logs-form-grid">
-          <div class="logs-field">
-            <label for="logs-q-input" class="logs-label">Поиск</label>
-            <input type="text" id="logs-q-input" name="q" value="{{ q }}" class="logs-input" placeholder="Текст или шаблон (нажмите /)">
+        <!-- Collapsible Advanced Filters Drawer -->
+        <div id="logs-filter-drawer" class="logs-filter-drawer" {% if not drawer_open %}hidden{% endif %}>
+          <div class="logs-drawer-controls">
+            <div class="logs-field logs-field-xs">
+              <label for="logs-radius-select" class="logs-label" title="Показывать логи других игроков в радиусе N тайлов вокруг позиции выбранного ckey">Радиус</label>
+              <select id="logs-radius-select" name="radius" class="logs-select">
+                <option value="0" {% if not radius %}selected{% endif %}>Выкл</option>
+                {% set radius_presets = [3, 5, 7, 10, 15, 25, 50] %}
+                {% if radius and radius not in radius_presets %}
+                <option value="{{ radius }}" selected>&plusmn;{{ radius }}</option>
+                {% endif %}
+                {% for r_opt in radius_presets %}
+                <option value="{{ r_opt }}" {% if radius == r_opt %}selected{% endif %}>&plusmn;{{ r_opt }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="logs-field logs-field-xs">
+              <label for="logs-time-from" class="logs-label" title="Начало интервала (ЧЧ:ММ)">Время с</label>
+              <input type="text" id="logs-time-from" name="time_from" value="{{ time_from }}" class="logs-input" placeholder="ЧЧ:ММ">
+            </div>
+            <div class="logs-field logs-field-xs">
+              <label for="logs-time-to" class="logs-label" title="Конец интервала (ЧЧ:ММ)">Время по</label>
+              <input type="text" id="logs-time-to" name="time_to" value="{{ time_to }}" class="logs-input" placeholder="ЧЧ:ММ">
+            </div>
+            {% if view_mode != 'map' %}
+            <div class="logs-field logs-field-xs">
+              <label for="logs-per-page" class="logs-label">Строк</label>
+              <select id="logs-per-page" name="per_page" class="logs-select">
+                <option value="100" {% if per_page == 100 %}selected{% endif %}>100</option>
+                <option value="200" {% if per_page == 200 %}selected{% endif %}>200</option>
+                <option value="500" {% if per_page == 500 %}selected{% endif %}>500</option>
+              </select>
+            </div>
+            {% endif %}
+            <div class="logs-check-row">
+              <label class="logs-check-label" title="Интерпретировать строку поиска как регулярное выражение">
+                <input type="checkbox" name="regex" value="1" {% if use_regex %}checked{% endif %}>
+                <span>Regex</span>
+              </label>
+              <label class="logs-check-label" title="Скрыть IP-адреса и CID игроков в выводе">
+                <input type="checkbox" name="mask_ips" value="1" {% if mask_ips %}checked{% endif %}>
+                <span>Скрыть IP/CID</span>
+              </label>
+              <label class="logs-check-label" title="Отображать исходный текст без BYOND-разметки и цветов">
+                <input type="checkbox" id="logs-raw-html-cb" {% if not render_html %}checked{% endif %}>
+                <span>Без разметки</span>
+              </label>
+            </div>
           </div>
-          <div class="logs-field logs-field-ckey">
-            <label for="logs-ckey-input" class="logs-label">Игрок</label>
-            <input type="text" id="logs-ckey-input" name="ckey" value="{{ ckey }}" class="logs-input" placeholder="ckey...">
-          </div>
-          <div class="logs-field logs-field-xs">
-            <label for="logs-radius-select" class="logs-label" title="Показывать логи других игроков в радиусе N тайлов вокруг позиции выбранного ckey">Радиус</label>
-            <select id="logs-radius-select" name="radius" class="logs-select">
-              <option value="0" {% if not radius %}selected{% endif %}>Выкл</option>
-              {% set radius_presets = [3, 5, 7, 10, 15, 25, 50] %}
-              {% if radius and radius not in radius_presets %}
-              <option value="{{ radius }}" selected>&plusmn;{{ radius }}</option>
-              {% endif %}
-              {% for r_opt in radius_presets %}
-              <option value="{{ r_opt }}" {% if radius == r_opt %}selected{% endif %}>&plusmn;{{ r_opt }}</option>
-              {% endfor %}
-            </select>
-          </div>
-          <div class="logs-field logs-field-xs">
-            <label for="logs-time-from" class="logs-label" title="Начало интервала (ЧЧ:ММ)">С</label>
-            <input type="text" id="logs-time-from" name="time_from" value="{{ time_from }}" class="logs-input" placeholder="ЧЧ:ММ">
-          </div>
-          <div class="logs-field logs-field-xs">
-            <label for="logs-time-to" class="logs-label" title="Конец интервала (ЧЧ:ММ)">По</label>
-            <input type="text" id="logs-time-to" name="time_to" value="{{ time_to }}" class="logs-input" placeholder="ЧЧ:ММ">
-          </div>
-          {% if view_mode != 'map' %}
-          <div class="logs-field logs-field-xs">
-            <label for="logs-per-page" class="logs-label">Строк</label>
-            <select id="logs-per-page" name="per_page" class="logs-select">
-              <option value="100" {% if per_page == 100 %}selected{% endif %}>100</option>
-              <option value="200" {% if per_page == 200 %}selected{% endif %}>200</option>
-              <option value="500" {% if per_page == 500 %}selected{% endif %}>500</option>
-            </select>
-          </div>
-          {% endif %}
-          <button type="submit" class="logs-btn logs-btn-primary">Применить</button>
-          <a id="logs-filter-reset"
-             href="/logs/round/{{ round.round_uid }}?file={{ selected_file|urlencode }}{% if view_mode == 'map' %}&view=map{% endif %}"
-             class="logs-btn"
-             {% if not has_active_filters %}hidden{% endif %}>Сбросить</a>
-        </div>
 
-        <div class="logs-cat-chips" aria-label="Фильтр по категориям">
-          {% for cat in categories_vm %}
-          <label class="logs-cat-chip {% if cat.name in selected_cats %}is-selected{% endif %}{% if not cat.included %} is-excluded{% endif %}" data-cat-toggle="{{ cat.name }}" title="{{ cat.desc }}">
-            <input type="checkbox" name="cat" value="{{ cat.name }}" class="sr-only" {% if cat.name in selected_cats %}checked{% endif %}>
-            <span class="log-cat-tag {{ cat.css }}">{{ cat.name }}</span>
-            <span>{{ cat.count }}</span>
-          </label>
-          {% endfor %}
+          <div class="logs-cat-chips" aria-label="Фильтр по категориям">
+            {% for cat in categories_vm %}
+            <label class="logs-cat-chip {% if cat.name in selected_cats %}is-selected{% endif %}{% if not cat.included %} is-excluded{% endif %}" data-cat-toggle="{{ cat.name }}" title="{{ cat.desc }}">
+              <input type="checkbox" name="cat" value="{{ cat.name }}" class="sr-only" {% if cat.name in selected_cats %}checked{% endif %}>
+              <span class="log-cat-tag {{ cat.css }}">{{ cat.name }}</span>
+              <span>{{ cat.count }}</span>
+            </label>
+            {% endfor %}
+          </div>
         </div>
       </form>
 
@@ -316,6 +334,21 @@
       {% endif %}
 
       <div id="logs-map-status" class="logs-map-status mono-val cell-sub">Загрузка событий...</div>
+
+      <div id="logs-map-timeline" class="logs-map-timeline" hidden>
+        <div class="logs-map-timeline-head">
+          <span class="logs-label">Окно времени:</span>
+          <span id="logs-map-time-readout" class="mono-val logs-map-time-readout">&mdash;</span>
+          <span id="logs-map-time-count" class="mono-val cell-sub"></span>
+          <button type="button" id="logs-map-time-reset" class="logs-btn logs-btn-sm" hidden>Весь раунд</button>
+        </div>
+        <div class="logs-map-timeline-sliders">
+          <label class="sr-only" for="logs-map-time-start">Начало окна времени</label>
+          <input type="range" id="logs-map-time-start" class="logs-range" min="0" max="1000" value="0" step="1">
+          <label class="sr-only" for="logs-map-time-end">Конец окна времени</label>
+          <input type="range" id="logs-map-time-end" class="logs-range" min="0" max="1000" value="1000" step="1">
+        </div>
+      </div>
 
       <div class="logs-map-workspace">
         <div class="logs-map-stage">

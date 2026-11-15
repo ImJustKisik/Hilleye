@@ -1,0 +1,103 @@
+<div class="logs-rounds-meta-bar">
+  <span class="mono-val cell-sub">Найдено раундов: <strong class="logs-count-em">{{ total_rounds }}</strong></span>
+  {% if date_filter or source_filter or q_filter %}
+  <span class="mono-val cell-sub">
+    {% if date_filter %}дата: <strong>{{ date_filter }}</strong>{% endif %}
+    {% if source_filter %} &middot; источник: <strong>{{ 'диск' if source_filter == 'disk' else 'загруженные' }}</strong>{% endif %}
+    {% if q_filter %} &middot; фильтр: <strong>{{ q_filter }}</strong>{% endif %}
+  </span>
+  {% endif %}
+</div>
+
+{% if rounds %}
+<div class="logs-table-wrap">
+  <table class="logs-table logs-rounds-table">
+    <thead>
+      <tr>
+        <th>Дата</th>
+        <th>Раунд</th>
+        <th>Файлы</th>
+        <th>Время (UTC)</th>
+        <th class="col-num">Строк (игр. / всего)</th>
+        <th class="col-num">Размер</th>
+        <th class="col-actions">Открыть</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in rounds %}
+      <tr class="logs-round-row">
+        <td class="mono-val">{{ r.round_date }}</td>
+        <td>
+          <div class="logs-round-cell">
+            <a href="/logs/round/{{ r.round_uid }}" class="server-link mono-val logs-round-id-link">#{{ r.round_id }}</a>
+            {% if r.source_type == 'upload' %}
+            <span class="logs-source-tag">загружен</span>
+            {% endif %}
+            {% if r.index_error %}
+            <span class="logs-source-tag is-error" title="{{ r.index_error }}">ошибка</span>
+            {% endif %}
+          </div>
+          {% if r.label %}<div class="cell-sub">{{ r.label }}</div>{% endif %}
+        </td>
+        <td class="mono-val logs-files-cell">
+          {% if r.has_game_log %}<a href="/logs/round/{{ r.round_uid }}?file=game.log" class="logs-file-link">game.log</a>{% endif %}
+          {% if r.has_qdel_log %}<a href="/logs/round/{{ r.round_uid }}?file=qdel.log" class="logs-file-link">qdel.log</a>{% endif %}
+          {% if r.has_initialize_log %}<a href="/logs/round/{{ r.round_uid }}?file=initialize.log" class="logs-file-link">init.log</a>{% endif %}
+        </td>
+        <td class="mono-val">
+          <div class="logs-time-cell">
+            <span>
+              {% if r.started_at %}{{ r.started_at[11:19] }}{% else %}&mdash;{% endif %}
+              &ndash;
+              {% if r.ended_at %}{{ r.ended_at[11:19] }}{% else %}&mdash;{% endif %}
+            </span>
+            {% if r.duration_str %}
+            <span class="logs-duration-pill">{{ r.duration_str }}</span>
+            {% endif %}
+          </div>
+        </td>
+        <td class="col-num mono-val">
+          <strong>{{ "{:,}".format(r.gameplay_line_count or 0) }}</strong>
+          <span class="cell-sub">/ {{ "{:,}".format(r.line_count or 0) }}</span>
+        </td>
+        <td class="col-num mono-val">{{ r.size_label }}</td>
+        <td class="col-actions">
+          <div class="logs-row-quick-actions">
+            <a href="/logs/round/{{ r.round_uid }}" class="log-mini-btn">Лента</a>
+            {% if r.has_game_log %}
+            <a href="/logs/round/{{ r.round_uid }}?file=game.log&view=map" class="log-mini-btn">Карта</a>
+            {% endif %}
+          </div>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% if total_pages > 1 %}
+<div class="logs-pagination">
+  <span class="mono-val cell-sub">Страница {{ page }} из {{ total_pages }}</span>
+  <div class="logs-topbar-left">
+    {% if page > 1 %}
+    <a href="/logs?date={{ date_filter|urlencode }}&source={{ source_filter|urlencode }}&q={{ q_filter|urlencode }}&page={{ page - 1 }}"
+       hx-get="/logs?date={{ date_filter|urlencode }}&source={{ source_filter|urlencode }}&q={{ q_filter|urlencode }}&page={{ page - 1 }}"
+       hx-target="#logs-rounds-container"
+       hx-push-url="true"
+       class="logs-btn logs-btn-sm">&larr; Назад</a>
+    {% endif %}
+    {% if page < total_pages %}
+    <a href="/logs?date={{ date_filter|urlencode }}&source={{ source_filter|urlencode }}&q={{ q_filter|urlencode }}&page={{ page + 1 }}"
+       hx-get="/logs?date={{ date_filter|urlencode }}&source={{ source_filter|urlencode }}&q={{ q_filter|urlencode }}&page={{ page + 1 }}"
+       hx-target="#logs-rounds-container"
+       hx-push-url="true"
+       class="logs-btn logs-btn-sm">Вперёд &rarr;</a>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+{% else %}
+<div class="logs-panel-body">
+  <div class="block-empty">Раунды по заданным фильтрам не найдены.</div>
+</div>
+{% endif %}

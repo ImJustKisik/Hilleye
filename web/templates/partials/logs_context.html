@@ -1,11 +1,11 @@
-<div class="{% if not inline %}logs-panel-body{% endif %}">
+<div class="logs-context-wrap {% if not inline %}logs-panel-body{% endif %}">
   <div class="logs-context-bar">
     <span class="mono-val">Контекст <strong>#L{{ target_line }}</strong> (&plusmn;{{ radius }}, все категории)</span>
     <div class="logs-context-actions">
       <a href="/logs/round/{{ round.round_uid }}?file={{ selected_file|urlencode }}&preset=all&focus={{ target_line }}#L{{ target_line }}"
          class="logs-btn logs-btn-sm">Открыть в раунде</a>
       {% if inline %}
-      <button type="button" class="logs-btn logs-btn-sm js-close-inline-context" title="Свернуть контекст">Скрыть</button>
+      <button type="button" class="logs-btn logs-btn-sm js-close-inline-context" title="Свернуть контекст (Esc)">Скрыть</button>
       {% endif %}
     </div>
   </div>

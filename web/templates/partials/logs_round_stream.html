@@ -80,7 +80,7 @@
     <div class="log-row-actions">
       <button type="button"
               class="log-mini-btn"
-              data-context-url="/logs/round/{{ round.round_uid }}/context?file={{ selected_file|urlencode }}&line={{ entry.line_no }}&mask_ips={{ 1 if mask_ips else 0 }}&html={{ 1 if render_html else 0 }}"
+              data-context-url="/logs/round/{{ round.round_uid }}/context?file={{ selected_file|urlencode }}&line={{ entry.line_no }}&mask_ips={{ 1 if mask_ips else 0 }}&html={{ 1 if render_html else 0 }}&inline=1"
               data-line-no="{{ entry.line_no }}"
               title="Показать соседние ±20 строк (включая DEBUG)">&plusmn;20</button>
       <button type="button"
