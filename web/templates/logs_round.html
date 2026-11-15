@@ -161,7 +161,7 @@
 
     {% else %}
     <!-- game.log / initialize.log Filter Toolbar -->
-    {% set has_active_filters = (active_preset != 'gameplay') or selected_cats or q or ckey or time_from or time_to or use_regex or mask_ips or (not render_html) %}
+    {% set has_active_filters = (active_preset != 'gameplay') or selected_cats or q or ckey or (radius and radius > 0) or time_from or time_to or use_regex or mask_ips or (not render_html) %}
     <div id="logs-round-toolbar" class="logs-panel-body {% if view_mode == 'map' %}logs-toolbar-compact{% else %}logs-sticky-toolbar{% endif %}">
       <form id="logs-filter-form" action="/logs/round/{{ round.round_uid }}" method="get">
         <input type="hidden" name="file" value="{{ selected_file }}">
@@ -209,6 +209,19 @@
           <div class="logs-field logs-field-ckey">
             <label for="logs-ckey-input" class="logs-label">Игрок</label>
             <input type="text" id="logs-ckey-input" name="ckey" value="{{ ckey }}" class="logs-input" placeholder="ckey...">
+          </div>
+          <div class="logs-field logs-field-xs">
+            <label for="logs-radius-select" class="logs-label" title="Показывать логи других игроков в радиусе N тайлов вокруг позиции выбранного ckey">Радиус</label>
+            <select id="logs-radius-select" name="radius" class="logs-select">
+              <option value="0" {% if not radius %}selected{% endif %}>Выкл</option>
+              {% set radius_presets = [3, 5, 7, 10, 15, 25, 50] %}
+              {% if radius and radius not in radius_presets %}
+              <option value="{{ radius }}" selected>&plusmn;{{ radius }}</option>
+              {% endif %}
+              {% for r_opt in radius_presets %}
+              <option value="{{ r_opt }}" {% if radius == r_opt %}selected{% endif %}>&plusmn;{{ r_opt }}</option>
+              {% endfor %}
+            </select>
           </div>
           <div class="logs-field logs-field-xs">
             <label for="logs-time-from" class="logs-label" title="Начало интервала (ЧЧ:ММ)">С</label>

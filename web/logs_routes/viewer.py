@@ -98,6 +98,7 @@ def register_viewer_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
         preset: str = "gameplay",
         cat: List[str] = Query(default=[]),
         ckey: str = "",
+        radius: int = Query(default=0, ge=0, le=100),
         q: str = "",
         regex: str = "0",
         time_from: str = "",
@@ -198,6 +199,7 @@ def register_viewer_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
             preset=active_preset,
             categories=selected_cats or None,
             ckey=ckey,
+            radius=radius,
             q=q,
             use_regex=use_regex,
             time_from=time_from,
@@ -231,6 +233,8 @@ def register_viewer_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
             query_pairs.append(("cat", c))
         if ckey:
             query_pairs.append(("ckey", ckey))
+            if radius > 0:
+                query_pairs.append(("radius", str(radius)))
         if q:
             query_pairs.append(("q", q))
         if use_regex:
@@ -265,6 +269,7 @@ def register_viewer_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
                 "active_preset": active_preset,
                 "presets": LOG_PRESETS,
                 "ckey": ckey,
+                "radius": radius,
                 "active_ckey_norm": active_ckey_norm,
                 "q": q,
                 "use_regex": use_regex,

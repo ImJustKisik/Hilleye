@@ -66,7 +66,8 @@ CATEGORY_META: Dict[str, Dict[str, str]] = {
     "SAY": {"label": "SAY", "css": "cat-say", "desc": "IC речь"},
     "WHISPER": {"label": "WHISPER", "css": "cat-whisper", "desc": "Шёпот"},
     "OOC": {"label": "OOC", "css": "cat-ooc", "desc": "OOC чат"},
-    "EMOTE": {"label": "EMOTE", "css": "cat-emote", "desc": "Эмоции"},
+    "EMOTE": {"label": "EMOTE", "css": "cat-emote", "desc": "Эмоции (ручные)"},
+    "EMOTE_MECH": {"label": "EMOTE_MECH", "css": "cat-emote-mech", "desc": "Эмоции (механические)"},
     "GAME": {"label": "GAME", "css": "cat-game", "desc": "Игровые события"},
     "VOTE": {"label": "VOTE", "css": "cat-vote", "desc": "Голосования"},
     "COMPUTER_COMMAND": {"label": "COMPUTER_COMMAND", "css": "cat-computer", "desc": "Компьютеры"},
@@ -99,8 +100,8 @@ LOG_PRESETS: Dict[str, Dict[str, Any]] = {
     "chat": {
         "id": "chat",
         "label": "Чат",
-        "description": "SAY, WHISPER, OOC, EMOTE, ADMINSAY",
-        "include": {"SAY", "WHISPER", "OOC", "EMOTE", "ADMINSAY"},
+        "description": "SAY, WHISPER, OOC, EMOTE, EMOTE_MECH, ADMINSAY",
+        "include": {"SAY", "WHISPER", "OOC", "EMOTE", "EMOTE_MECH", "ADMINSAY"},
         "exclude": None,
     },
     "all": {
@@ -263,3 +264,4 @@ class _PreparedLogFilter:
     from_sec: Optional[int]
     to_sec: Optional[int]
     time_invalid: bool
+    radius: int = 0

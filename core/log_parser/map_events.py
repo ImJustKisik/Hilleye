@@ -14,6 +14,7 @@ from core.log_parser.extractors import (
 )
 from core.log_parser.filters import (
     _build_entry,
+    _collect_ckey_coord_anchors,
     _evaluate_line_filter,
     _prepare_log_filter,
     _time_hhmm_from_ts,
@@ -96,6 +97,7 @@ def collect_round_map_events(
     preset: str = "gameplay",
     categories: Optional[Sequence[str]] = None,
     ckey: str = "",
+    radius: int = 0,
     q: str = "",
     use_regex: bool = False,
     time_from: str = "",
@@ -115,6 +117,7 @@ def collect_round_map_events(
         use_regex=use_regex,
         time_from=time_from,
         time_to=time_to,
+        radius=radius,
     )
     if filt.regex_error:
         return {
@@ -125,6 +128,13 @@ def collect_round_map_events(
             "regex_error": filt.regex_error,
         }
 
+    anchors = (
+        _collect_ckey_coord_anchors(file_path, filt.ckey_norm)
+        if (filt.ckey_norm and filt.radius > 0)
+        else []
+    )
+    anchor_hint = 0
+
     events: List[Dict[str, Any]] = []
     z_counts: Dict[int, int] = {}
     total_with_coords = 0
@@ -134,8 +144,15 @@ def collect_round_map_events(
         coords_list = extract_coords_from_text(raw_msg)
         if not coords_list:
             continue
-        matched, pre_display_raw, pre_sanitized = _evaluate_line_filter(
-            ts, cat, raw_msg, filt, mask_ips=mask_ips
+        matched, pre_display_raw, pre_sanitized, anchor_hint = _evaluate_line_filter(
+            ts,
+            cat,
+            raw_msg,
+            filt,
+            mask_ips=mask_ips,
+            line_no=line_no,
+            anchors=anchors,
+            anchor_hint=anchor_hint,
         )
         if not matched:
             continue

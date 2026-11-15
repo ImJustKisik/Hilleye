@@ -927,7 +927,176 @@ def test_logs_css_scopes_category_colors_to_tags():
     css_path = Path(__file__).resolve().parents[1] / "web" / "static" / "css" / "logs.css"
     css_text = css_path.read_text(encoding="utf-8")
     # Category color fills belong exclusively on .log-cat-tag pills, never bare .cat-* selectors
-    for cat_cls in ("cat-say", "cat-access", "cat-ooc", "cat-attack", "cat-admin"):
+    for cat_cls in ("cat-say", "cat-access", "cat-ooc", "cat-attack", "cat-admin", "cat-emote", "cat-emote-mech"):
         assert f".log-cat-tag.{cat_cls}" in css_text
         assert re.search(rf"(?m)^\.{cat_cls}\b", css_text) is None
+
+
+def test_emote_and_emote_mech_separation(tmp_path):
+    from core.log_parser import CATEGORY_META, LOG_PRESETS, category_matches_filters
+
+    assert "EMOTE" in CATEGORY_META
+    assert "EMOTE_MECH" in CATEGORY_META
+    assert CATEGORY_META["EMOTE_MECH"]["css"] == "cat-emote-mech"
+    assert "EMOTE" in LOG_PRESETS["chat"]["include"]
+    assert "EMOTE_MECH" in LOG_PRESETS["chat"]["include"]
+    assert category_matches_filters("EMOTE_MECH", preset="chat")
+    assert not category_matches_filters("EMOTE_MECH", selected_categories=["EMOTE"])
+    assert category_matches_filters("EMOTE_MECH", selected_categories=["EMOTE_MECH"])
+
+    log_path = tmp_path / "game.log"
+    log_path.write_text(
+        "[2026-11-08 14:23:10.000] EMOTE: Angel Murray/awkwardly : <B>Angel Murray</B> waves. (80, 100, 3)\n"
+        "[2026-11-08 14:23:15.000] EMOTE_MECH: Angel Murray/awkwardly : <B>Angel Murray</B> coughs! (80, 100, 3)\n",
+        encoding="utf-8",
+    )
+
+    manual_only = filter_game_log_file(log_path, categories=["EMOTE"])
+    assert [e.category for e in manual_only.entries] == ["EMOTE"]
+
+    mech_only = filter_game_log_file(log_path, categories=["EMOTE_MECH"])
+    assert [e.category for e in mech_only.entries] == ["EMOTE_MECH"]
+
+
+def test_ckey_spatial_radius_filtering(tmp_path):
+    from core.log_parser import export_filtered_game_log
+
+    log_path = tmp_path / "game.log"
+    log_path.write_text(
+        "[2026-11-08 14:20:00.000] ACCESS: Login: TargetPlayer/(TargetPlayer) from 127.0.0.1-123456\n"
+        "[2026-11-08 14:20:05.000] SAY: Target Name/TargetPlayer : Hello here (50, 50, 1)\n"
+        "[2026-11-08 14:20:07.000] SAY: Nearby Bob/NearBob : Hi back! (54, 48, 1)\n"
+        "[2026-11-08 14:20:08.000] EMOTE_MECH: Nearby Bob/NearBob : <b>Nearby Bob</b> nods. (55, 55, 1)\n"
+        "[2026-11-08 14:20:09.000] SAY: Far Alice/FarAlice : Too far (70, 50, 1)\n"
+        "[2026-11-08 14:20:10.000] SAY: Other Deck/DeckGuy : Same xy diff z (50, 50, 2)\n"
+        "[2026-11-08 14:20:11.000] SAY: NoCoords/NoCoordGuy : No location info\n"
+        "[2026-11-08 14:25:00.000] SAY: Target Name/TargetPlayer : Moved away (120, 120, 2)\n"
+        "[2026-11-08 14:25:05.000] SAY: Deck2 Friend/DeckFriend : Right next to you now (122, 118, 2)\n"
+        "[2026-11-08 14:25:06.000] SAY: Old Spot/OldSpot : At old spot later (50, 50, 1)\n",
+        encoding="utf-8",
+    )
+
+    # Radius 0: strictly targetplayer's own lines
+    strict = filter_game_log_file(log_path, ckey="targetplayer", radius=0)
+    assert [e.line_no for e in strict.entries] == [1, 2, 8]
+
+    # Radius 5: targetplayer's own lines + nearby lines within Chebyshev distance 5 on same Z of nearest-in-time anchor
+    nearby = filter_game_log_file(log_path, ckey="targetplayer", radius=5)
+    assert [e.line_no for e in nearby.entries] == [1, 2, 3, 4, 8, 9]
+
+    # Export also honors radius
+    exported = export_filtered_game_log(log_path, ckey="targetplayer", radius=5)
+    assert "Hi back!" in exported
+    assert "Right next to you now" in exported
+    assert "Too far" not in exported
+    assert "At old spot later" not in exported
+
+    # Map events also honor radius
+    map_res = collect_round_map_events(log_path, ckey="targetplayer", radius=5)
+    assert [ev["line_no"] for ev in map_res["events"]] == [2, 3, 4, 8, 9]
+
+
+async def test_admin_dashboard_audit_filtering_export_and_htmx(logs_env):
+    cfg = logs_env["cfg"]
+    await logs_db.sync_and_index_rounds(cfg.resolved_logs_root_dir(), cfg.resolved_logs_uploads_dir())
+    rounds, _ = await logs_db.list_rounds()
+    round_uid = rounds[0]["round_uid"]
+
+    # Seed diverse audit events including a denied login, a round view, and a CSV formula-like target
+    await logs_db.record_audit_event(
+        "login_denied",
+        discord_id="333333333333333333",
+        discord_username="intruder_user",
+        target="whitelist_missing",
+        ip_address="203.0.113.42",
+        details="display_name=Intruder Nick",
+    )
+    await logs_db.record_audit_event(
+        "view_round",
+        discord_id="111111111111111111",
+        discord_username="admin_user",
+        target=f"{round_uid}:game.log",
+        ip_address="198.51.100.7",
+    )
+    await logs_db.record_audit_event(
+        "search_global",
+        discord_id="111111111111111111",
+        discord_username="admin_user",
+        target="=CMD()_100%",
+        ip_address="198.51.100.7",
+        details="preset=gameplay, scan_debug=False, z=",
+    )
+
+    # Mark a round with an index_error to verify warning banner rendering
+    conn = await logs_db.get_logs_connection()
+    await conn.execute(
+        "UPDATE log_rounds SET index_error = ? WHERE round_uid = ?",
+        ("PermissionError: test read failure", round_uid),
+    )
+    await conn.commit()
+
+    async with AsyncClient(transport=ASGITransport(app=web_app.app), base_url="http://test") as client:
+        await _login_via_discord(client, "111111111111111111", "admin_user")
+
+        admin_resp = await client.get("/logs/admin")
+        assert admin_resp.status_code == 200
+        # KPI strip, index error banner, quick-grant button for login_denied, and smart target link
+        assert "Отказов входа: 1" in admin_resp.text
+        assert "PermissionError: test read failure" in admin_resp.text
+        assert "+ Выдать доступ" in admin_resp.text
+        assert f'/logs/round/{round_uid}?file=game.log' in admin_resp.text
+
+        # HTMX partial swap returns only the audit fragment (no full HTML shell)
+        htmx_audit = await client.get(
+            "/logs/admin?group=security",
+            headers={"HX-Request": "true", "HX-Target": "admin-audit-container"},
+        )
+        assert htmx_audit.status_code == 200
+        assert "<!DOCTYPE html>" not in htmx_audit.text
+        assert "intruder_user" in htmx_audit.text
+        assert f"{round_uid}:game.log" not in htmx_audit.text
+
+        # Search filter with SQLite LIKE wildcard characters ('%' / '_') matches literal target
+        q_resp = await client.get(
+            "/logs/admin?audit_q=%3DCMD()_100%25",
+            headers={"HX-Request": "true", "HX-Target": "admin-audit-container"},
+        )
+        assert q_resp.status_code == 200
+        assert "=CMD()_100%" in q_resp.text
+        assert "intruder_user" not in q_resp.text
+
+        # Filter by IP and user
+        ip_resp = await client.get(
+            "/logs/admin?audit_ip=203.0.113.42",
+            headers={"HX-Request": "true", "HX-Target": "admin-audit-container"},
+        )
+        assert ip_resp.status_code == 200
+        assert "intruder_user" in ip_resp.text
+        assert "198.51.100.7" not in ip_resp.text
+
+        # CSV export neutralizes spreadsheet formula prefixes
+        csv_resp = await client.get("/logs/admin/audit/export")
+        assert csv_resp.status_code == 200
+        assert csv_resp.headers["content-type"].startswith("text/csv")
+        assert "'=CMD()_100%" in csv_resp.text
+
+        # Refresh with next_url=/logs/admin redirects back to /logs/admin; external next_url is ignored
+        csrf = re.search(r'name="csrf_token" value="([^"]+)"', admin_resp.text).group(1)
+        ref_admin = await client.post(
+            "/logs/refresh",
+            data={"csrf_token": csrf, "next_url": "/logs/admin"},
+            follow_redirects=False,
+        )
+        assert ref_admin.status_code == 303
+        assert ref_admin.headers["location"].startswith("/logs/admin?notice=")
+
+        ref_evil = await client.post(
+            "/logs/refresh",
+            data={"csrf_token": csrf, "next_url": "https://evil.example/phish"},
+            follow_redirects=False,
+        )
+        assert ref_evil.status_code == 303
+        assert ref_evil.headers["location"].startswith("/logs?notice=")
+
+
 

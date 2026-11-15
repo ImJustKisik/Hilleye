@@ -6,7 +6,7 @@
 {% endblock %}
 
 {% block content %}
-<div class="logs-page-stack">
+<div class="logs-page-stack admin-page-root">
   {% set logs_nav_active = 'admin' %}
   {% include "partials/logs_topbar.html" %}
 
@@ -17,15 +17,134 @@
   <div class="logs-alert logs-alert-error" role="alert">{{ error }}</div>
   {% endif %}
 
-  <div class="logs-dashboard-grid">
-    <!-- Whitelist Management -->
-    <section class="panel" aria-label="Управление доступом">
-      <div class="panel-header">
-        <h1 class="panel-title">Доступ (Discord ID)</h1>
-        <span class="mono-val cell-sub">{{ whitelist|length }}</span>
+  <!-- Admin Overview KPI Strip -->
+  <section class="admin-kpi-grid" aria-label="Сводка состояния системы">
+    <a href="/logs/admin?action=login_denied"
+       class="admin-kpi-card {% if audit_summary.denied_24h > 0 %}is-alert{% endif %}"
+       data-admin-jump="audit">
+      <div class="admin-kpi-label">Аудит за 24ч</div>
+      <div class="admin-kpi-value mono-val">{{ audit_summary.last_24h }}</div>
+      <div class="admin-kpi-sub">
+        {% if audit_summary.denied_24h > 0 %}
+        <span class="admin-kpi-warn">Отказов входа: {{ audit_summary.denied_24h }}</span>
+        {% else %}
+        <span>Отказов: 0</span>
+        {% endif %}
+        <span>&middot;</span>
+        <span>Всего: {{ audit_summary.total_all }}</span>
       </div>
+    </a>
+
+    <a href="#admin-whitelist-section" class="admin-kpi-card" data-admin-jump="whitelist">
+      <div class="admin-kpi-label">Доступ (Whitelist)</div>
+      <div class="admin-kpi-value mono-val">{{ whitelist_counts.total }}</div>
+      <div class="admin-kpi-sub">
+        <span>{{ whitelist_counts.superadmin }} суперадм.</span>
+        <span>&middot;</span>
+        <span>{{ whitelist_counts.admin }} адм.</span>
+        <span>&middot;</span>
+        <span>{{ whitelist_counts.viewer }} просм.</span>
+      </div>
+    </a>
+
+    <a href="#admin-indexing-section"
+       class="admin-kpi-card {% if index_errors %}is-warn{% endif %}"
+       data-admin-jump="indexing">
+      <div class="admin-kpi-label">Индекс логов</div>
+      <div class="admin-kpi-value mono-val">{{ "{:,}".format(stats.indexed_entries) }}</div>
+      <div class="admin-kpi-sub">
+        <span>{{ stats.total_rounds }} раундов ({{ stats.disk_rounds }} / {{ stats.upload_rounds }})</span>
+        <span>&middot;</span>
+        <span>{{ stats.total_size_label }}</span>
+      </div>
+    </a>
+
+    <a href="#admin-maps-section"
+       class="admin-kpi-card {% if map_build_status and map_build_status.state == 'error' %}is-alert{% elif map_manifest.ready %}is-ok{% endif %}"
+       data-admin-jump="maps">
+      <div class="admin-kpi-label">Карта станции</div>
+      <div class="admin-kpi-value mono-val">
+        {% if map_build_status and map_build_status.state == 'running' %}
+        Сборка...
+        {% elif map_build_status and map_build_status.state == 'error' %}
+        Ошибка
+        {% elif map_manifest.ready %}
+        Готова
+        {% else %}
+        Не собрана
+        {% endif %}
+      </div>
+      <div class="admin-kpi-sub">
+        {% if map_manifest.ready %}
+        <span>{{ map_manifest.levels|length }} палуб</span>
+        <span>&middot;</span>
+        <span>{{ map_manifest.tile_px }}px</span>
+        <span>&middot;</span>
+        <span>{{ map_manifest.source_kind }}</span>
+        {% else %}
+        <span>Нажмите для настройки</span>
+        {% endif %}
+      </div>
+    </a>
+  </section>
+
+  {% if index_errors %}
+  <section class="logs-alert logs-alert-warn admin-errors-banner" role="status">
+    <div class="admin-errors-title">
+      Обнаружены ошибки индексации у раундов ({{ index_errors|length }}):
+    </div>
+    <ul class="admin-errors-list">
+      {% for er in index_errors %}
+      <li>
+        <a href="/logs/round/{{ er.round_uid }}" class="server-link mono-val">{{ er.round_id }}</a>
+        <span class="mono-val cell-sub">({{ er.round_date }})</span>:
+        <span class="mono-val">{{ er.index_error }}</span>
+      </li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+
+  <!-- Section Workspace Switcher -->
+  <nav class="admin-section-tabs" aria-label="Разделы администрирования">
+    <button type="button" class="logs-nav-pill is-active" data-admin-tab="all">Все разделы</button>
+    <button type="button" class="logs-nav-pill" data-admin-tab="audit">
+      Журнал аудита <span class="mono-val cell-sub">{{ total_events }}</span>
+    </button>
+    <button type="button" class="logs-nav-pill" data-admin-tab="whitelist">
+      Доступ <span class="mono-val cell-sub">{{ whitelist_counts.total }}</span>
+    </button>
+    <button type="button" class="logs-nav-pill" data-admin-tab="indexing">
+      Индекс и загрузки <span class="mono-val cell-sub">{{ uploaded_rounds|length }}</span>
+    </button>
+    <button type="button" class="logs-nav-pill" data-admin-tab="maps">Карта станции</button>
+  </nav>
+
+  <!-- Primary Section: Audit Log -->
+  <section id="admin-audit-section" class="panel" data-admin-section="audit" aria-label="Журнал аудита">
+    <div id="admin-audit-container">
+      {% include "partials/logs_admin_audit.html" %}
+    </div>
+  </section>
+
+  <!-- Whitelist + Indexing & Uploads -->
+  <div class="logs-dashboard-grid admin-manage-grid">
+    <!-- Whitelist Management -->
+    <section id="admin-whitelist-section" class="panel" data-admin-section="whitelist" aria-label="Управление доступом">
+      <div class="panel-header">
+        <div class="admin-panel-title-group">
+          <h1 class="panel-title">Доступ (Discord ID)</h1>
+          <span class="admin-count-pill mono-val">{{ whitelist|length }}</span>
+        </div>
+      </div>
+
       <div class="logs-panel-body">
-        <form action="/logs/admin/whitelist/add" method="post" class="logs-form-grid">
+        <div id="admin-wl-edit-banner" class="logs-alert logs-alert-info admin-wl-edit-banner" hidden>
+          <span>Редактирование пользователя <strong id="admin-wl-edit-id" class="mono-val"></strong></span>
+          <button type="button" id="admin-wl-edit-cancel" class="logs-btn logs-btn-sm">Отмена</button>
+        </div>
+
+        <form id="admin-wl-form" action="/logs/admin/whitelist/add" method="post" class="logs-form-grid">
           <input type="hidden" name="csrf_token" value="{{ user.csrf_token }}">
           <div class="logs-field logs-field-sm">
             <label for="wl-id" class="logs-label">Discord ID</label>
@@ -44,40 +163,84 @@
             </select>
           </div>
           {% endif %}
-          <button type="submit" class="logs-btn logs-btn-primary">Добавить</button>
+          <button type="submit" id="admin-wl-submit" class="logs-btn logs-btn-primary">Добавить</button>
         </form>
+
+        <div class="admin-wl-filter-bar">
+          <input type="text" id="admin-wl-search" class="logs-input admin-wl-search" placeholder="Быстрый фильтр по ID, имени или заметке..." aria-label="Фильтр списка доступа">
+          <div class="admin-wl-role-pills" role="group" aria-label="Фильтр по роли">
+            <button type="button" class="logs-nav-pill admin-pill-sm is-active" data-wl-role-filter="">Все</button>
+            <button type="button" class="logs-nav-pill admin-pill-sm" data-wl-role-filter="superadmin">superadmin</button>
+            <button type="button" class="logs-nav-pill admin-pill-sm" data-wl-role-filter="admin">admin</button>
+            <button type="button" class="logs-nav-pill admin-pill-sm" data-wl-role-filter="viewer">viewer</button>
+          </div>
+        </div>
       </div>
 
       <div class="logs-table-wrap">
-        <table class="logs-table">
+        <table class="logs-table admin-wl-table">
           <thead>
             <tr>
-              <th>Discord ID</th>
-              <th>Имя / заметка</th>
+              <th>Пользователь / Discord ID</th>
               <th>Роль</th>
-              <th>Добавил</th>
-              <th>Дата</th>
-              <th></th>
+              <th>Активность</th>
+              <th>Добавлен</th>
+              <th>Действия</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody id="admin-wl-tbody">
             {% for item in whitelist %}
-            <tr>
-              <td class="mono-val">{{ item.discord_id }}</td>
-              <td>{{ item.display_name or '—' }}</td>
-              <td><span class="logs-source-tag">{{ item.role }}</span></td>
-              <td class="mono-val">{{ item.added_by }}</td>
-              <td class="mono-val">{{ item.added_at_str }}</td>
+            <tr class="admin-wl-row"
+                data-wl-role="{{ item.effective_role }}"
+                data-wl-search="{{ (item.discord_id ~ ' ' ~ (item.display_name or '') ~ ' ' ~ item.effective_role ~ ' ' ~ (item.added_by or ''))|lower }}">
               <td>
-                {% if item.is_config_superadmin %}
-                <span class="cell-sub">конфиг</span>
-                {% else %}
-                <form action="/logs/admin/whitelist/remove" method="post">
-                  <input type="hidden" name="csrf_token" value="{{ user.csrf_token }}">
-                  <input type="hidden" name="discord_id" value="{{ item.discord_id }}">
-                  <button type="submit" class="logs-btn logs-btn-sm logs-btn-danger">Удалить</button>
-                </form>
-                {% endif %}
+                <div class="admin-user-cell">
+                  <span class="admin-user-name">{{ item.display_name or '—' }}</span>
+                  <span class="admin-id-inline">
+                    <span class="mono-val cell-sub">{{ item.discord_id }}</span>
+                    <button type="button" class="log-mini-btn admin-copy-btn" data-copy-text="{{ item.discord_id }}" title="Копировать Discord ID">коп.</button>
+                  </span>
+                </div>
+              </td>
+              <td>
+                <span class="audit-badge admin-role-{{ item.effective_role }}">{{ item.effective_role }}</span>
+              </td>
+              <td>
+                <div class="mono-val" title="{{ item.last_seen_str }}">{{ item.last_seen_rel }}</div>
+                <a href="/logs/admin?audit_user={{ item.discord_id|urlencode }}"
+                   hx-get="/logs/admin?audit_user={{ item.discord_id|urlencode }}"
+                   hx-target="#admin-audit-container"
+                   hx-push-url="true"
+                   class="admin-sub-link"
+                   data-audit-jump="1">история &rarr;</a>
+              </td>
+              <td>
+                <div class="mono-val" title="{{ item.added_at_str }}">{{ item.added_at_rel }}</div>
+                <div class="mono-val cell-sub">{{ item.added_by }}</div>
+              </td>
+              <td>
+                <div class="admin-row-actions">
+                  {% if item.is_config_superadmin %}
+                  <span class="cell-sub mono-val">config.json</span>
+                  {% else %}
+                  <button type="button"
+                          class="logs-btn logs-btn-sm js-wl-edit"
+                          data-wl-id="{{ item.discord_id }}"
+                          data-wl-name="{{ item.display_name or '' }}"
+                          data-wl-role="{{ item.effective_role }}">
+                    Изм.
+                  </button>
+                  <form action="/logs/admin/whitelist/remove" method="post">
+                    <input type="hidden" name="csrf_token" value="{{ user.csrf_token }}">
+                    <input type="hidden" name="discord_id" value="{{ item.discord_id }}">
+                    <button type="submit"
+                            class="logs-btn logs-btn-sm logs-btn-danger"
+                            data-confirm-text="Точно удалить?">
+                      Удалить
+                    </button>
+                  </form>
+                  {% endif %}
+                </div>
               </td>
             </tr>
             {% endfor %}
@@ -87,22 +250,54 @@
     </section>
 
     <!-- Index Control & Uploaded Logs -->
-    <section class="panel" aria-label="Индексация и загруженные архивы">
+    <section id="admin-indexing-section" class="panel" data-admin-section="indexing" aria-label="Индексация и загруженные архивы">
       <div class="panel-header">
-        <h2 class="panel-title">Индексация и загрузки</h2>
+        <div class="admin-panel-title-group">
+          <h2 class="panel-title">Индексация и загрузки</h2>
+          <span class="admin-count-pill mono-val">{{ uploaded_rounds|length }} загр.</span>
+        </div>
       </div>
       <div class="logs-panel-body">
-        <p class="logs-auth-copy">
-          Строк в индексе: <strong class="mono-val">{{ "{:,}".format(stats.indexed_entries) }}</strong> ({{ stats.total_rounds }} раундов, {{ stats.total_size_label }}). Обновлено: <span class="mono-val">{{ stats.last_indexed_str }}</span>.
-        </p>
-        <form action="/logs/reindex" method="post" class="logs-form-grid">
-          <input type="hidden" name="csrf_token" value="{{ user.csrf_token }}">
-          <label class="logs-check-label">
-            <input type="checkbox" name="include_debug" value="1" {% if index_include_debug %}checked{% endif %}>
-            <span>Включать DEBUG-строки в индекс</span>
-          </label>
-          <button type="submit" class="logs-btn logs-btn-primary">Переиндексировать</button>
-        </form>
+        <dl class="admin-meta-dl">
+          <div class="admin-meta-item">
+            <dt>Строк в FTS</dt>
+            <dd class="mono-val">{{ "{:,}".format(stats.indexed_entries) }}</dd>
+          </div>
+          <div class="admin-meta-item">
+            <dt>Раундов</dt>
+            <dd class="mono-val">{{ stats.total_rounds }} ({{ stats.disk_rounds }} диск / {{ stats.upload_rounds }} загр.)</dd>
+          </div>
+          <div class="admin-meta-item">
+            <dt>Объём</dt>
+            <dd class="mono-val">{{ stats.total_size_label }}</dd>
+          </div>
+          <div class="admin-meta-item">
+            <dt>Обновлено</dt>
+            <dd class="mono-val" title="{{ stats.last_indexed_str }}">{{ stats.last_indexed_rel }}</dd>
+          </div>
+        </dl>
+
+        <div class="admin-ops-bar">
+          <form action="/logs/refresh" method="post" data-loading-form="1">
+            <input type="hidden" name="csrf_token" value="{{ user.csrf_token }}">
+            <input type="hidden" name="next_url" value="/logs/admin">
+            <button type="submit" class="logs-btn" data-loading-label="Сканирование...">Проверить новые</button>
+          </form>
+
+          <form action="/logs/reindex" method="post" class="logs-form-grid admin-reindex-form" data-loading-form="1">
+            <input type="hidden" name="csrf_token" value="{{ user.csrf_token }}">
+            <label class="logs-check-label">
+              <input type="checkbox" name="include_debug" value="1" {% if index_include_debug %}checked{% endif %}>
+              <span>Включать DEBUG</span>
+            </label>
+            <button type="submit"
+                    class="logs-btn logs-btn-primary"
+                    data-confirm-text="Переиндексировать всё?"
+                    data-loading-label="Переиндексация...">
+              Переиндексировать всё
+            </button>
+          </form>
+        </div>
       </div>
 
       {% if uploaded_rounds %}
@@ -110,25 +305,36 @@
         <table class="logs-table">
           <thead>
             <tr>
-              <th>Раунд</th>
-              <th>Дата</th>
-              <th>Размер</th>
+              <th>Раунд / Примечание</th>
+              <th>Загружен</th>
+              <th class="col-num">Размер / Строки</th>
               <th></th>
             </tr>
           </thead>
           <tbody>
             {% for ur in uploaded_rounds %}
             <tr>
-              <td class="mono-val">
-                <a href="/logs/round/{{ ur.round_uid }}" class="server-link">{{ ur.round_id }}</a>
+              <td>
+                <a href="/logs/round/{{ ur.round_uid }}" class="server-link mono-val">{{ ur.round_id }}</a>
+                <span class="mono-val cell-sub">({{ ur.round_date }})</span>
                 {% if ur.label %}<div class="cell-sub">{{ ur.label }}</div>{% endif %}
               </td>
-              <td class="mono-val">{{ ur.round_date }}</td>
-              <td class="mono-val">{{ ur.size_label }}</td>
+              <td>
+                <div class="mono-val" title="{{ ur.uploaded_at_str }}">{{ ur.uploaded_at_rel }}</div>
+                <div class="cell-sub mono-val">{{ ur.uploaded_by_name }}</div>
+              </td>
+              <td class="col-num mono-val">
+                <div>{{ ur.size_label }}</div>
+                <div class="cell-sub">{{ ur.line_count }} стр.</div>
+              </td>
               <td>
                 <form action="/logs/rounds/{{ ur.round_uid }}/delete" method="post">
                   <input type="hidden" name="csrf_token" value="{{ user.csrf_token }}">
-                  <button type="submit" class="logs-btn logs-btn-sm logs-btn-danger">Удалить</button>
+                  <button type="submit"
+                          class="logs-btn logs-btn-sm logs-btn-danger"
+                          data-confirm-text="Точно удалить?">
+                    Удалить
+                  </button>
                 </form>
               </td>
             </tr>
@@ -145,101 +351,88 @@
   </div>
 
   <!-- Station Map Cache -->
-  <section class="panel" aria-label="Карта станции">
+  <section id="admin-maps-section" class="panel" data-admin-section="maps" aria-label="Карта станции">
     <div class="panel-header">
-      <h2 class="panel-title">Карта станции</h2>
+      <div class="admin-panel-title-group">
+        <h2 class="panel-title">Карта станции</h2>
+        {% if map_build_status and map_build_status.state == 'running' %}
+        <span class="audit-badge audit-info">Собирается</span>
+        {% elif map_build_status and map_build_status.state == 'error' %}
+        <span class="audit-badge audit-danger">Ошибка</span>
+        {% elif map_manifest.ready %}
+        <span class="audit-badge audit-ok">Готова</span>
+        {% else %}
+        <span class="audit-badge audit-muted">Не собрана</span>
+        {% endif %}
+      </div>
       <span class="mono-val cell-sub">
         {% if map_manifest.ready %}
         {{ map_manifest.levels|length }} палуб &middot; {{ map_manifest.tile_px }}px
         {% else %}
-        Не собрана
+        Тайлы отсутствуют
         {% endif %}
       </span>
     </div>
     <div class="logs-panel-body">
       {% if map_build_status and map_build_status.state == 'running' %}
-      <div id="logs-map-build-status" class="logs-alert logs-alert-info" data-map-building="1" role="status">
-        Сборка карты: <span id="logs-map-build-detail">{{ map_build_status.detail or 'выполняется...' }}</span>
+      <div id="logs-map-build-status" class="logs-alert logs-alert-info admin-map-progress" data-map-building="1" role="status">
+        <span class="admin-spinner" aria-hidden="true"></span>
+        <span>Сборка карты: <span id="logs-map-build-detail">{{ map_build_status.detail or 'выполняется...' }}</span></span>
       </div>
       {% elif map_build_status and map_build_status.state == 'error' %}
       <div id="logs-map-build-status" class="logs-alert logs-alert-error" role="alert">
         Ошибка сборки карты: {{ map_build_status.error }}
       </div>
       {% endif %}
-      <p class="logs-auth-copy">
-        {% if map_manifest.ready %}
-        Источник: <strong>{{ map_manifest.source_kind }}</strong>
-        {% if map_manifest.commit %}(<span class="mono-val">{{ map_manifest.commit[:12] }}</span>){% endif %}
-        &middot; <span class="mono-val">{{ map_manifest.generated_at or '—' }}</span>{% if map_manifest.elapsed_seconds %} ({{ map_manifest.elapsed_seconds }}с){% endif %}.
-        Палубы: {% for lv in map_manifest.levels %}<span class="mono-val">{{ lv.short_label }}</span>{% if not loop.last %}, {% endif %}{% endfor %}.
-        {% else %}
-        Тайлы карты (<code>.dmm</code> + <code>.dmi</code>) ещё не собраны.
+
+      <dl class="admin-meta-dl admin-map-dl">
+        <div class="admin-meta-item">
+          <dt>Источник</dt>
+          <dd class="mono-val">{{ map_manifest.source_kind if map_manifest.ready else '—' }}</dd>
+        </div>
+        <div class="admin-meta-item">
+          <dt>Коммит</dt>
+          <dd class="mono-val">{{ map_manifest.commit[:12] if map_manifest.commit else '—' }}</dd>
+        </div>
+        <div class="admin-meta-item">
+          <dt>Собрана</dt>
+          <dd class="mono-val">{{ map_manifest.generated_at or '—' }}{% if map_manifest.elapsed_seconds %} ({{ map_manifest.elapsed_seconds }}с){% endif %}</dd>
+        </div>
+        <div class="admin-meta-item">
+          <dt>GitHub</dt>
+          <dd class="mono-val">{{ maps_github_repo or '—' }}{% if maps_github_branch %} @ {{ maps_github_branch }}{% endif %}</dd>
+        </div>
+        <div class="admin-meta-item admin-meta-wide">
+          <dt>Локальный репозиторий</dt>
+          <dd class="mono-val">{{ maps_repo_dir or 'не задан (используется GitHub)' }}</dd>
+        </div>
+        {% if map_manifest.ready and map_manifest.levels %}
+        <div class="admin-meta-item admin-meta-wide">
+          <dt>Палубы</dt>
+          <dd class="admin-deck-pills">
+            {% for lv in map_manifest.levels %}
+            <span class="logs-source-tag">{{ lv.short_label }}</span>
+            {% endfor %}
+          </dd>
+        </div>
         {% endif %}
-      </p>
-      <div class="logs-form-grid">
-        <form action="/logs/admin/maps/rebuild" method="post">
+      </dl>
+
+      <div class="logs-form-grid admin-ops-bar">
+        <form action="/logs/admin/maps/rebuild" method="post" data-loading-form="1">
           <input type="hidden" name="csrf_token" value="{{ user.csrf_token }}">
           <input type="hidden" name="source" value="auto">
           <input type="hidden" name="background" value="1">
-          <button type="submit" class="logs-btn logs-btn-primary">Пересобрать</button>
+          <button type="submit" class="logs-btn logs-btn-primary" data-loading-label="Запуск...">Пересобрать</button>
         </form>
-        <form action="/logs/admin/maps/rebuild" method="post">
+        <form action="/logs/admin/maps/rebuild" method="post" data-loading-form="1">
           <input type="hidden" name="csrf_token" value="{{ user.csrf_token }}">
           <input type="hidden" name="source" value="github">
           <input type="hidden" name="background" value="1">
-          <button type="submit" class="logs-btn">Скачать с GitHub</button>
+          <button type="submit" class="logs-btn" data-loading-label="Загрузка...">Скачать с GitHub</button>
         </form>
       </div>
     </div>
-  </section>
-
-  <!-- Audit Log -->
-  <section class="panel" aria-label="Журнал аудита">
-    <div class="panel-header">
-      <h2 class="panel-title">Журнал аудита ({{ total_events }})</h2>
-      <form action="/logs/admin" method="get" class="logs-form-grid">
-        <select name="action" class="logs-select" aria-label="Фильтр событий аудита">
-          <option value="">Все действия</option>
-          {% for act_val, act_label in audit_actions %}
-          <option value="{{ act_val }}" {% if action_filter == act_val %}selected{% endif %}>{{ act_label }}</option>
-          {% endfor %}
-        </select>
-        <button type="submit" class="logs-btn logs-btn-sm">Фильтр</button>
-      </form>
-    </div>
-
-    {% if audit_events %}
-    <div class="logs-table-wrap">
-      <table class="logs-table">
-        <thead>
-          <tr>
-            <th>Время (UTC)</th>
-            <th>Пользователь</th>
-            <th>Действие</th>
-            <th>Объект</th>
-            <th>IP</th>
-            <th>Детали</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for ev in audit_events %}
-          <tr>
-            <td class="mono-val">{{ ev.created_at_str }}</td>
-            <td class="mono-val">{{ ev.discord_username or '—' }} {% if ev.discord_id %}<span class="cell-sub">({{ ev.discord_id }})</span>{% endif %}</td>
-            <td>{{ ev.action_label }}</td>
-            <td class="mono-val">{{ ev.target or '—' }}</td>
-            <td class="mono-val">{{ ev.ip_address or '—' }}</td>
-            <td class="cell-sub">{{ ev.details or '—' }}</td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-    {% else %}
-    <div class="logs-panel-body">
-      <div class="block-empty">Событий нет.</div>
-    </div>
-    {% endif %}
   </section>
 </div>
 {% endblock %}

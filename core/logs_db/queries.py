@@ -117,6 +117,24 @@ async def get_logs_stats() -> Dict[str, Any]:
     }
 
 
+async def get_index_error_rounds(limit: int = 50) -> List[Dict[str, Any]]:
+    """Return rounds that encountered an indexing error."""
+    import core.logs_db as _ldb
+
+    conn = await _ldb.get_logs_connection()
+    cur = await conn.execute(
+        """
+        SELECT round_uid, round_id, round_date, source_type, index_error
+        FROM log_rounds
+        WHERE index_error IS NOT NULL AND index_error != ''
+        ORDER BY round_date DESC, round_uid DESC
+        LIMIT ?
+        """,
+        (max(1, min(int(limit), 200)),),
+    )
+    return [dict(r) for r in await cur.fetchall()]
+
+
 def resolve_round_file_path(
     round_record: Dict[str, Any],
     file_name: str,

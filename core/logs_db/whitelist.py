@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import logging
 import time
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -147,42 +148,145 @@ async def record_audit_event(
         logger.debug("Failed to write log audit event", exc_info=True)
 
 
+def _escape_like(val: str) -> str:
+    return val.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _parse_utc_date_start(date_str: str) -> Optional[float]:
+    raw = (date_str or "").strip()
+    if not raw:
+        return None
+    try:
+        dt = datetime.strptime(raw, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        return dt.timestamp()
+    except ValueError:
+        return None
+
+
 async def get_audit_events(
     *,
     limit: int = 100,
     offset: int = 0,
     action_filter: str = "",
+    actions: Optional[Sequence[str]] = None,
+    q: str = "",
+    user_filter: str = "",
+    ip_filter: str = "",
+    date_from: str = "",
+    date_to: str = "",
 ) -> Tuple[List[Dict[str, Any]], int]:
     import core.logs_db as _ldb
 
     conn = await _ldb.get_logs_connection()
-    limit = max(1, min(int(limit), 200))
+    limit = max(1, min(int(limit), 500))
     offset = max(0, int(offset))
-    action = (action_filter or "").strip()
 
+    clauses: List[str] = []
+    params: List[Any] = []
+
+    action = (action_filter or "").strip()
     if action:
-        cnt_cur = await conn.execute("SELECT COUNT(*) FROM log_audit_events WHERE action = ?", (action,))
-        total = int((await cnt_cur.fetchone())[0])
-        cur = await conn.execute(
-            """
-            SELECT id, created_at, discord_id, discord_username, action, target, ip_address, details
-            FROM log_audit_events
-            WHERE action = ?
-            ORDER BY created_at DESC, id DESC
-            LIMIT ? OFFSET ?
-            """,
-            (action, limit, offset),
+        clauses.append("action = ?")
+        params.append(action)
+    elif actions:
+        clean_actions = [a.strip() for a in actions if a and a.strip()]
+        if clean_actions:
+            placeholders = ",".join("?" for _ in clean_actions)
+            clauses.append(f"action IN ({placeholders})")
+            params.extend(clean_actions)
+
+    uf = (user_filter or "").strip()
+    if uf:
+        clauses.append("(discord_id = ? OR LOWER(COALESCE(discord_username, '')) = LOWER(?))")
+        params.extend([uf, uf])
+
+    ipf = (ip_filter or "").strip()
+    if ipf:
+        clauses.append("ip_address = ?")
+        params.append(ipf)
+
+    ts_from = _parse_utc_date_start(date_from)
+    if ts_from is not None:
+        clauses.append("created_at >= ?")
+        params.append(ts_from)
+
+    ts_to_start = _parse_utc_date_start(date_to)
+    if ts_to_start is not None:
+        clauses.append("created_at < ?")
+        params.append(ts_to_start + 86400.0)
+
+    qf = (q or "").strip()
+    if qf:
+        like_pat = f"%{_escape_like(qf.lower())}%"
+        clauses.append(
+            "("
+            "LOWER(COALESCE(discord_id, '')) LIKE ? ESCAPE '\\' OR "
+            "LOWER(COALESCE(discord_username, '')) LIKE ? ESCAPE '\\' OR "
+            "LOWER(COALESCE(action, '')) LIKE ? ESCAPE '\\' OR "
+            "LOWER(COALESCE(target, '')) LIKE ? ESCAPE '\\' OR "
+            "LOWER(COALESCE(ip_address, '')) LIKE ? ESCAPE '\\' OR "
+            "LOWER(COALESCE(details, '')) LIKE ? ESCAPE '\\'"
+            ")"
         )
-    else:
-        cnt_cur = await conn.execute("SELECT COUNT(*) FROM log_audit_events")
-        total = int((await cnt_cur.fetchone())[0])
-        cur = await conn.execute(
-            """
-            SELECT id, created_at, discord_id, discord_username, action, target, ip_address, details
-            FROM log_audit_events
-            ORDER BY created_at DESC, id DESC
-            LIMIT ? OFFSET ?
-            """,
-            (limit, offset),
-        )
+        params.extend([like_pat] * 6)
+
+    where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    cnt_cur = await conn.execute(f"SELECT COUNT(*) FROM log_audit_events {where_sql}", params)
+    total = int((await cnt_cur.fetchone())[0])
+    cur = await conn.execute(
+        f"""
+        SELECT id, created_at, discord_id, discord_username, action, target, ip_address, details
+        FROM log_audit_events
+        {where_sql}
+        ORDER BY created_at DESC, id DESC
+        LIMIT ? OFFSET ?
+        """,
+        [*params, limit, offset],
+    )
     return [dict(r) for r in await cur.fetchall()], total
+
+
+async def get_audit_summary() -> Dict[str, Any]:
+    """Return aggregate audit metrics and per-user last-seen timestamps for admin overview."""
+    import core.logs_db as _ldb
+
+    conn = await _ldb.get_logs_connection()
+    cutoff_24h = time.time() - 86400.0
+    row = await (
+        await conn.execute(
+            """
+            SELECT
+                COUNT(*) AS total_all,
+                SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) AS last_24h,
+                SUM(CASE WHEN action = 'login_denied' AND created_at >= ? THEN 1 ELSE 0 END) AS denied_24h,
+                SUM(CASE WHEN action = 'login_denied' THEN 1 ELSE 0 END) AS denied_total,
+                COUNT(DISTINCT CASE WHEN created_at >= ? AND discord_id IS NOT NULL AND discord_id != '' THEN discord_id END) AS unique_users_24h,
+                MAX(created_at) AS latest_event_at
+            FROM log_audit_events
+            """,
+            (cutoff_24h, cutoff_24h, cutoff_24h),
+        )
+    ).fetchone()
+
+    last_seen_cur = await conn.execute(
+        """
+        SELECT discord_id, MAX(created_at) AS last_seen_at
+        FROM log_audit_events
+        WHERE discord_id IS NOT NULL AND discord_id != ''
+        GROUP BY discord_id
+        """
+    )
+    last_seen_by_id = {
+        str(r["discord_id"]): float(r["last_seen_at"])
+        for r in await last_seen_cur.fetchall()
+        if r["last_seen_at"] is not None
+    }
+    return {
+        "total_all": int((row["total_all"] if row else 0) or 0),
+        "last_24h": int((row["last_24h"] if row else 0) or 0),
+        "denied_24h": int((row["denied_24h"] if row else 0) or 0),
+        "denied_total": int((row["denied_total"] if row else 0) or 0),
+        "unique_users_24h": int((row["unique_users_24h"] if row else 0) or 0),
+        "latest_event_at": row["latest_event_at"] if row else None,
+        "last_seen_by_id": last_seen_by_id,
+    }

@@ -2,19 +2,25 @@
 
 from __future__ import annotations
 
+import csv
+import io
 import logging
-from typing import List
-from urllib.parse import quote
+import math
+import time
+from typing import Any, Dict, List, Optional, Set, Tuple
+from urllib.parse import quote, urlencode
 
-from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import RedirectResponse
+from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi.responses import RedirectResponse, Response
 
 from core import discord_auth, logs_db, map_renderer
 from web.logs_routes.deps import LogsRouteContext
 from web.logs_routes.viewmodels import (
+    _AUDIT_ACTION_GROUPS,
     _AUDIT_ACTION_LABELS,
-    _audit_action_label,
+    _enrich_audit_event,
     _fmt_bytes,
+    _fmt_relative_ru,
     _fmt_ts_utc,
     _parse_bool_flag,
     _prefers_json,
@@ -23,11 +29,144 @@ from web.logs_routes.viewmodels import (
 logger = logging.getLogger(__name__)
 
 
+def _csv_safe_cell(val: Any) -> str:
+    text = "" if val is None else str(val)
+    if text and text[0] in ("=", "+", "-", "@", "\t", "\r"):
+        return "'" + text
+    return text
+
+
+def _resolve_audit_group(group: str, action: str) -> Tuple[str, List[str]]:
+    if action:
+        return "", []
+    g = (group or "").strip().lower()
+    if g in _AUDIT_ACTION_GROUPS:
+        return g, _AUDIT_ACTION_GROUPS[g][1]
+    return "", []
+
+
+async def _build_audit_vm(
+    *,
+    action: str = "",
+    group: str = "",
+    audit_q: str = "",
+    audit_user: str = "",
+    audit_ip: str = "",
+    date_from: str = "",
+    date_to: str = "",
+    page: int = 1,
+    per_page: int = 50,
+    whitelist_ids: Optional[set] = None,
+) -> Dict[str, Any]:
+    now_ts = time.time()
+    clean_action = (action or "").strip()
+    active_group, group_actions = _resolve_audit_group(group, clean_action)
+    offset = (max(1, page) - 1) * per_page
+
+    events, total_events = await logs_db.get_audit_events(
+        limit=per_page,
+        offset=offset,
+        action_filter=clean_action,
+        actions=group_actions or None,
+        q=audit_q,
+        user_filter=audit_user,
+        ip_filter=audit_ip,
+        date_from=date_from,
+        date_to=date_to,
+    )
+    total_pages = max(1, math.ceil(total_events / per_page)) if total_events else 1
+    current_page = min(max(1, page), total_pages)
+    if current_page != page and total_events > 0:
+        offset = (current_page - 1) * per_page
+        events, total_events = await logs_db.get_audit_events(
+            limit=per_page,
+            offset=offset,
+            action_filter=clean_action,
+            actions=group_actions or None,
+            q=audit_q,
+            user_filter=audit_user,
+            ip_filter=audit_ip,
+            date_from=date_from,
+            date_to=date_to,
+        )
+
+    wl_set = whitelist_ids if whitelist_ids is not None else set()
+    for ev in events:
+        _enrich_audit_event(ev, whitelist_ids=wl_set, now_ts=now_ts)
+
+    filter_params: Dict[str, Any] = {}
+    if clean_action:
+        filter_params["action"] = clean_action
+    if active_group:
+        filter_params["group"] = active_group
+    if audit_q.strip():
+        filter_params["audit_q"] = audit_q.strip()
+    if audit_user.strip():
+        filter_params["audit_user"] = audit_user.strip()
+    if audit_ip.strip():
+        filter_params["audit_ip"] = audit_ip.strip()
+    if date_from.strip():
+        filter_params["date_from"] = date_from.strip()
+    if date_to.strip():
+        filter_params["date_to"] = date_to.strip()
+    if per_page != 50:
+        filter_params["per_page"] = per_page
+
+    base_qs = urlencode(filter_params)
+    without_user = {k: v for k, v in filter_params.items() if k != "audit_user"}
+    without_ip = {k: v for k, v in filter_params.items() if k != "audit_ip"}
+    clear_user_url = "/logs/admin" + (f"?{urlencode(without_user)}" if without_user else "")
+    clear_ip_url = "/logs/admin" + (f"?{urlencode(without_ip)}" if without_ip else "")
+    has_filters = bool(
+        clean_action
+        or active_group
+        or audit_q.strip()
+        or audit_user.strip()
+        or audit_ip.strip()
+        or date_from.strip()
+        or date_to.strip()
+    )
+    showing_from = offset + 1 if total_events > 0 else 0
+    showing_to = min(offset + len(events), total_events)
+
+    return {
+        "audit_events": events,
+        "audit_actions": list(_AUDIT_ACTION_LABELS.items()),
+        "audit_groups": [(k, v[0]) for k, v in _AUDIT_ACTION_GROUPS.items()],
+        "total_events": total_events,
+        "action_filter": clean_action,
+        "group_filter": active_group,
+        "audit_q": audit_q.strip(),
+        "audit_user": audit_user.strip(),
+        "audit_ip": audit_ip.strip(),
+        "date_from": date_from.strip(),
+        "date_to": date_to.strip(),
+        "audit_page": current_page,
+        "audit_per_page": per_page,
+        "audit_total_pages": total_pages,
+        "audit_showing_from": showing_from,
+        "audit_showing_to": showing_to,
+        "audit_base_qs": base_qs,
+        "audit_clear_user_url": clear_user_url,
+        "audit_clear_ip_url": clear_ip_url,
+        "audit_has_filters": has_filters,
+    }
+
+
 def register_admin_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
     @router.get("/logs/admin")
     async def logs_admin_page(
         request: Request,
         action: str = "",
+        group: str = "",
+        audit_q: str = "",
+        audit_user: str = "",
+        audit_ip: str = "",
+        date_from: str = "",
+        date_to: str = "",
+        page: int = Query(default=1, ge=1),
+        per_page: int = Query(default=50, ge=10, le=200),
+        partial: str = "",
         notice: str = "",
         error: str = "",
     ):
@@ -36,24 +175,82 @@ def register_admin_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
             return err_resp
 
         config = ctx.get_config_fn()
-        shell = await ctx.get_shell_context_fn()
         whitelist = await logs_db.list_whitelist(config.discord_superadmin_ids)
-        for item in whitelist:
-            item["added_at_str"] = _fmt_ts_utc(item.get("added_at")) if item.get("added_at") else "config.json"
+        whitelist_ids: Set[str] = {str(item.get("discord_id") or "") for item in whitelist if item.get("discord_id")}
+        audit_summary = await logs_db.get_audit_summary()
+        last_seen_map: Dict[str, float] = audit_summary.get("last_seen_by_id") or {}
 
-        events, total_events = await logs_db.get_audit_events(limit=100, offset=0, action_filter=action)
-        for ev in events:
-            ev["created_at_str"] = _fmt_ts_utc(ev.get("created_at"))
-            ev["action_label"] = _audit_action_label(ev.get("action") or "")
+        audit_vm = await _build_audit_vm(
+            action=action,
+            group=group,
+            audit_q=audit_q,
+            audit_user=audit_user,
+            audit_ip=audit_ip,
+            date_from=date_from,
+            date_to=date_to,
+            page=page,
+            per_page=per_page,
+            whitelist_ids=whitelist_ids,
+        )
+
+        is_audit_partial = (
+            partial == "audit"
+            or (
+                request.headers.get("hx-request", "").lower() == "true"
+                and request.headers.get("hx-target", "") == "admin-audit-container"
+            )
+        )
+        if is_audit_partial:
+            return ctx.templates.TemplateResponse(
+                request=request,
+                name="partials/logs_admin_audit.html",
+                context={
+                    "user": user,
+                    "audit_summary": audit_summary,
+                    **audit_vm,
+                },
+            )
+
+        shell = await ctx.get_shell_context_fn()
+        now_ts = time.time()
+        superadmin_count = 0
+        admin_count = 0
+        viewer_count = 0
+        for item in whitelist:
+            did = str(item.get("discord_id") or "")
+            if item.get("is_config_superadmin") or item.get("role") == "superadmin":
+                item["effective_role"] = "superadmin"
+                superadmin_count += 1
+            elif item.get("role") == "admin":
+                item["effective_role"] = "admin"
+                admin_count += 1
+            else:
+                item["effective_role"] = "viewer"
+                viewer_count += 1
+            item["added_at_str"] = _fmt_ts_utc(item.get("added_at")) if item.get("added_at") else "config.json"
+            item["added_at_rel"] = _fmt_relative_ru(item.get("added_at"), now=now_ts) if item.get("added_at") else "конфиг"
+            last_seen = last_seen_map.get(did)
+            item["last_seen_str"] = _fmt_ts_utc(last_seen) if last_seen else "—"
+            item["last_seen_rel"] = _fmt_relative_ru(last_seen, now=now_ts) if last_seen else "не заходил"
+
+        wl_name_by_id = {
+            str(item.get("discord_id") or ""): (item.get("display_name") or item.get("discord_id") or "")
+            for item in whitelist
+        }
 
         uploaded_rounds, _ = await logs_db.list_rounds(source_filter="upload", limit=100, offset=0)
         for ur in uploaded_rounds:
             ur["uploaded_at_str"] = _fmt_ts_utc(ur.get("uploaded_at"))
+            ur["uploaded_at_rel"] = _fmt_relative_ru(ur.get("uploaded_at"), now=now_ts)
             ur["size_label"] = _fmt_bytes(int(ur.get("game_log_size") or 0) + int(ur.get("qdel_log_size") or 0))
+            ub_id = str(ur.get("uploaded_by") or "")
+            ur["uploaded_by_name"] = wl_name_by_id.get(ub_id, ub_id or "—")
 
         stats = await logs_db.get_logs_stats()
         stats["total_size_label"] = _fmt_bytes(stats["total_bytes"])
         stats["last_indexed_str"] = _fmt_ts_utc(stats.get("last_indexed_at"))
+        stats["last_indexed_rel"] = _fmt_relative_ru(stats.get("last_indexed_at"), now=now_ts)
+        index_errors = await logs_db.get_index_error_rounds(limit=50)
         map_manifest = map_renderer.get_map_manifest(config.resolved_maps_cache_dir())
         map_build_status = map_renderer.get_map_build_status()
 
@@ -64,12 +261,17 @@ def register_admin_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
                 **shell,
                 "user": user,
                 "whitelist": whitelist,
-                "audit_events": events,
-                "audit_actions": list(_AUDIT_ACTION_LABELS.items()),
-                "total_events": total_events,
-                "action_filter": action,
+                "whitelist_counts": {
+                    "total": len(whitelist),
+                    "superadmin": superadmin_count,
+                    "admin": admin_count,
+                    "viewer": viewer_count,
+                },
+                "audit_summary": audit_summary,
+                **audit_vm,
                 "uploaded_rounds": uploaded_rounds,
                 "stats": stats,
+                "index_errors": index_errors,
                 "index_include_debug": config.logs_index_include_debug,
                 "map_manifest": map_manifest,
                 "map_build_status": map_build_status,
@@ -81,10 +283,62 @@ def register_admin_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
             },
         )
 
+    @router.get("/logs/admin/audit/export")
+    async def export_audit_csv(
+        request: Request,
+        action: str = "",
+        group: str = "",
+        audit_q: str = "",
+        audit_user: str = "",
+        audit_ip: str = "",
+        date_from: str = "",
+        date_to: str = "",
+    ):
+        await ctx.require_api_user(request, require_admin=True)
+        clean_action = (action or "").strip()
+        _active_group, group_actions = _resolve_audit_group(group, clean_action)
+        events, _ = await logs_db.get_audit_events(
+            limit=500,
+            offset=0,
+            action_filter=clean_action,
+            actions=group_actions or None,
+            q=audit_q,
+            user_filter=audit_user,
+            ip_filter=audit_ip,
+            date_from=date_from,
+            date_to=date_to,
+        )
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow(["id", "timestamp_utc", "discord_id", "discord_username", "action", "target", "ip_address", "details"])
+        for ev in events:
+            writer.writerow(
+                [
+                    ev.get("id"),
+                    _fmt_ts_utc(ev.get("created_at")),
+                    _csv_safe_cell(ev.get("discord_id") or ""),
+                    _csv_safe_cell(ev.get("discord_username") or ""),
+                    _csv_safe_cell(ev.get("action") or ""),
+                    _csv_safe_cell(ev.get("target") or ""),
+                    _csv_safe_cell(ev.get("ip_address") or ""),
+                    _csv_safe_cell(ev.get("details") or ""),
+                ]
+            )
+        csv_bytes = ("\ufeff" + buf.getvalue()).encode("utf-8")
+        return Response(
+            content=csv_bytes,
+            media_type="text/csv; charset=utf-8",
+            headers={
+                "Content-Disposition": 'attachment; filename="hilleye-audit.csv"',
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+
     @router.post("/logs/refresh")
     async def refresh_logs(
         request: Request,
         csrf_token: str = Form(default=""),
+        next_url: str = Form(default="/logs"),
     ):
         user = await ctx.require_api_user(request)
         discord_auth.verify_csrf(user, csrf_token or request.headers.get("x-csrf-token"))
@@ -107,7 +361,8 @@ def register_admin_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
         msg = quote(
             f"Список обновлён: {summary['discovered']} раундов, проиндексировано {summary['indexed_rounds']} ({summary['elapsed_seconds']} с)"
         )
-        return RedirectResponse(f"/logs?notice={msg}", status_code=303)
+        target_path = "/logs/admin" if (next_url or "").strip() == "/logs/admin" and user.is_admin else "/logs"
+        return RedirectResponse(f"{target_path}?notice={msg}", status_code=303)
 
     @router.post("/logs/reindex")
     async def reindex_logs(

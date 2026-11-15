@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+import time
+from typing import Any, Dict, List, Optional, Set, Tuple
+from urllib.parse import quote, urlencode
 
 from fastapi import Request
 
@@ -31,11 +33,57 @@ _AUDIT_ACTION_LABELS: Dict[str, str] = {
     "rebuild_maps": "Пересборка карты",
 }
 
+_AUDIT_ACTION_CSS: Dict[str, str] = {
+    "login": "audit-ok",
+    "login_denied": "audit-danger",
+    "logout": "audit-muted",
+    "view_round": "audit-info",
+    "search_global": "audit-info",
+    "download_log": "audit-warn",
+    "upload_round": "audit-ok",
+    "delete_upload": "audit-danger",
+    "whitelist_add": "audit-warn",
+    "whitelist_remove": "audit-danger",
+    "refresh": "audit-muted",
+    "reindex": "audit-warn",
+    "rebuild_maps": "audit-warn",
+}
+
+_AUDIT_ACTION_GROUPS: Dict[str, Tuple[str, List[str]]] = {
+    "security": ("Безопасность и доступ", ["login_denied", "whitelist_add", "whitelist_remove", "delete_upload"]),
+    "auth": ("Входы и сессии", ["login", "login_denied", "logout"]),
+    "reads": ("Просмотр и поиск", ["view_round", "search_global", "download_log"]),
+    "ops": ("Система и архивы", ["refresh", "reindex", "rebuild_maps", "upload_round"]),
+}
+
 
 def _fmt_ts_utc(epoch: Optional[float]) -> str:
     if not epoch:
         return "—"
     return datetime.fromtimestamp(float(epoch), tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+
+def _fmt_ts_iso(epoch: Optional[float]) -> str:
+    if not epoch:
+        return ""
+    return datetime.fromtimestamp(float(epoch), tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _fmt_relative_ru(epoch: Optional[float], now: Optional[float] = None) -> str:
+    if not epoch:
+        return "—"
+    ref = float(now if now is not None else time.time())
+    diff = max(0, int(ref - float(epoch)))
+    if diff < 60:
+        return "только что"
+    if diff < 3600:
+        return f"{diff // 60} мин назад"
+    if diff < 86400:
+        return f"{diff // 3600} ч назад"
+    days = diff // 86400
+    if days < 30:
+        return f"{days} д назад"
+    return f"{days // 30} мес назад"
 
 
 def _fmt_bytes(num: int) -> str:
@@ -49,6 +97,84 @@ def _fmt_bytes(num: int) -> str:
 
 def _audit_action_label(action: str) -> str:
     return _AUDIT_ACTION_LABELS.get(action, action)
+
+
+def _audit_action_css(action: str) -> str:
+    return _AUDIT_ACTION_CSS.get(action, "audit-muted")
+
+
+def _parse_audit_details_pairs(details: str) -> List[Dict[str, str]]:
+    raw = (details or "").strip()
+    if not raw or "=" not in raw:
+        return []
+    pairs: List[Dict[str, str]] = []
+    for part in raw.split(","):
+        chunk = part.strip()
+        if "=" not in chunk:
+            return []
+        k, v = chunk.split("=", 1)
+        key = k.strip()
+        if not key or " " in key:
+            return []
+        pairs.append({"key": key, "val": v.strip()})
+    return pairs
+
+
+def _build_audit_target_links(action: str, target: str) -> List[Dict[str, str]]:
+    t = (target or "").strip()
+    if not t:
+        return []
+    if action in ("view_round", "download_log"):
+        if ":" in t:
+            ruid, fname = t.split(":", 1)
+            return [{"label": t, "href": f"/logs/round/{quote(ruid)}?{urlencode({'file': fname})}"}]
+        return [{"label": t, "href": f"/logs/round/{quote(t)}"}]
+    if action == "upload_round":
+        links = []
+        for uid in [u.strip() for u in t.split(",") if u.strip()]:
+            links.append({"label": uid, "href": f"/logs/round/{quote(uid)}"})
+        return links
+    if action == "search_global":
+        return [{"label": t, "href": f"/logs/search?{urlencode({'q': t})}"}]
+    if action in ("whitelist_add", "whitelist_remove") and t.isdigit():
+        return [{"label": t, "href": f"/logs/admin?{urlencode({'audit_user': t})}"}]
+    return []
+
+
+def _enrich_audit_event(
+    ev: Dict[str, Any],
+    *,
+    whitelist_ids: Set[str],
+    now_ts: float,
+) -> Dict[str, Any]:
+    action = str(ev.get("action") or "")
+    target = str(ev.get("target") or "")
+    details = str(ev.get("details") or "")
+    discord_id = str(ev.get("discord_id") or "")
+    created_at = ev.get("created_at")
+
+    details_pairs = _parse_audit_details_pairs(details)
+    quick_grant_name = str(ev.get("discord_username") or "")
+    for p in details_pairs:
+        if p["key"] == "display_name" and p["val"]:
+            quick_grant_name = p["val"]
+            break
+
+    ev["created_at_str"] = _fmt_ts_utc(created_at)
+    ev["created_at_iso"] = _fmt_ts_iso(created_at)
+    ev["relative_time_str"] = _fmt_relative_ru(created_at, now=now_ts)
+    ev["action_label"] = _audit_action_label(action)
+    ev["action_css"] = _audit_action_css(action)
+    ev["target_links"] = _build_audit_target_links(action, target)
+    ev["details_pairs"] = details_pairs
+    ev["can_quick_grant"] = (
+        action == "login_denied"
+        and discord_id.isdigit()
+        and 15 <= len(discord_id) <= 22
+        and discord_id not in whitelist_ids
+    )
+    ev["quick_grant_name"] = quick_grant_name[:80]
+    return ev
 
 
 def _coord_vm(coords: Optional[Tuple[int, int, int]], cache_dir: Path) -> Optional[Dict[str, Any]]:

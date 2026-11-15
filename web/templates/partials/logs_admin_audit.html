@@ -1,0 +1,262 @@
+<div class="panel-header admin-audit-header">
+  <div class="admin-panel-title-group">
+    <h2 class="panel-title">Журнал аудита</h2>
+    <span class="admin-count-pill mono-val">
+      {{ total_events }}{% if audit_has_filters %} / {{ audit_summary.total_all }}{% endif %}
+    </span>
+    <span id="admin-audit-refresh-indicator" class="htmx-indicator mono-val cell-sub">обновление...</span>
+  </div>
+  <div class="admin-header-actions">
+    <label class="logs-check-label admin-live-toggle" title="Автоматически обновлять журнал аудита каждые 10 секунд">
+      <input type="checkbox" id="admin-audit-live-cb">
+      <span>Live 10с</span>
+    </label>
+    <button type="button" id="admin-audit-refresh-btn" class="logs-btn logs-btn-sm" title="Обновить журнал">Обновить</button>
+    <a href="/logs/admin/audit/export{% if audit_base_qs %}?{{ audit_base_qs }}{% endif %}" class="logs-btn logs-btn-sm" title="Скачать выборку в CSV (до 500 строк)">CSV</a>
+  </div>
+</div>
+
+<div class="logs-toolbar-compact admin-audit-toolbar">
+  <div class="admin-audit-presets" role="group" aria-label="Быстрые фильтры аудита">
+    <a href="/logs/admin"
+       hx-get="/logs/admin"
+       hx-target="#admin-audit-container"
+       hx-push-url="true"
+       class="logs-nav-pill admin-pill-sm {% if not group_filter and not action_filter %}is-active{% endif %}">
+      Все <span class="mono-val cell-sub">{{ audit_summary.total_all }}</span>
+    </a>
+    <a href="/logs/admin?action=login_denied"
+       hx-get="/logs/admin?action=login_denied"
+       hx-target="#admin-audit-container"
+       hx-push-url="true"
+       class="logs-nav-pill admin-pill-sm {% if action_filter == 'login_denied' %}is-active{% endif %} {% if audit_summary.denied_24h > 0 %}is-alert-pill{% endif %}">
+      Отказы входа
+      {% if audit_summary.denied_24h > 0 %}
+      <span class="admin-badge-alert mono-val">{{ audit_summary.denied_24h }} / 24ч</span>
+      {% elif audit_summary.denied_total > 0 %}
+      <span class="mono-val cell-sub">{{ audit_summary.denied_total }}</span>
+      {% endif %}
+    </a>
+    {% for g_key, g_label in audit_groups %}
+    <a href="/logs/admin?group={{ g_key }}"
+       hx-get="/logs/admin?group={{ g_key }}"
+       hx-target="#admin-audit-container"
+       hx-push-url="true"
+       class="logs-nav-pill admin-pill-sm {% if group_filter == g_key %}is-active{% endif %}">
+      {{ g_label }}
+    </a>
+    {% endfor %}
+  </div>
+
+  <form id="admin-audit-filter-form"
+        action="/logs/admin"
+        method="get"
+        hx-get="/logs/admin"
+        hx-target="#admin-audit-container"
+        hx-push-url="true"
+        class="logs-form-grid admin-audit-form">
+    {% if group_filter %}
+    <input type="hidden" name="group" value="{{ group_filter }}">
+    {% endif %}
+    {% if audit_user %}
+    <input type="hidden" name="audit_user" value="{{ audit_user }}">
+    {% endif %}
+    {% if audit_ip %}
+    <input type="hidden" name="audit_ip" value="{{ audit_ip }}">
+    {% endif %}
+    <div class="logs-field">
+      <label for="admin-audit-q" class="logs-label">Поиск (ID, ник, IP, объект, детали)</label>
+      <input type="text" id="admin-audit-q" name="audit_q" value="{{ audit_q }}" class="logs-input" placeholder="Например: 127.0.0.1, round-..., ckey">
+    </div>
+    <div class="logs-field logs-field-sm">
+      <label for="admin-audit-action" class="logs-label">Действие</label>
+      <select id="admin-audit-action" name="action" class="logs-select" aria-label="Фильтр событий аудита">
+        <option value="">Все действия</option>
+        {% for act_val, act_label in audit_actions %}
+        <option value="{{ act_val }}" {% if action_filter == act_val %}selected{% endif %}>{{ act_label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="logs-field logs-field-sm">
+      <label for="admin-audit-df" class="logs-label">С (UTC)</label>
+      <input type="date" id="admin-audit-df" name="date_from" value="{{ date_from }}" class="logs-input">
+    </div>
+    <div class="logs-field logs-field-sm">
+      <label for="admin-audit-dt" class="logs-label">По (UTC)</label>
+      <input type="date" id="admin-audit-dt" name="date_to" value="{{ date_to }}" class="logs-input">
+    </div>
+    <div class="logs-field logs-field-xs">
+      <label for="admin-audit-per-page" class="logs-label">Строк</label>
+      <select id="admin-audit-per-page" name="per_page" class="logs-select">
+        {% for pp in (25, 50, 100) %}
+        <option value="{{ pp }}" {% if audit_per_page == pp %}selected{% endif %}>{{ pp }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <button type="submit" class="logs-btn logs-btn-primary">Фильтр</button>
+    {% if audit_has_filters %}
+    <a href="/logs/admin"
+       hx-get="/logs/admin"
+       hx-target="#admin-audit-container"
+       hx-push-url="true"
+       class="logs-btn">Сброс</a>
+    {% endif %}
+  </form>
+
+  {% if audit_user or audit_ip %}
+  <div class="admin-active-filters">
+    {% if audit_user %}
+    <span class="logs-active-ckey-pill mono-val">
+      <span>Пользователь: <strong>{{ audit_user }}</strong></span>
+      <a href="{{ audit_clear_user_url }}"
+         hx-get="{{ audit_clear_user_url }}"
+         hx-target="#admin-audit-container"
+         hx-push-url="true"
+         class="logs-pill-clear"
+         title="Убрать фильтр по пользователю">&times;</a>
+    </span>
+    {% endif %}
+    {% if audit_ip %}
+    <span class="logs-active-ckey-pill mono-val">
+      <span>IP: <strong>{{ audit_ip }}</strong></span>
+      <a href="{{ audit_clear_ip_url }}"
+         hx-get="{{ audit_clear_ip_url }}"
+         hx-target="#admin-audit-container"
+         hx-push-url="true"
+         class="logs-pill-clear"
+         title="Убрать фильтр по IP">&times;</a>
+    </span>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+
+{% if audit_events %}
+<div class="logs-table-wrap">
+  <table class="logs-table admin-audit-table">
+    <thead>
+      <tr>
+        <th>Время</th>
+        <th>Пользователь</th>
+        <th>Действие</th>
+        <th>Объект</th>
+        <th>IP</th>
+        <th>Детали</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for ev in audit_events %}
+      <tr class="admin-audit-row {{ ev.action_css }}-row" data-action="{{ ev.action }}">
+        <td class="admin-time-cell">
+          <div class="mono-val admin-rel-time" title="{{ ev.created_at_str }}">{{ ev.relative_time_str }}</div>
+          <time class="mono-val cell-sub admin-utc-time" datetime="{{ ev.created_at_iso }}" data-utc-iso="{{ ev.created_at_iso }}">{{ ev.created_at_str }}</time>
+        </td>
+        <td>
+          <div class="admin-user-cell">
+            <span class="admin-user-name">{{ ev.discord_username or '—' }}</span>
+            {% if ev.discord_id %}
+            <span class="admin-id-inline">
+              <a href="/logs/admin?audit_user={{ ev.discord_id|urlencode }}"
+                 hx-get="/logs/admin?audit_user={{ ev.discord_id|urlencode }}"
+                 hx-target="#admin-audit-container"
+                 hx-push-url="true"
+                 class="admin-inline-filter-link mono-val"
+                 title="Фильтровать аудит по этому Discord ID">{{ ev.discord_id }}</a>
+              <button type="button" class="log-mini-btn admin-copy-btn" data-copy-text="{{ ev.discord_id }}" title="Копировать Discord ID">коп.</button>
+            </span>
+            {% endif %}
+          </div>
+        </td>
+        <td>
+          <span class="audit-badge {{ ev.action_css }}" title="{{ ev.action }}">{{ ev.action_label }}</span>
+        </td>
+        <td>
+          {% if ev.target_links %}
+          <div class="admin-target-links">
+            {% for tl in ev.target_links %}
+            <a href="{{ tl.href }}" class="server-link mono-val">{{ tl.label }}</a>
+            {% endfor %}
+          </div>
+          {% else %}
+          <span class="mono-val">{{ ev.target or '—' }}</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if ev.ip_address %}
+          <span class="admin-id-inline">
+            <a href="/logs/admin?audit_ip={{ ev.ip_address|urlencode }}"
+               hx-get="/logs/admin?audit_ip={{ ev.ip_address|urlencode }}"
+               hx-target="#admin-audit-container"
+               hx-push-url="true"
+               class="admin-inline-filter-link mono-val"
+               title="Фильтровать аудит по этому IP">{{ ev.ip_address }}</a>
+            <button type="button" class="log-mini-btn admin-copy-btn" data-copy-text="{{ ev.ip_address }}" title="Копировать IP">коп.</button>
+          </span>
+          {% else %}
+          <span class="cell-sub">—</span>
+          {% endif %}
+        </td>
+        <td>
+          <div class="admin-details-cell">
+            {% if ev.details_pairs %}
+            <div class="admin-kv-list">
+              {% for kv in ev.details_pairs %}
+              <span class="admin-kv-pill mono-val"><span class="admin-kv-k">{{ kv.key }}:</span> {{ kv.val }}</span>
+              {% endfor %}
+            </div>
+            {% elif ev.details %}
+            <span class="cell-sub">{{ ev.details }}</span>
+            {% else %}
+            <span class="cell-sub">—</span>
+            {% endif %}
+
+            {% if ev.can_quick_grant %}
+            <form action="/logs/admin/whitelist/add" method="post" class="admin-inline-form">
+              <input type="hidden" name="csrf_token" value="{{ user.csrf_token }}">
+              <input type="hidden" name="discord_id" value="{{ ev.discord_id }}">
+              <input type="hidden" name="display_name" value="{{ ev.quick_grant_name }}">
+              <input type="hidden" name="role" value="viewer">
+              <button type="submit"
+                      class="logs-btn logs-btn-sm admin-quick-grant-btn"
+                      data-confirm-text="Точно выдать viewer?"
+                      title="Выдать доступ viewer пользователю {{ ev.discord_id }}">
+                + Выдать доступ
+              </button>
+            </form>
+            {% endif %}
+          </div>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="logs-pagination">
+  <span class="mono-val cell-sub">
+    Показано {{ audit_showing_from }}–{{ audit_showing_to }} из {{ total_events }} &middot; стр. {{ audit_page }} / {{ audit_total_pages }}
+  </span>
+  {% if audit_total_pages > 1 %}
+  <div class="logs-topbar-left">
+    {% if audit_page > 1 %}
+    <a href="/logs/admin?{% if audit_base_qs %}{{ audit_base_qs }}&{% endif %}page={{ audit_page - 1 }}"
+       hx-get="/logs/admin?{% if audit_base_qs %}{{ audit_base_qs }}&{% endif %}page={{ audit_page - 1 }}"
+       hx-target="#admin-audit-container"
+       hx-push-url="true"
+       class="logs-btn logs-btn-sm">&larr; Назад</a>
+    {% endif %}
+    {% if audit_page < audit_total_pages %}
+    <a href="/logs/admin?{% if audit_base_qs %}{{ audit_base_qs }}&{% endif %}page={{ audit_page + 1 }}"
+       hx-get="/logs/admin?{% if audit_base_qs %}{{ audit_base_qs }}&{% endif %}page={{ audit_page + 1 }}"
+       hx-target="#admin-audit-container"
+       hx-push-url="true"
+       class="logs-btn logs-btn-sm">Вперёд &rarr;</a>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+{% else %}
+<div class="logs-panel-body">
+  <div class="block-empty">По выбранным фильтрам событий нет.</div>
+</div>
+{% endif %}

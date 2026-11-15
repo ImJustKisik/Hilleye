@@ -239,6 +239,7 @@
     if (resetBtn) {
       var qVal = (filterForm.querySelector('input[name="q"]') || {}).value || "";
       var ckVal = (filterForm.querySelector('input[name="ckey"]') || {}).value || "";
+      var radVal = Number((filterForm.querySelector('select[name="radius"]') || {}).value || 0);
       var tfVal = (filterForm.querySelector('input[name="time_from"]') || {}).value || "";
       var ttVal = (filterForm.querySelector('input[name="time_to"]') || {}).value || "";
       var rxCb = filterForm.querySelector('input[name="regex"]');
@@ -248,6 +249,7 @@
         (activePreset && activePreset !== "gameplay") ||
         Boolean(qVal.trim()) ||
         Boolean(ckVal.trim()) ||
+        radVal > 0 ||
         Boolean(tfVal.trim()) ||
         Boolean(ttVal.trim()) ||
         Boolean(rxCb && rxCb.checked) ||
@@ -381,6 +383,8 @@
       btn.addEventListener("click", function () {
         if (!filterForm || !ckeyInput) return;
         ckeyInput.value = "";
+        var radSelect = document.getElementById("logs-radius-select");
+        if (radSelect) radSelect.value = "0";
         var pageInput = filterForm.querySelector('input[name="page"]');
         if (pageInput) pageInput.value = "1";
         submitFilterForm(filterForm);
@@ -539,7 +543,8 @@
           document.getElementById("logs-q-input") ||
           document.getElementById("gsearch-q") ||
           document.getElementById("quick-search-q") ||
-          document.getElementById("qdel-q");
+          document.getElementById("qdel-q") ||
+          document.getElementById("admin-audit-q");
         if (searchInput) {
           ev.preventDefault();
           searchInput.focus();
@@ -600,7 +605,7 @@
     if (cat === "SAY" || cat === "WHISPER" || cat === "RADIO" || cat === "OOC") return "#34d399";
     if (cat === "ADMIN" || cat === "ADMINPM" || cat === "ADMINPRIVATE" || cat === "ASAY") return "#fbbf24";
     if (cat === "ACCESS") return "#60a5fa";
-    if (cat === "GAME" || cat === "EMOTE" || cat === "VOTE") return "#c084fc";
+    if (cat === "GAME" || cat === "EMOTE" || cat === "EMOTE_MECH" || cat === "VOTE") return "#c084fc";
     return "#94a3b8";
   }
 
@@ -2118,6 +2123,295 @@
     }, 2000);
   }
 
+  var adminAuditLiveEnabled = false;
+  var adminAuditLiveTimer = null;
+
+  function initConfirmButtons(root) {
+    var scope = root || document;
+    scope.querySelectorAll("[data-confirm-text]").forEach(function (btn) {
+      if (btn.dataset.confirmBound) return;
+      btn.dataset.confirmBound = "1";
+      var defaultText = btn.textContent;
+      var armTimer = null;
+
+      btn.addEventListener("click", function (ev) {
+        if (btn.dataset.confirmArmed === "1") {
+          if (armTimer) clearTimeout(armTimer);
+          return;
+        }
+        ev.preventDefault();
+        ev.stopPropagation();
+        btn.dataset.confirmArmed = "1";
+        btn.classList.add("is-confirm-armed");
+        btn.textContent = btn.dataset.confirmText || "Подтвердить?";
+        armTimer = setTimeout(function () {
+          btn.dataset.confirmArmed = "0";
+          btn.classList.remove("is-confirm-armed");
+          btn.textContent = defaultText;
+        }, 4000);
+      });
+    });
+  }
+
+  function initLoadingForms(root) {
+    var scope = root || document;
+    scope.querySelectorAll("form[data-loading-form]").forEach(function (form) {
+      if (form.dataset.loadingBound) return;
+      form.dataset.loadingBound = "1";
+      form.addEventListener("submit", function () {
+        var submitBtn = form.querySelector('button[type="submit"]');
+        if (submitBtn) {
+          var loadingLabel = submitBtn.dataset.loadingLabel || "Выполняется...";
+          submitBtn.disabled = true;
+          submitBtn.textContent = loadingLabel;
+        }
+      });
+    });
+  }
+
+  function formatAuditLocalTimes(root) {
+    var scope = root || document;
+    scope.querySelectorAll("time[data-utc-iso]").forEach(function (el) {
+      var iso = el.dataset.utcIso;
+      if (!iso) return;
+      var d = new Date(iso);
+      if (isNaN(d.getTime())) return;
+      try {
+        el.title = "Локальное время: " + d.toLocaleString();
+      } catch (_err) {
+        // Ignore locale formatting errors
+      }
+    });
+  }
+
+  function reloadAdminAuditContainer() {
+    var container = document.getElementById("admin-audit-container");
+    if (!container) return;
+    var url = window.location.pathname + window.location.search;
+    if (window.htmx && typeof window.htmx.ajax === "function") {
+      window.htmx.ajax("GET", url, { target: "#admin-audit-container", swap: "innerHTML" });
+    } else {
+      window.location.reload();
+    }
+  }
+
+  function initAdminAuditHelpers() {
+    var container = document.getElementById("admin-audit-container");
+    if (!container) return;
+
+    formatAuditLocalTimes(container);
+    initCopyButtons();
+    initConfirmButtons(container);
+
+    var filterForm = document.getElementById("admin-audit-filter-form");
+    if (filterForm && !filterForm.dataset.auditBound) {
+      filterForm.dataset.auditBound = "1";
+      filterForm.querySelectorAll('select, input[type="date"]').forEach(function (ctrl) {
+        ctrl.addEventListener("change", function () {
+          if (ctrl.name === "action") {
+            var grpInput = filterForm.querySelector('input[name="group"]');
+            if (grpInput) grpInput.value = "";
+          }
+          if (window.htmx && typeof window.htmx.trigger === "function") {
+            window.htmx.trigger(filterForm, "submit");
+          } else {
+            filterForm.submit();
+          }
+        });
+      });
+    }
+
+    var refreshBtn = document.getElementById("admin-audit-refresh-btn");
+    if (refreshBtn && !refreshBtn.dataset.bound) {
+      refreshBtn.dataset.bound = "1";
+      refreshBtn.addEventListener("click", reloadAdminAuditContainer);
+    }
+
+    var liveCb = document.getElementById("admin-audit-live-cb");
+    if (liveCb) {
+      liveCb.checked = adminAuditLiveEnabled;
+      var toggleLabel = liveCb.closest(".admin-live-toggle");
+      if (toggleLabel) toggleLabel.classList.toggle("is-live", adminAuditLiveEnabled);
+
+      if (!liveCb.dataset.bound) {
+        liveCb.dataset.bound = "1";
+        liveCb.addEventListener("change", function () {
+          adminAuditLiveEnabled = liveCb.checked;
+          if (toggleLabel) toggleLabel.classList.toggle("is-live", adminAuditLiveEnabled);
+          if (adminAuditLiveTimer) {
+            clearInterval(adminAuditLiveTimer);
+            adminAuditLiveTimer = null;
+          }
+          if (adminAuditLiveEnabled) {
+            adminAuditLiveTimer = setInterval(function () {
+              if (document.visibilityState !== "visible") return;
+              var active = document.activeElement;
+              var curForm = document.getElementById("admin-audit-filter-form");
+              if (active && curForm && curForm.contains(active)) return;
+              reloadAdminAuditContainer();
+            }, 10000);
+          }
+        });
+      }
+    }
+  }
+
+  function setActiveAdminTab(tabName) {
+    var tabs = document.querySelectorAll("[data-admin-tab]");
+    var sections = document.querySelectorAll("[data-admin-section]");
+    if (!tabs.length || !sections.length) return;
+    var activeTab = tabName || "all";
+    tabs.forEach(function (btn) {
+      btn.classList.toggle("is-active", btn.dataset.adminTab === activeTab);
+    });
+    sections.forEach(function (sec) {
+      var visible = activeTab === "all" || sec.dataset.adminSection === activeTab;
+      sec.classList.toggle("admin-section-hidden", !visible);
+    });
+  }
+
+  function initAdminDashboard() {
+    var adminRoot = document.querySelector(".admin-page-root");
+    if (!adminRoot) return;
+
+    initConfirmButtons(adminRoot);
+    initLoadingForms(adminRoot);
+    initAdminAuditHelpers();
+
+    // Workspace tabs
+    var tabs = adminRoot.querySelectorAll("[data-admin-tab]");
+    if (tabs.length) {
+      var hashMatch = (window.location.hash || "").match(/tab=([a-z]+)/);
+      if (hashMatch) {
+        setActiveAdminTab(hashMatch[1]);
+      }
+      tabs.forEach(function (btn) {
+        if (btn.dataset.bound) return;
+        btn.dataset.bound = "1";
+        btn.addEventListener("click", function () {
+          var nextTab = btn.dataset.adminTab || "all";
+          setActiveAdminTab(nextTab);
+          if (window.history && window.history.replaceState) {
+            var newHash = nextTab === "all" ? "" : ("#tab=" + nextTab);
+            window.history.replaceState(null, "", window.location.pathname + window.location.search + newHash);
+          }
+        });
+      });
+    }
+
+    // KPI card jumps
+    adminRoot.querySelectorAll("[data-admin-jump]").forEach(function (card) {
+      if (card.dataset.bound) return;
+      card.dataset.bound = "1";
+      card.addEventListener("click", function (ev) {
+        var targetSec = card.dataset.adminJump;
+        if (card.getAttribute("href").charAt(0) === "#") {
+          ev.preventDefault();
+          setActiveAdminTab("all");
+          var el = document.getElementById("admin-" + targetSec + "-section");
+          if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+      });
+    });
+
+    // Jump to audit section when clicking "история ->" on whitelist row
+    adminRoot.querySelectorAll("[data-audit-jump]").forEach(function (link) {
+      if (link.dataset.bound) return;
+      link.dataset.bound = "1";
+      link.addEventListener("click", function () {
+        setActiveAdminTab("all");
+        var auditSec = document.getElementById("admin-audit-section");
+        if (auditSec) auditSec.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    });
+
+    // Discord ID paste cleanup (e.g. "<@!123456789012345678>")
+    var wlIdInput = document.getElementById("wl-id");
+    if (wlIdInput && !wlIdInput.dataset.cleanBound) {
+      wlIdInput.dataset.cleanBound = "1";
+      wlIdInput.addEventListener("input", function () {
+        var m = wlIdInput.value.match(/\b([0-9]{15,22})\b/);
+        if (m && wlIdInput.value.trim() !== m[1]) {
+          wlIdInput.value = m[1];
+        }
+      });
+    }
+
+    // Inline Whitelist edit mode
+    var wlNoteInput = document.getElementById("wl-note");
+    var wlRoleSelect = document.getElementById("wl-role");
+    var wlSubmitBtn = document.getElementById("admin-wl-submit");
+    var wlEditBanner = document.getElementById("admin-wl-edit-banner");
+    var wlEditIdLabel = document.getElementById("admin-wl-edit-id");
+    var wlEditCancel = document.getElementById("admin-wl-edit-cancel");
+
+    function resetWlEditMode() {
+      if (wlIdInput) wlIdInput.value = "";
+      if (wlNoteInput) wlNoteInput.value = "";
+      if (wlRoleSelect) wlRoleSelect.value = "viewer";
+      if (wlSubmitBtn) wlSubmitBtn.textContent = "Добавить";
+      if (wlEditBanner) wlEditBanner.hidden = true;
+    }
+
+    adminRoot.querySelectorAll(".js-wl-edit").forEach(function (btn) {
+      if (btn.dataset.bound) return;
+      btn.dataset.bound = "1";
+      btn.addEventListener("click", function () {
+        var did = btn.dataset.wlId || "";
+        var dname = btn.dataset.wlName || "";
+        var drole = btn.dataset.wlRole || "viewer";
+        if (wlIdInput) wlIdInput.value = did;
+        if (wlNoteInput) wlNoteInput.value = dname;
+        if (wlRoleSelect && (drole === "viewer" || drole === "admin")) wlRoleSelect.value = drole;
+        if (wlEditIdLabel) wlEditIdLabel.textContent = did;
+        if (wlEditBanner) wlEditBanner.hidden = false;
+        if (wlSubmitBtn) wlSubmitBtn.textContent = "Сохранить";
+        if (wlNoteInput) {
+          wlNoteInput.focus();
+          wlNoteInput.select();
+        }
+      });
+    });
+
+    if (wlEditCancel && !wlEditCancel.dataset.bound) {
+      wlEditCancel.dataset.bound = "1";
+      wlEditCancel.addEventListener("click", resetWlEditMode);
+    }
+
+    // Client-side whitelist search & role pills
+    var wlSearch = document.getElementById("admin-wl-search");
+    var wlRolePills = adminRoot.querySelectorAll("[data-wl-role-filter]");
+    var activeWlRole = "";
+
+    function applyWlFilter() {
+      var q = wlSearch ? wlSearch.value.trim().toLowerCase() : "";
+      adminRoot.querySelectorAll(".admin-wl-row").forEach(function (row) {
+        var rowRole = row.dataset.wlRole || "";
+        var rowText = row.dataset.wlSearch || "";
+        var roleOk = !activeWlRole || rowRole === activeWlRole;
+        var textOk = !q || rowText.indexOf(q) !== -1;
+        row.hidden = !(roleOk && textOk);
+      });
+    }
+
+    if (wlSearch && !wlSearch.dataset.bound) {
+      wlSearch.dataset.bound = "1";
+      wlSearch.addEventListener("input", applyWlFilter);
+    }
+
+    wlRolePills.forEach(function (pill) {
+      if (pill.dataset.bound) return;
+      pill.dataset.bound = "1";
+      pill.addEventListener("click", function () {
+        activeWlRole = pill.dataset.wlRoleFilter || "";
+        wlRolePills.forEach(function (p) {
+          p.classList.toggle("is-active", p === pill);
+        });
+        applyWlFilter();
+      });
+    });
+  }
+
   function bindStreamHelpers() {
     initRoundFilterHelpers();
     initContextModal();
@@ -2131,10 +2425,15 @@
     bindStreamHelpers();
     initKeyboardShortcuts();
     initAdminMapBuildPolling();
+    initAdminDashboard();
 
     document.body.addEventListener("htmx:afterSwap", function (ev) {
-      if (ev.detail && ev.detail.target && ev.detail.target.id === "logs-stream-container") {
+      var target = ev.detail && ev.detail.target;
+      if (!target) return;
+      if (target.id === "logs-stream-container") {
         bindStreamHelpers();
+      } else if (target.id === "admin-audit-container") {
+        initAdminAuditHelpers();
       }
     });
   }

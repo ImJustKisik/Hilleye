@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from html import escape as html_escape
 from pathlib import Path
 import re
@@ -263,6 +264,59 @@ def _time_matches_range(ts: str, from_sec: Optional[int], to_sec: Optional[int],
     return True
 
 
+def _line_epoch_seconds(ts: str) -> Optional[float]:
+    if len(ts) < 19:
+        return None
+    try:
+        return datetime.fromisoformat(ts[:19]).timestamp()
+    except ValueError:
+        return None
+
+
+def _collect_ckey_coord_anchors(
+    file_path: Path,
+    ckey_norm: str,
+) -> List[Tuple[Optional[float], int, int, int, int]]:
+    """Collect chronological (epoch_sec, line_no, x, y, z) anchors for lines mentioning ckey_norm."""
+    if not ckey_norm:
+        return []
+    anchors: List[Tuple[Optional[float], int, int, int, int]] = []
+    for line_no, ts, _cat, raw_msg, _is_cont in iter_parsed_file_lines(file_path):
+        coords = extract_coords_from_text(raw_msg)
+        if not coords:
+            continue
+        _, plain_msg = sanitize_byond_html(raw_msg)
+        if ckey_norm not in extract_ckeys_from_text(plain_msg) and ckey_norm not in _extract_word_ckey_tokens(plain_msg):
+            continue
+        x, y, z = coords[0]
+        anchors.append((_line_epoch_seconds(ts), line_no, x, y, z))
+    return anchors
+
+
+def _nearest_anchor_for_line(
+    anchors: Sequence[Tuple[Optional[float], int, int, int, int]],
+    line_no: int,
+    line_epoch: Optional[float],
+    hint_idx: int,
+) -> Tuple[Optional[Tuple[int, int, int]], int]:
+    """Return ((x, y, z), updated_hint_idx) for the anchor nearest in time (or line_no) to this line."""
+    n = len(anchors)
+    if n == 0:
+        return None, 0
+    idx = max(0, min(hint_idx, n - 1))
+
+    def _dist(i: int) -> Tuple[float, int]:
+        a_epoch, a_ln, _, _, _ = anchors[i]
+        if line_epoch is not None and a_epoch is not None:
+            return (abs(a_epoch - line_epoch), abs(a_ln - line_no))
+        return (float(abs(a_ln - line_no)), abs(a_ln - line_no))
+
+    while idx + 1 < n and _dist(idx + 1) <= _dist(idx):
+        idx += 1
+    _, _, ax, ay, az = anchors[idx]
+    return (ax, ay, az), idx
+
+
 def _prepare_log_filter(
     *,
     preset: str,
@@ -272,10 +326,12 @@ def _prepare_log_filter(
     use_regex: bool,
     time_from: str,
     time_to: str,
+    radius: int = 0,
 ) -> _PreparedLogFilter:
     pattern, regex_error = _compile_search_pattern(q, use_regex)
     from_sec, from_inv = _parse_time_seconds(time_from, is_end=False)
     to_sec, to_inv = _parse_time_seconds(time_to, is_end=True)
+    clamped_radius = max(0, min(int(radius or 0), 100))
     return _PreparedLogFilter(
         preset=preset,
         categories=categories,
@@ -286,6 +342,7 @@ def _prepare_log_filter(
         from_sec=from_sec,
         to_sec=to_sec,
         time_invalid=from_inv or to_inv,
+        radius=clamped_radius,
     )
 
 
@@ -335,14 +392,17 @@ def _evaluate_line_filter(
     filt: _PreparedLogFilter,
     *,
     mask_ips: bool = False,
-) -> Tuple[bool, Optional[str], Optional[Tuple[str, str]]]:
+    line_no: int = 0,
+    anchors: Sequence[Tuple[Optional[float], int, int, int, int]] = (),
+    anchor_hint: int = 0,
+) -> Tuple[bool, Optional[str], Optional[Tuple[str, str]], int]:
     if not category_matches_filters(cat, preset=filt.preset, selected_categories=filt.categories):
-        return False, None, None
+        return False, None, None, anchor_hint
     if not _time_matches_range(ts, filt.from_sec, filt.to_sec, filt.time_invalid):
-        return False, None, None
+        return False, None, None, anchor_hint
 
     if not filt.ckey_norm and not filt.q_lower and filt.pattern is None:
-        return True, None, None
+        return True, None, None, anchor_hint
 
     display_raw = mask_sensitive_text(raw_msg) if mask_ips else raw_msg
     sanitized = sanitize_byond_html(display_raw)
@@ -350,17 +410,36 @@ def _evaluate_line_filter(
 
     if filt.ckey_norm:
         line_ckeys = extract_ckeys_from_text(plain_text)
-        if filt.ckey_norm not in line_ckeys and filt.ckey_norm not in _extract_word_ckey_tokens(plain_text):
-            return False, None, None
+        is_own_ckey = (
+            filt.ckey_norm in line_ckeys
+            or filt.ckey_norm in _extract_word_ckey_tokens(plain_text)
+        )
+        if not is_own_ckey:
+            if filt.radius <= 0 or not anchors:
+                return False, None, None, anchor_hint
+            line_coords = extract_coords_from_text(raw_msg)
+            if not line_coords:
+                return False, None, None, anchor_hint
+            anchor_xyz, anchor_hint = _nearest_anchor_for_line(
+                anchors, line_no, _line_epoch_seconds(ts), anchor_hint
+            )
+            if anchor_xyz is None:
+                return False, None, None, anchor_hint
+            ax, ay, az = anchor_xyz
+            if not any(
+                lz == az and max(abs(lx - ax), abs(ly - ay)) <= filt.radius
+                for lx, ly, lz in line_coords
+            ):
+                return False, None, None, anchor_hint
 
     if filt.q_lower:
         if filt.pattern is not None:
             if not filt.pattern.search(plain_text):
-                return False, None, None
+                return False, None, None, anchor_hint
         elif filt.q_lower not in plain_text.lower():
-            return False, None, None
+            return False, None, None, anchor_hint
 
-    return True, display_raw, sanitized
+    return True, display_raw, sanitized, anchor_hint
 
 
 def _line_matches_filters(
@@ -389,7 +468,7 @@ def _line_matches_filters(
         to_sec=to_sec,
         time_invalid=from_inv or to_inv,
     )
-    matched, _, _ = _evaluate_line_filter(ts, cat, raw_msg, filt)
+    matched, _, _, _ = _evaluate_line_filter(ts, cat, raw_msg, filt)
     return matched
 
 
@@ -399,6 +478,7 @@ def filter_game_log_file(
     preset: str = "gameplay",
     categories: Optional[Sequence[str]] = None,
     ckey: str = "",
+    radius: int = 0,
     q: str = "",
     use_regex: bool = False,
     time_from: str = "",
@@ -421,7 +501,14 @@ def filter_game_log_file(
         use_regex=use_regex,
         time_from=time_from,
         time_to=time_to,
+        radius=radius,
     )
+    anchors = (
+        _collect_ckey_coord_anchors(file_path, filt.ckey_norm)
+        if (filt.ckey_norm and filt.radius > 0 and not filt.regex_error)
+        else []
+    )
+    anchor_hint = 0
 
     acc = _RoundMetaAccumulator()
     matched_raw: List[Tuple[int, str, str, str, bool, Optional[str], Optional[Tuple[str, str]]]] = []
@@ -431,8 +518,15 @@ def filter_game_log_file(
 
         if filt.regex_error:
             continue
-        matched, pre_display_raw, pre_sanitized = _evaluate_line_filter(
-            ts, cat, raw_msg, filt, mask_ips=mask_ips
+        matched, pre_display_raw, pre_sanitized, anchor_hint = _evaluate_line_filter(
+            ts,
+            cat,
+            raw_msg,
+            filt,
+            mask_ips=mask_ips,
+            line_no=line_no,
+            anchors=anchors,
+            anchor_hint=anchor_hint,
         )
         if not matched:
             continue
@@ -487,6 +581,7 @@ def export_filtered_game_log(
     preset: str = "gameplay",
     categories: Optional[Sequence[str]] = None,
     ckey: str = "",
+    radius: int = 0,
     q: str = "",
     use_regex: bool = False,
     time_from: str = "",
@@ -502,13 +597,30 @@ def export_filtered_game_log(
         use_regex=use_regex,
         time_from=time_from,
         time_to=time_to,
+        radius=radius,
     )
     if filt.regex_error:
         raise ValueError(filt.regex_error)
 
+    anchors = (
+        _collect_ckey_coord_anchors(file_path, filt.ckey_norm)
+        if (filt.ckey_norm and filt.radius > 0)
+        else []
+    )
+    anchor_hint = 0
+
     out_lines: List[str] = []
-    for _line_no, ts, cat, raw_msg, is_cont in iter_parsed_file_lines(file_path):
-        matched, pre_display_raw, _ = _evaluate_line_filter(ts, cat, raw_msg, filt, mask_ips=mask_ips)
+    for line_no, ts, cat, raw_msg, is_cont in iter_parsed_file_lines(file_path):
+        matched, pre_display_raw, _, anchor_hint = _evaluate_line_filter(
+            ts,
+            cat,
+            raw_msg,
+            filt,
+            mask_ips=mask_ips,
+            line_no=line_no,
+            anchors=anchors,
+            anchor_hint=anchor_hint,
+        )
         if not matched:
             continue
 

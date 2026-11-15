@@ -28,6 +28,7 @@ from core.logs_db.indexer import (
 )
 from core.logs_db.queries import (
     _build_safe_fts_query,
+    get_index_error_rounds,
     get_logs_stats,
     get_round_by_uid,
     list_rounds,
@@ -45,6 +46,7 @@ from core.logs_db.whitelist import (
     add_to_whitelist,
     check_whitelist_access,
     get_audit_events,
+    get_audit_summary,
     is_valid_discord_id,
     list_whitelist,
     record_audit_event,
@@ -77,6 +79,8 @@ __all__ = [
     "remove_from_whitelist",
     "record_audit_event",
     "get_audit_events",
+    "get_audit_summary",
+    "get_index_error_rounds",
     "_slug",
     "_make_disk_round_uid",
     "_infer_round_meta_from_path",
