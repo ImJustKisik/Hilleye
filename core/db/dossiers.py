@@ -2,12 +2,172 @@
 
 from __future__ import annotations
 
+import difflib
 import json
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from core.db.connection import _read_snapshot
 from core.db.schema import format_duration, format_hms, format_timestamp, normalize_ckey
+
+
+@_read_snapshot
+async def search_players(
+    query: str,
+    limit: int = 8,
+    include_fuzzy: bool = True,
+) -> List[Dict[str, Any]]:
+    """
+    Searches players by prefix, substring, and optional fuzzy (edit-distance) similarity.
+    Returns ranked player candidate dictionaries with online status, current server,
+    total playtime hours, session count, and last seen timestamp.
+    """
+    import core.db as _db
+
+    norm_q = normalize_ckey(query)
+    if not norm_q:
+        return []
+    safe_limit = max(1, min(32, int(limit)))
+
+    conn = await _db.get_connection()
+    async with conn.cursor() as cur:
+        # 1. Exact, prefix, and substring matches in SQL
+        await cur.execute(
+            """
+            SELECT
+                p.ckey,
+                p.last_seen,
+                COALESCE(t.total_seconds, 0) AS total_seconds,
+                COALESCE(t.sessions_count, 0) AS sessions_count,
+                act.server_id AS current_server_id,
+                act.server_title AS current_server,
+                CASE
+                    WHEN p.ckey = ? THEN 0
+                    WHEN p.ckey LIKE ? THEN 1
+                    ELSE 2
+                END AS match_rank
+            FROM players p
+            LEFT JOIN (
+                SELECT ckey, SUM(total_seconds) AS total_seconds, SUM(sessions_count) AS sessions_count
+                FROM server_player_totals
+                GROUP BY ckey
+            ) t ON t.ckey = p.ckey
+            LEFT JOIN (
+                SELECT s.ckey, s.server_id, COALESCE(srv.title, 'Sector #' || s.server_id) AS server_title
+                FROM sessions s
+                LEFT JOIN servers srv ON srv.id = s.server_id
+                WHERE s.ended_at IS NULL
+                GROUP BY s.ckey
+            ) act ON act.ckey = p.ckey
+            WHERE p.ckey LIKE ?
+            ORDER BY
+                match_rank ASC,
+                (act.server_id IS NOT NULL) DESC,
+                total_seconds DESC,
+                p.last_seen DESC,
+                LENGTH(p.ckey) ASC,
+                p.ckey ASC
+            LIMIT ?;
+            """,
+            (norm_q, f"{norm_q}%", f"%{norm_q}%", safe_limit),
+        )
+        direct_rows = await cur.fetchall()
+
+        results: List[Dict[str, Any]] = []
+        seen_ckeys = set()
+
+        for r in direct_rows:
+            ck = r["ckey"]
+            seen_ckeys.add(ck)
+            tot_sec = int(r["total_seconds"] or 0)
+            rank_val = int(r["match_rank"])
+            match_kind = "exact" if rank_val == 0 else ("prefix" if rank_val == 1 else "substring")
+            results.append(
+                {
+                    "ckey": ck,
+                    "is_online": r["current_server_id"] is not None,
+                    "current_server_id": int(r["current_server_id"]) if r["current_server_id"] is not None else None,
+                    "current_server": r["current_server"],
+                    "total_seconds": tot_sec,
+                    "total_hours": round(tot_sec / 3600.0, 1),
+                    "sessions_count": int(r["sessions_count"] or 0),
+                    "last_seen": format_timestamp(r["last_seen"]),
+                    "match_kind": match_kind,
+                }
+            )
+
+        # 2. Fuzzy fallback when direct matches are fewer than requested limit
+        remaining = safe_limit - len(results)
+        if include_fuzzy and remaining > 0 and len(norm_q) >= 2:
+            q_len = len(norm_q)
+            min_len = max(1, q_len - 4)
+            max_len = q_len + 6
+            await cur.execute(
+                """
+                SELECT
+                    p.ckey,
+                    p.last_seen,
+                    COALESCE(t.total_seconds, 0) AS total_seconds,
+                    COALESCE(t.sessions_count, 0) AS sessions_count,
+                    act.server_id AS current_server_id,
+                    act.server_title AS current_server
+                FROM players p
+                LEFT JOIN (
+                    SELECT ckey, SUM(total_seconds) AS total_seconds, SUM(sessions_count) AS sessions_count
+                    FROM server_player_totals
+                    GROUP BY ckey
+                ) t ON t.ckey = p.ckey
+                LEFT JOIN (
+                    SELECT s.ckey, s.server_id, COALESCE(srv.title, 'Sector #' || s.server_id) AS server_title
+                    FROM sessions s
+                    LEFT JOIN servers srv ON srv.id = s.server_id
+                    WHERE s.ended_at IS NULL
+                    GROUP BY s.ckey
+                ) act ON act.ckey = p.ckey
+                WHERE LENGTH(p.ckey) BETWEEN ? AND ?
+                ORDER BY (act.server_id IS NOT NULL) DESC, p.last_seen DESC
+                LIMIT 1500;
+                """,
+                (min_len, max_len),
+            )
+            candidate_rows = await cur.fetchall()
+            cutoff = 0.6 if q_len >= 4 else 0.66
+            scored: List[Tuple[float, int, int, float, Dict[str, Any]]] = []
+            for r in candidate_rows:
+                ck = r["ckey"]
+                if ck in seen_ckeys:
+                    continue
+                ratio = difflib.SequenceMatcher(None, norm_q, ck).ratio()
+                if ck[0] == norm_q[0]:
+                    ratio += 0.04
+                if ratio >= cutoff:
+                    tot_sec = int(r["total_seconds"] or 0)
+                    is_on = 1 if r["current_server_id"] is not None else 0
+                    last_ts = float(r["last_seen"] or 0.0)
+                    scored.append(
+                        (
+                            ratio,
+                            is_on,
+                            tot_sec,
+                            last_ts,
+                            {
+                                "ckey": ck,
+                                "is_online": bool(is_on),
+                                "current_server_id": int(r["current_server_id"]) if is_on else None,
+                                "current_server": r["current_server"],
+                                "total_seconds": tot_sec,
+                                "total_hours": round(tot_sec / 3600.0, 1),
+                                "sessions_count": int(r["sessions_count"] or 0),
+                                "last_seen": format_timestamp(r["last_seen"]),
+                                "match_kind": "fuzzy",
+                            },
+                        )
+                    )
+            scored.sort(key=lambda item: (item[0], item[1], item[2], item[3]), reverse=True)
+            for item in scored[:remaining]:
+                results.append(item[4])
+
+    return results
 
 
 @_read_snapshot

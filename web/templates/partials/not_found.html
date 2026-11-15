@@ -6,6 +6,27 @@
     <p class="not-found-desc">
       Player not detected on any monitored Space Station 13 server.
     </p>
+    {% if suggestions %}
+    <div class="not-found-suggestions" aria-label="Similar tracked players">
+      <div class="not-found-suggestions-title">Did you mean one of these players?</div>
+      <div class="quick-player-list">
+        {% for s in suggestions %}
+        <a href="/player/{{ s.ckey }}"
+           hx-post="/search"
+           hx-vals='{"ckey": "{{ s.ckey }}"}'
+           hx-target="#dossier-container"
+           hx-swap="innerHTML"
+           class="quick-player-chip">
+          <span class="status-dot {{ 'online' if s.is_online else 'offline' }}" aria-hidden="true"></span>
+          <span class="mono-val">{{ s.ckey }}</span>
+          <span class="quick-player-state">
+            {% if s.is_online %}Online{% elif s.total_hours > 0 %}{{ s.total_hours }}h{% else %}{{ s.last_seen }}{% endif %}
+          </span>
+        </a>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
     <p class="not-found-meta">
       BYOND keys are normalized to lowercase alphanumeric characters (<code>[a-z0-9]</code>). Check the spelling of the key, or confirm that the player has connected to a tracked server since monitoring started.
     </p>

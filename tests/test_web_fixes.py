@@ -263,3 +263,44 @@ async def test_player_dossier_og_links_and_sessions_pagination(async_client):
     assert "load-more-sessions-row" not in more_resp.text
     assert ">13</td>" in more_resp.text
 
+
+async def test_player_typeahead_suggest_and_fuzzy_not_found(async_client):
+    sid = await db.upsert_server("byond://127.0.0.1:4400", "Sierra Bay", "127.0.0.1", 4400)
+    await db.update_player_sessions(sid, {"honkmaster", "honkjunior", "captain_kirk"}, now_ts=1000.0)
+    await db.update_player_sessions(sid, {"honkmaster"}, now_ts=4600.0)
+
+    # 1. Prefix suggestion API
+    prefix_resp = await async_client.get("/api/v1/players/suggest?q=honk")
+    assert prefix_resp.status_code == 200
+    payload = prefix_resp.json()
+    assert payload["normalized"] == "honk"
+    ckeys = [item["ckey"] for item in payload["suggestions"]]
+    assert "honkmaster" in ckeys
+    assert "honkjunior" in ckeys
+    # honkmaster has more playtime (3600s vs 0s), should rank first among prefix matches
+    assert ckeys.index("honkmaster") < ckeys.index("honkjunior")
+
+    # 2. Fuzzy typo suggestion API (e.g. "hnkmaster" -> "honkmaster")
+    fuzzy_resp = await async_client.get("/api/v1/players/suggest?q=hnkmaster")
+    assert fuzzy_resp.status_code == 200
+    fuzzy_items = fuzzy_resp.json()["suggestions"]
+    assert any(item["ckey"] == "honkmaster" and item["match_kind"] == "fuzzy" for item in fuzzy_items)
+
+    # 3. HTMX /search with a typo renders "Did you mean" fuzzy suggestions in not_found partial
+    htmx_resp = await async_client.post(
+        "/search",
+        headers={"HX-Request": "true"},
+        data={"ckey": "honkmastre"},
+    )
+    assert htmx_resp.status_code == 200
+    assert "No record found for" in htmx_resp.text
+    assert "Did you mean one of these players?" in htmx_resp.text
+    assert "/player/honkmaster" in htmx_resp.text
+
+    # 4. Direct /player/{typo} 404 page also includes fuzzy suggestions
+    page_404 = await async_client.get("/player/captainkrik")
+    assert page_404.status_code == 404
+    assert "Did you mean one of these players?" in page_404.text
+    assert "/player/captainkirk" in page_404.text
+
+

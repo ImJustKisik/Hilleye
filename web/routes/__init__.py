@@ -8,6 +8,7 @@ from web.routes.api import (
     get_server_api,
     get_servers,
     router as api_router,
+    suggest_players_api,
 )
 from web.routes.health import (
     health_check,
@@ -34,6 +35,7 @@ __all__ = [
     "get_server_api",
     "get_player_api",
     "get_player_card_png",
+    "suggest_players_api",
     "search_player",
     "dashboard_page",
     "player_page",

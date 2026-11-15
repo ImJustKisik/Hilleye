@@ -118,3 +118,10 @@ class Database:
         import core.db as _db
 
         return await _db.get_network_overview(recent_players_limit=recent_players_limit)
+
+    async def search_players(
+        self, query: str, limit: int = 8, include_fuzzy: bool = True
+    ) -> List[Dict[str, Any]]:
+        import core.db as _db
+
+        return await _db.search_players(query, limit=limit, include_fuzzy=include_fuzzy)

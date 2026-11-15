@@ -5,10 +5,32 @@ Hilleye // Web REST API v1 Routes
 import asyncio
 from typing import Any, Dict
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse, Response
 
 router = APIRouter()
+
+
+@router.get("/api/v1/players/suggest")
+async def suggest_players_api(
+    q: str = Query(default=""),
+    limit: int = Query(default=8, ge=1, le=20),
+) -> Dict[str, Any]:
+    """
+    Returns prefix, substring, and fuzzy player ckey suggestions for typeahead search.
+    """
+    import web.app as _app
+
+    norm_q = _app.normalize_ckey(q)
+    if not norm_q:
+        return {"query": q, "normalized": "", "suggestions": []}
+
+    suggestions = await _app.core_db.search_players(norm_q, limit=limit, include_fuzzy=True)
+    return {
+        "query": q,
+        "normalized": norm_q,
+        "suggestions": suggestions,
+    }
 
 
 @router.get("/api/v1/servers")

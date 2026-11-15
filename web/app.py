@@ -49,6 +49,7 @@ from web.routes import (
     player_sessions_partial,
     search_player,
     server_page,
+    suggest_players_api,
 )
 
 logger = logging.getLogger(__name__)
@@ -332,6 +333,7 @@ __all__ = [
     "get_server_api",
     "get_player_api",
     "get_player_card_png",
+    "suggest_players_api",
     "search_player",
     "dashboard_page",
     "player_page",

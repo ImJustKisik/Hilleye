@@ -41,19 +41,30 @@
             action="/search"
             method="post">
         <label for="ckey-input" class="sr-only">BYOND Player CKey</label>
-        <div class="command-input-wrap">
-          <span class="command-prefix" aria-hidden="true">ckey</span>
-          <input type="text"
-                 id="ckey-input"
-                 name="ckey"
-                 required
-                 pattern=".*\S.*"
-                 class="command-input"
-                 placeholder="Enter BYOND ckey (e.g. honkmaster)..."
-                 value="{{ target_ckey or (dossier.ckey if dossier else '') }}"
-                 autocomplete="off"
-                 spellcheck="false"
-                 autofocus>
+        <div class="command-input-container">
+          <div class="command-input-wrap">
+            <span class="command-prefix" aria-hidden="true">ckey</span>
+            <input type="text"
+                   id="ckey-input"
+                   name="ckey"
+                   required
+                   pattern=".*\S.*"
+                   class="command-input"
+                   placeholder="Enter BYOND ckey (e.g. honkmaster)..."
+                   value="{{ target_ckey or (dossier.ckey if dossier else '') }}"
+                   autocomplete="off"
+                   spellcheck="false"
+                   role="combobox"
+                   aria-autocomplete="list"
+                   aria-expanded="false"
+                   aria-controls="ckey-suggest-list"
+                   autofocus>
+          </div>
+          <ul id="ckey-suggest-list"
+              class="ckey-suggest-dropdown"
+              role="listbox"
+              aria-label="Player suggestions"
+              hidden></ul>
         </div>
         <button type="submit" class="command-submit">
           <span class="htmx-indicator" id="search-indicator" aria-hidden="true">

@@ -31,10 +31,15 @@ async def search_player(request: Request, ckey: str = Form(default="")):
     dossier = await _app.core_db.get_player_dossier(norm_ckey) if norm_ckey else None
 
     if dossier is None:
+        suggestions = (
+            await _app.core_db.search_players(norm_ckey, limit=8, include_fuzzy=True)
+            if norm_ckey
+            else []
+        )
         response = _app.templates.TemplateResponse(
             request=request,
             name="partials/not_found.html",
-            context={"ckey": ckey, "raw_query": ckey},
+            context={"ckey": ckey, "raw_query": ckey, "suggestions": suggestions},
             status_code=200,
         )
         response.headers["HX-Push-Url"] = target_url
@@ -83,6 +88,11 @@ async def player_page(request: Request, ckey: str):
 
     norm_ckey = _app.normalize_ckey(ckey.strip()) if ckey else ""
     dossier = await _app.core_db.get_player_dossier(norm_ckey) if norm_ckey else None
+    suggestions = (
+        await _app.core_db.search_players(norm_ckey, limit=8, include_fuzzy=True)
+        if (dossier is None and norm_ckey)
+        else []
+    )
     servers = await _app.core_db.get_active_servers()
     tracker = _app.get_tracker()
     tracker_stats = tracker.get_stats() if tracker else {}
@@ -96,6 +106,7 @@ async def player_page(request: Request, ckey: str):
             "target_ckey": ckey,
             "ckey": ckey,
             "not_found": (dossier is None),
+            "suggestions": suggestions,
             "servers": servers,
             "tracker_stats": tracker_stats,
             "base_url": str(request.base_url).rstrip("/"),

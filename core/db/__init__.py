@@ -28,6 +28,7 @@ from core.db.dossiers import (
     get_network_overview,
     get_player_dossier,
     get_server_details,
+    search_players,
 )
 from core.db.schema import (
     SCHEMA_SQL,
@@ -95,6 +96,7 @@ __all__ = [
     "get_active_servers",
     "update_player_sessions",
     "get_player_dossier",
+    "search_players",
     "_build_chart_24h",
     "get_network_overview",
     "get_server_details",
