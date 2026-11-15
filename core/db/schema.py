@@ -116,6 +116,7 @@ _SERVER_MIGRATION_COLUMNS: List[Tuple[str, str]] = [
 _DEPT_LABELS: Dict[str, str] = {
     "command": "Command",
     "com": "Command",
+    "heads": "Command",
     "sec": "Security",
     "security": "Security",
     "eng": "Engineering",

@@ -255,7 +255,7 @@ async def fetch_server_manifest_htmx(request: Request, server_id: int):
                 if isinstance(value, str):
                     return not value.strip() or "=" in value
                 if isinstance(value, dict):
-                    return all(isinstance(k, str) and isinstance(v, str) for k, v in value.items())
+                    return all(isinstance(k, str) and (v is None or isinstance(v, str)) for k, v in value.items())
                 if isinstance(value, list):
                     return all(
                         (isinstance(v, dict) and isinstance(v.get("name"), str) and v["name"].strip())
