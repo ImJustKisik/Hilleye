@@ -364,6 +364,15 @@
 }
 
 /* Dropzone */
+.logs-upload-summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.logs-upload-summary::-webkit-details-marker {
+  display: none;
+}
+
 .logs-dropzone {
   border: 1px dashed var(--border-strong);
   border-radius: var(--radius-sm);

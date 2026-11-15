@@ -25,72 +25,60 @@
   </div>
   {% endif %}
 
-  <div class="logs-meta-strip mono-val" aria-label="Сводка архива логов">
-    <span>Раундов: <strong>{{ stats.total_rounds }}</strong> (диск: {{ stats.disk_rounds }}, загружено: {{ stats.upload_rounds }})</span>
-    <span class="sep">&bull;</span>
-    <span>Строк: <strong>{{ "{:,}".format(stats.gameplay_lines) }}</strong> игровых / {{ "{:,}".format(stats.total_lines) }} всего</span>
-    <span class="sep">&bull;</span>
-    <span>Объём: {{ stats.total_size_label }}</span>
-    <span class="sep">&bull;</span>
-    <span>Обновлено: {{ stats.last_indexed_str }}</span>
-  </div>
+  <!-- Search + Collapsible Upload -->
+  <section class="panel" aria-label="Быстрый поиск по логам">
+    <div class="panel-header">
+      <h1 class="panel-title">Поиск по архиву логов</h1>
+      <a href="/logs/search" class="raw-json-link">Расширенный поиск</a>
+    </div>
+    <div class="logs-panel-body">
+      <form action="/logs/search" method="get" class="logs-form-grid">
+        <div class="logs-field">
+          <label for="quick-search-q" class="sr-only">Запрос</label>
+          <input type="text" id="quick-search-q" name="q" class="logs-input" placeholder="Поиск по логам (текст, событие, предмет...)">
+        </div>
+        <div class="logs-field logs-field-sm">
+          <label for="quick-search-ckey" class="sr-only">CKey</label>
+          <input type="text" id="quick-search-ckey" name="ckey" class="logs-input" placeholder="ckey">
+        </div>
+        <div class="logs-field logs-field-md">
+          <label for="quick-search-preset" class="sr-only">Категории</label>
+          <select id="quick-search-preset" name="preset" class="logs-select" aria-label="Категории">
+            <option value="gameplay">Игровые события</option>
+            <option value="admin_combat">Админ / Атаки</option>
+            <option value="chat">Чат</option>
+            <option value="all">Все категории</option>
+          </select>
+        </div>
+        <button type="submit" class="logs-btn logs-btn-primary">Найти</button>
+      </form>
+    </div>
+  </section>
 
-  <!-- Search + Manual Upload -->
-  <div class="logs-dashboard-grid">
-    <section class="panel" aria-label="Быстрый поиск по логам">
-      <div class="panel-header">
-        <h1 class="panel-title">Поиск по архиву логов</h1>
-        <a href="/logs/search" class="raw-json-link">Фильтры поиска</a>
-      </div>
-      <div class="logs-panel-body">
-        <form action="/logs/search" method="get" class="logs-form-grid">
+  <details class="panel logs-upload-details" aria-label="Загрузка лога вручную">
+    <summary class="panel-header logs-upload-summary">
+      <span class="panel-title">Загрузить лог или архив</span>
+      <span class="block-meta mono-val">до {{ max_upload_mb }} МБ</span>
+    </summary>
+    <div class="logs-panel-body">
+      <form id="logs-upload-form" action="/logs/upload" method="post" enctype="multipart/form-data">
+        <input type="hidden" name="csrf_token" value="{{ user.csrf_token }}">
+        <div class="logs-dropzone" id="logs-dropzone" tabindex="0" role="button" aria-label="Выбрать или перетащить файл лога">
+          <div class="logs-dropzone-title" id="logs-dropzone-title">Перетащите файл или нажмите для выбора</div>
+          <div class="logs-dropzone-sub" id="logs-dropzone-sub"><code>game.log</code>, <code>qdel.log</code>, <code>.txt</code>, <code>.zip</code>, <code>.tar.gz</code></div>
+          <input type="file" id="logs-upload-file" name="file" class="sr-only" accept=".log,.txt,.zip,.gz,.tgz,.tar">
+        </div>
+        <div class="logs-form-grid logs-upload-row">
           <div class="logs-field">
-            <label for="quick-search-q" class="logs-label">Запрос</label>
-            <input type="text" id="quick-search-q" name="q" class="logs-input" placeholder="Текст, событие, предмет...">
+            <label for="upload-label" class="sr-only">Примечание к загрузке</label>
+            <input type="text" id="upload-label" name="label" class="logs-input" maxlength="100" placeholder="Примечание (необязательно)">
           </div>
-          <div class="logs-field logs-field-sm">
-            <label for="quick-search-ckey" class="logs-label">CKey</label>
-            <input type="text" id="quick-search-ckey" name="ckey" class="logs-input" placeholder="ckey">
-          </div>
-          <div class="logs-field logs-field-md">
-            <label for="quick-search-preset" class="logs-label">Категории</label>
-            <select id="quick-search-preset" name="preset" class="logs-select">
-              <option value="gameplay">Игровые события</option>
-              <option value="admin_combat">Админ / Атаки</option>
-              <option value="chat">Чат</option>
-              <option value="all">Все категории</option>
-            </select>
-          </div>
-          <button type="submit" class="logs-btn logs-btn-primary">Найти</button>
-        </form>
-      </div>
-    </section>
-
-    <section class="panel" aria-label="Загрузка лога вручную">
-      <div class="panel-header">
-        <h2 class="panel-title">Загрузка файла</h2>
-        <span class="block-meta mono-val">до {{ max_upload_mb }} МБ</span>
-      </div>
-      <div class="logs-panel-body">
-        <form id="logs-upload-form" action="/logs/upload" method="post" enctype="multipart/form-data">
-          <input type="hidden" name="csrf_token" value="{{ user.csrf_token }}">
-          <div class="logs-dropzone" id="logs-dropzone" tabindex="0" role="button" aria-label="Выбрать или перетащить файл лога">
-            <div class="logs-dropzone-title" id="logs-dropzone-title">Перетащите файл или нажмите для выбора</div>
-            <div class="logs-dropzone-sub" id="logs-dropzone-sub"><code>game.log</code>, <code>qdel.log</code>, <code>.txt</code>, <code>.zip</code>, <code>.tar.gz</code></div>
-            <input type="file" id="logs-upload-file" name="file" class="sr-only" accept=".log,.txt,.zip,.gz,.tgz,.tar">
-          </div>
-          <div class="logs-form-grid logs-upload-row">
-            <div class="logs-field">
-              <label for="upload-label" class="sr-only">Примечание к загрузке</label>
-              <input type="text" id="upload-label" name="label" class="logs-input" maxlength="100" placeholder="Примечание (необязательно)">
-            </div>
-            <button type="submit" class="logs-btn logs-btn-primary">Загрузить</button>
-          </div>
-        </form>
-        <div id="logs-upload-status" class="logs-alert" hidden></div>
-      </div>
-    </section>
-  </div>
+          <button type="submit" class="logs-btn logs-btn-primary">Загрузить</button>
+        </div>
+      </form>
+      <div id="logs-upload-status" class="logs-alert" hidden></div>
+    </div>
+  </details>
 
   <!-- Rounds Directory -->
   <section class="panel" aria-label="Список раундов">
