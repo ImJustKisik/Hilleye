@@ -303,6 +303,11 @@
   min-width: 115px;
 }
 
+.logs-field-md {
+  flex: 0 1 185px;
+  min-width: 165px;
+}
+
 .logs-field-ckey {
   flex: 0 1 165px;
   min-width: 135px;
@@ -1334,6 +1339,19 @@
 
 .admin-page-root {
   gap: 12px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.admin-page-root .panel,
+.logs-dashboard-grid > * {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.logs-table-wrap {
+  max-width: 100%;
+  -webkit-overflow-scrolling: touch;
 }
 
 .admin-kpi-grid {

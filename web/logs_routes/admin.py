@@ -165,7 +165,7 @@ def register_admin_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
         date_from: str = "",
         date_to: str = "",
         page: int = Query(default=1, ge=1),
-        per_page: int = Query(default=50, ge=10, le=200),
+        per_page: int = Query(default=25, ge=10, le=200),
         partial: str = "",
         notice: str = "",
         error: str = "",

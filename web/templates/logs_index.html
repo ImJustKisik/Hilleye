@@ -52,7 +52,7 @@
             <label for="quick-search-ckey" class="logs-label">CKey</label>
             <input type="text" id="quick-search-ckey" name="ckey" class="logs-input" placeholder="ckey">
           </div>
-          <div class="logs-field logs-field-sm">
+          <div class="logs-field logs-field-md">
             <label for="quick-search-preset" class="logs-label">Категории</label>
             <select id="quick-search-preset" name="preset" class="logs-select">
               <option value="gameplay">Игровые события</option>
@@ -96,8 +96,10 @@
   <section class="panel" aria-label="Список раундов">
     <div class="panel-header">
       <h2 class="panel-title">Раунды ({{ total_rounds }})</h2>
+    </div>
+    <div class="logs-toolbar-compact">
       <form action="/logs" method="get" class="logs-form-grid">
-        <div class="logs-field logs-field-sm">
+        <div class="logs-field logs-field-md">
           <select name="date" class="logs-select" aria-label="Фильтр по дате">
             <option value="">Все даты</option>
             {% for d in stats.dates %}
@@ -105,19 +107,19 @@
             {% endfor %}
           </select>
         </div>
-        <div class="logs-field logs-field-sm">
+        <div class="logs-field logs-field-md">
           <select name="source" class="logs-select" aria-label="Фильтр по источнику">
             <option value="">Все источники</option>
             <option value="disk" {% if source_filter == 'disk' %}selected{% endif %}>Диск</option>
             <option value="upload" {% if source_filter == 'upload' %}selected{% endif %}>Загруженные</option>
           </select>
         </div>
-        <div class="logs-field logs-field-sm">
+        <div class="logs-field">
           <input type="text" name="q" value="{{ q_filter }}" class="logs-input" placeholder="ID раунда или заметка">
         </div>
-        <button type="submit" class="logs-btn logs-btn-sm">Фильтр</button>
+        <button type="submit" class="logs-btn logs-btn-primary">Фильтр</button>
         {% if date_filter or source_filter or q_filter %}
-        <a href="/logs" class="logs-btn logs-btn-sm">Сброс</a>
+        <a href="/logs" class="logs-btn">Сброс</a>
         {% endif %}
       </form>
     </div>
