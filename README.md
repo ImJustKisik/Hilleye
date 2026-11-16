@@ -35,6 +35,11 @@ pip install -r requirements-dev.txt
 python -m pytest -v
 ```
 The unit, adversarial, concurrency, and E2E tests use temporary databases and local network mocks.
+Shared fixtures in `tests/conftest.py` provide a local TCP Topic server,
+`httpx.MockTransport` for Hub responses, and an ASGI client for web routes.
+Run a focused module with `python -m pytest tests/test_protocol.py -v`.
+The optional selfbot tests require `discord.py-self` and `aiohttp`, as documented
+in `examples/selfbot_example.py`; they skip when those packages are absent.
 
 ### Collection and monitoring
 
@@ -98,28 +103,41 @@ remain deployment responsibilities; this service does not silently delete sessio
 ## Project Structure
 ```
 Hilleye/
-├── config.json              # Service configuration (intervals, timeouts, custom servers)
+├── config.json              # Service configuration
+├── pager_endpoints.json     # Configured pager-to-endpoint mappings
 ├── requirements.txt         # Production dependencies
-├── run.py                   # Application entrypoint (CLI launcher)
+├── requirements-dev.txt     # Test dependencies
+├── run.py                   # Application entrypoint
 ├── core/
+│   ├── assets/fonts/        # Bundled dossier-card fonts
 │   ├── byond_topic.py       # Binary BYOND Topic protocol client
 │   ├── config.py            # Settings loader & validator
-│   ├── db.py                # SQLite WAL schema & query layer
+│   ├── db/                  # Tracker SQLite schema, sessions & queries
+│   ├── log_parser/          # SierraBay12 log parsing
+│   ├── logs_db/             # Log indexing, search, uploads & access control
+│   ├── map_renderer/        # Map parsing, rendering & cache management
 │   ├── hub_scraper.py       # BYOND Hub scraper (JSON + text fallback)
 │   └── tracker.py           # Background session tracking worker
 ├── web/
-│   ├── app.py               # FastAPI application & REST routes
-│   ├── static/
-│   │   ├── css/style.css    # Syndicate Black Ops stylesheet
-│   │   └── js/htmx.min.js   # Bundled HTMX
-│   └── templates/
-│       ├── base.html        # Tactical terminal frame
-│       ├── index.html       # Search console & monitored sectors
-│       └── partials/
-│           ├── not_found.html      # Tactical "NOT FOUND" state
-│           └── player_dossier.html # Player telemetry dossier
-└── tests/                   # 220 automated test suite (Tiers 1-5)
+│   ├── app.py               # FastAPI application & lifespan
+│   ├── routes/              # Tracker pages, API & health routes
+│   ├── logs_routes/         # Log viewer, OAuth & admin routes
+│   ├── static/              # CSS, JavaScript, images & audio
+│   └── templates/           # Jinja2 pages & HTMX partials
+├── deploy/                  # Nginx configuration
+├── hilleye.service          # systemd service unit
+├── backup.sh                # SQLite backup script
+├── examples/                # Optional Discord selfbot & shared exports
+├── tools/resolve_pager.py    # Windows BYOND pager endpoint resolver
+└── tests/                   # Unit, integration & regression tests
 ```
+
+`DESIGN_DOC.md` preserves the original design; `BUGS_AND_RELIABILITY.md` records
+the reliability audit. Current startup and test instructions are maintained here.
+Generated previews belong in `output/` and are ignored by Git. Python bytecode
+and `.pytest_cache/` can be removed and regenerate as needed. SQLite databases,
+their WAL/SHM files, collector locks, uploaded logs, and `map_cache/` are runtime
+state; keep them when cleaning development artifacts.
 
 ---
 
