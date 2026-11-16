@@ -85,11 +85,11 @@ class Database:
         return await _db.prune_server_snapshots(max_age_days, now_ts)
 
     async def get_server_details(
-        self, server_id: int, now_ts: Optional[float] = None
+        self, server_id: int, now_ts: Optional[float] = None, time_range: str = 'day'
     ) -> Optional[Dict[str, Any]]:
         import core.db as _db
 
-        return await _db.get_server_details(server_id, now_ts)
+        return await _db.get_server_details(server_id, now_ts=now_ts, time_range=time_range)
 
     async def get_active_servers(self) -> List[Dict[str, Any]]:
         import core.db as _db
