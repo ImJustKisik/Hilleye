@@ -646,7 +646,7 @@ async def get_server_details(
                 snapshots_24h.append(point)
             previous_ts = ts
 
-    chart_24h = _db._build_chart_24h(snapshots_24h, cutoff_24h, ref_snap_ts)
+    chart_24h = _db._build_chart_24h(snapshots_24h, cutoff_ts, ref_snap_ts)
     if snap_rows:
         counts = [int(row["player_count"]) for row in snap_rows]
         chart_24h.update(min_players=min(counts), max_players=max(counts), avg_players=round(sum(counts) / len(counts), 1))
