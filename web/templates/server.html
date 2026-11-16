@@ -183,6 +183,8 @@
           <line x1="10" y1="16" x2="590" y2="16" class="sparkline-grid-line" vector-effect="non-scaling-stroke" />
           <line x1="10" y1="60" x2="590" y2="60" class="sparkline-grid-line" vector-effect="non-scaling-stroke" />
           <line x1="10" y1="104" x2="590" y2="104" class="sparkline-grid-line" vector-effect="non-scaling-stroke" />
+          <text x="0" y="20" font-size="10" fill="#888">{{ server.chart_24h.max_players }}</text>
+          <text x="0" y="110" font-size="10" fill="#888">{{ server.chart_24h.min_players }}</text>
           {% for segment in server.chart_24h.segments %}
           <polygon points="{{ segment.area_points_str }}" class="sparkline-area" />
           <polyline points="{{ segment.points_str }}" class="sparkline-line" fill="none" vector-effect="non-scaling-stroke" />

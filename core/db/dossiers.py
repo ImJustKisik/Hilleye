@@ -609,6 +609,7 @@ async def get_server_details(
         'week': 86400 * 7,
         'all': 365 * 86400 # Just over a year for all time
         }.get(time_range, 86400)
+        logger.debug(f'DEBUG: time_range={time_range}, range_seconds={range_seconds}')
         
         ref_snap_ts = float(now_ts) if now_ts is not None else current_wall_ts
         cutoff_ts = ref_snap_ts - range_seconds
@@ -623,6 +624,7 @@ async def get_server_details(
         (int(server_id), cutoff_ts, ref_snap_ts),
         )
         snap_rows = await cur.fetchall()
+        logger.debug(f'DEBUG: Retrieved {len(snap_rows)} snapshots for server_id={server_id}')
 
         # Preserve gaps before reducing dense observations into minute maxima.
         snapshots_24h: List[Dict[str, Any]] = []
