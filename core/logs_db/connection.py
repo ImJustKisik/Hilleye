@@ -114,46 +114,116 @@ CREATE TRIGGER IF NOT EXISTS log_entries_au AFTER UPDATE ON log_entries BEGIN
     INSERT INTO log_entries_fts(rowid, message, category, ckeys_space)
     VALUES (new.id, new.message, new.category, new.ckeys_space);
 END;
+
+CREATE TABLE IF NOT EXISTS log_index_checkpoints (
+    round_uid TEXT NOT NULL REFERENCES log_rounds(round_uid) ON DELETE CASCADE,
+    generation INTEGER NOT NULL,
+    checkpoint_json TEXT NOT NULL,
+    PRIMARY KEY(round_uid, generation)
+);
+CREATE TABLE IF NOT EXISTS log_sources (
+    source TEXT PRIMARY KEY,
+    status TEXT NOT NULL,
+    last_scan_at REAL,
+    last_success_at REAL,
+    error TEXT,
+    pending_bytes INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS log_jobs (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    created_by TEXT,
+    state TEXT NOT NULL DEFAULT 'queued',
+    created_at REAL NOT NULL,
+    started_at REAL,
+    finished_at REAL,
+    heartbeat REAL,
+    progress TEXT NOT NULL DEFAULT '',
+    payload_json TEXT NOT NULL DEFAULT '{}',
+    result_json TEXT,
+    error TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_log_jobs_queue ON log_jobs(kind,state,created_at);
+CREATE TABLE IF NOT EXISTS log_job_users (
+    job_id TEXT NOT NULL REFERENCES log_jobs(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL,
+    PRIMARY KEY(job_id,user_id)
+);
+CREATE TABLE IF NOT EXISTS log_maintenance_state (
+    name TEXT PRIMARY KEY,
+    value_json TEXT NOT NULL
+);
 """
 
 
-async def init_logs_db(db_path: str = "logs.db") -> None:
-    """Initialize SQLite WAL database for the log viewer, whitelist, audit log, and FTS5 index."""
-    import core.logs_db as _ldb
+def _initialize_schema(conn, schema):
+    import sqlite3
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute("PRAGMA busy_timeout=5000")
+    conn.execute("PRAGMA cache_size=-65536")
+    conn.execute("PRAGMA temp_store=MEMORY")
+    conn.execute("PRAGMA mmap_size=268435456")
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        migrated_coords = False
+        if "log_entries" in tables:
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(log_entries)")}
+            for name in ("coord_x", "coord_y", "coord_z"):
+                if name not in columns:
+                    conn.execute(f"ALTER TABLE log_entries ADD COLUMN {name} INTEGER")
+                    migrated_coords = True
+        if migrated_coords and "log_rounds" in tables:
+            conn.execute("UPDATE log_rounds SET indexed_at=NULL")
+        statement = ""
+        for line in schema.splitlines():
+            if line.lstrip().startswith("PRAGMA "):
+                continue
+            statement += line + "\n"
+            if sqlite3.complete_statement(statement):
+                conn.execute(statement)
+                statement = ""
+        for table, additions in (
+            ("log_rounds", {"active_generation": "INTEGER NOT NULL DEFAULT 0", "missing_since": "REAL"}),
+            ("log_entries", {"generation": "INTEGER NOT NULL DEFAULT 0", "byte_offset": "INTEGER", "byte_length": "INTEGER", "is_continuation": "INTEGER NOT NULL DEFAULT 0"}),
+        ):
+            columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+            for name, declaration in additions.items():
+                if name not in columns:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {declaration}")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_log_generation_line ON log_entries(round_uid,generation,line_no)")
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
 
+
+async def init_logs_db(db_path: str = "logs.db") -> None:
+    """Initialize or additively migrate the log schema in one transaction."""
+    import asyncio
+    import core.logs_db as _ldb
+    loop = asyncio.get_running_loop()
+    for name in ("_db_lock", "_sync_lock"):
+        old_loop = getattr(getattr(_ldb, name), "_loop", None)
+        if old_loop is not None and old_loop is not loop and old_loop.is_closed():
+            setattr(_ldb, name, asyncio.Lock())
     async with _ldb._db_lock:
         if _ldb._connection is not None:
             await _ldb._connection.close()
             _ldb._connection = None
-
         if db_path != ":memory:":
             Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-
-        conn = await aiosqlite.connect(db_path, timeout=10.0)
+        conn = await aiosqlite.connect(db_path, timeout=10)
         conn.row_factory = aiosqlite.Row
-        # Safely migrate pre-coordinate log_entries schemas if upgrading an existing logs.db
-        existing_tables = {
-            r[0]
-            for r in await (
-                await conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
-            ).fetchall()
-        }
-        if "log_entries" in existing_tables:
-            cols = {
-                r[1]
-                for r in await (await conn.execute("PRAGMA table_info(log_entries)")).fetchall()
-            }
-            migrated_coords = False
-            for col_name in ("coord_x", "coord_y", "coord_z"):
-                if col_name not in cols:
-                    await conn.execute(f"ALTER TABLE log_entries ADD COLUMN {col_name} INTEGER")
-                    migrated_coords = True
-            if migrated_coords and "log_rounds" in existing_tables:
-                await conn.execute("UPDATE log_rounds SET indexed_at = NULL")
-        await conn.executescript(_ldb.LOGS_SCHEMA_SQL)
-        await conn.commit()
+        try:
+            await conn._execute(_initialize_schema, conn._conn, _ldb.LOGS_SCHEMA_SQL)
+        except BaseException:
+            await asyncio.shield(conn.close())
+            raise
         _ldb._connection = conn
-        _ldb._current_logs_db_path = db_path
+        _ldb._current_logs_db_path = str(db_path)
 
 
 async def close_logs_db() -> None:

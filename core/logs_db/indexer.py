@@ -11,6 +11,7 @@ from pathlib import Path
 import re
 import sqlite3
 import time
+from contextlib import closing
 from typing import Any, Dict, List, Optional, Tuple
 
 from core.log_parser import (
@@ -23,6 +24,13 @@ from core.log_parser import (
 from core.logs_db.connection import _DATE_PATH_RE, _SAFE_SLUG_RE
 
 logger = logging.getLogger(__name__)
+
+
+class DiscoveryResult(list):
+    def __init__(self, items=(), *, complete=True, errors=None):
+        super().__init__(items)
+        self.complete = complete
+        self.errors = errors or []
 
 
 def _slug(val: str) -> str:
@@ -50,12 +58,18 @@ def _infer_round_meta_from_path(round_dir: Path, base_dir: Path) -> Tuple[str, s
 
 
 def _discover_dirs_with_logs(base_dir: Optional[Path], source_type: str) -> List[Dict[str, Any]]:
-    if base_dir is None or not base_dir.is_dir():
-        return []
+    if base_dir is None:
+        return DiscoveryResult()
+    if not base_dir.is_dir():
+        return DiscoveryResult(complete=False, errors=["Source directory is unavailable"])
     resolved_base = base_dir.resolve()
-    discovered: List[Dict[str, Any]] = []
+    discovered = DiscoveryResult()
 
-    for dirpath, dirnames, filenames in os.walk(resolved_base):
+    def walk_error(exc):
+        discovered.complete = False
+        discovered.errors.append(str(exc))
+
+    for dirpath, dirnames, filenames in os.walk(resolved_base, onerror=walk_error):
         # Skip runtime and hidden directories
         dirnames[:] = sorted(
             d for d in dirnames if not d.startswith(".") and d.lower() != "runtime"
@@ -78,9 +92,16 @@ def _discover_dirs_with_logs(base_dir: Optional[Path], source_type: str) -> List
         qdel_path = cur_dir / "qdel.log"
         init_path = cur_dir / "initialize.log"
 
-        game_stat = game_path.stat() if has_game else None
-        qdel_stat = qdel_path.stat() if has_qdel else None
-        init_stat = init_path.stat() if has_init else None
+        try:
+            game_stat = game_path.stat() if has_game else None
+            qdel_stat = qdel_path.stat() if has_qdel else None
+            init_stat = init_path.stat() if has_init else None
+            for file_path in (game_path, qdel_path, init_path):
+                if file_path.exists() and not file_path.resolve().is_relative_to(resolved_base):
+                    raise OSError("Log symlink escapes its source directory")
+        except OSError as exc:
+            walk_error(exc)
+            continue
 
         if not round_date:
             ts_fallback = (
@@ -169,333 +190,261 @@ def _build_index_rows_for_game_log(
     return meta, rows
 
 
-def _sync_rounds_sync(
-    db_path: str,
-    root_dir: Optional[Path],
-    uploads_dir: Optional[Path],
-    *,
-    include_debug: bool = False,
-    force_reindex: bool = False,
-) -> Dict[str, Any]:
-    """Synchronous worker executed in thread to discover rounds and update SQLite FTS5 index."""
-    t0 = time.monotonic()
-    disk_rounds = _discover_dirs_with_logs(root_dir, "disk")
-    upload_rounds = _discover_dirs_with_logs(uploads_dir, "upload")
-    all_found = disk_rounds + upload_rounds
+def _boundary_hash(stream, offset):
+    position = stream.tell()
+    start = max(0, offset - 4096)
+    stream.seek(start)
+    value = hashlib.sha256(stream.read(offset - start)).hexdigest()
+    stream.seek(position)
+    return value
 
-    conn = sqlite3.connect(db_path, timeout=15.0)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode = WAL")
-    conn.execute("PRAGMA synchronous = NORMAL")
-    conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute("PRAGMA busy_timeout = 5000")
 
-    try:
-        existing_rows = {
-            r["round_uid"]: dict(r)
-            for r in conn.execute("SELECT * FROM log_rounds").fetchall()
-        }
-        found_uids = {item["round_uid"] for item in all_found}
+def _valid_checkpoint(stream, checkpoint, stat, include_debug):
+    return bool(
+        checkpoint
+        and checkpoint.get("file_id") == [stat.st_dev, stat.st_ino]
+        and checkpoint.get("include_debug") == bool(include_debug)
+        and 0 <= checkpoint.get("offset", -1) <= stat.st_size
+        and checkpoint.get("boundary") == _boundary_hash(stream, checkpoint["offset"])
+    )
 
-        # Remove stale rounds whose source root was scanned and the round no longer exists
-        removed_count = 0
-        for uid, old in existing_rows.items():
-            src = old.get("source_type")
-            if src == "disk" and root_dir is not None and uid not in found_uids:
-                conn.execute("DELETE FROM log_rounds WHERE round_uid = ?", (uid,))
-                removed_count += 1
-            elif src == "upload" and uploads_dir is not None and uid not in found_uids:
-                conn.execute("DELETE FROM log_rounds WHERE round_uid = ?", (uid,))
-                removed_count += 1
 
-        indexed_rounds = 0
-        indexed_lines = 0
-        skipped_unchanged = 0
-        errors = 0
+def _write_checkpoint(conn, uid, generation, cp):
+    conn.execute(
+        "INSERT INTO log_index_checkpoints VALUES (?,?,?) ON CONFLICT(round_uid,generation) DO UPDATE SET checkpoint_json=excluded.checkpoint_json",
+        (uid, generation, json.dumps(cp, ensure_ascii=False)),
+    )
 
-        for item in all_found:
-            uid = item["round_uid"]
-            old = existing_rows.get(uid)
-            game_path = Path(item["dir_path"]) / "game.log"
 
-            needs_reindex = (
-                force_reindex
-                or old is None
-                or old.get("indexed_at") is None
-                or int(old.get("includes_debug") or 0) != int(bool(include_debug))
-                or float(old.get("indexed_mtime") or -1.0) != item["game_log_mtime"]
-                or int(old.get("indexed_size") or -1) != item["game_log_size"]
-            )
+def _publish_meta(conn, item, generation, cp):
+    meta = cp["meta"]
+    date = item["round_date"]
+    if not _DATE_PATH_RE.search(item["dir_path"]) and meta["started_at"]:
+        date = meta["started_at"][:10]
+    conn.execute(
+        """UPDATE log_rounds SET active_generation=?,line_count=?,gameplay_line_count=?,
+        category_counts_json=?,started_at=?,ended_at=?,round_id=?,round_date=?,
+        indexed_mtime=?,indexed_size=?,indexed_at=?,includes_debug=?,index_error=NULL WHERE round_uid=?""",
+        (generation, meta["total_lines"], meta["gameplay_lines"], json.dumps(meta["category_counts"]),
+         meta["started_at"], meta["ended_at"], meta["round_id"] or item["round_id"], date,
+         cp["mtime_ns"] / 1e9, cp["offset"], time.time(), int(cp["include_debug"]), item["round_uid"]),
+    )
 
-            # Preserve custom label/upload metadata if previously stored
-            label = old["label"] if old else ""
-            uploaded_by = old["uploaded_by"] if old else None
-            uploaded_at = old["uploaded_at"] if old else None
-            meta_file = Path(item["dir_path"]) / ".hilleye_meta.json"
-            if meta_file.is_file() and (not label or not uploaded_by):
-                try:
-                    mdata = json.loads(meta_file.read_text(encoding="utf-8"))
-                    label = label or str(mdata.get("label") or "")
-                    uploaded_by = uploaded_by or mdata.get("uploaded_by")
-                    uploaded_at = uploaded_at or mdata.get("uploaded_at")
-                except Exception:
-                    pass
 
-            if not needs_reindex:
-                # Update non-index file flags if qdel/init changed
-                if (
-                    old["has_qdel_log"] != item["has_qdel_log"]
-                    or old["qdel_log_size"] != item["qdel_log_size"]
-                    or old["has_initialize_log"] != item["has_initialize_log"]
-                ):
-                    conn.execute(
-                        """
-                        UPDATE log_rounds
-                        SET has_qdel_log = ?, has_initialize_log = ?, qdel_log_size = ?, qdel_log_mtime = ?
-                        WHERE round_uid = ?
-                        """,
-                        (
-                            item["has_qdel_log"],
-                            item["has_initialize_log"],
-                            item["qdel_log_size"],
-                            item["qdel_log_mtime"],
-                            uid,
-                        ),
-                    )
-                skipped_unchanged += 1
-                continue
-
-            try:
-                if item["has_game_log"] and game_path.is_file():
-                    meta, fts_rows = _build_index_rows_for_game_log(
-                        uid, game_path, include_debug=include_debug
-                    )
-                else:
-                    meta = {
-                        "total_lines": 0,
-                        "gameplay_lines": 0,
-                        "category_counts": {},
-                        "round_id": None,
-                        "started_at": None,
-                        "ended_at": None,
-                    }
-                    fts_rows = []
-
-                final_round_id = meta["round_id"] or item["round_id"]
-                final_round_date = (
-                    meta["started_at"][:10]
-                    if (not _DATE_PATH_RE.search(item["dir_path"]) and meta["started_at"])
-                    else item["round_date"]
-                )
-
-                with conn:
-                    conn.execute(
-                        """
-                        INSERT INTO log_rounds (
-                            round_uid, source_type, round_id, round_date, dir_path, label,
-                            uploaded_by, uploaded_at, has_game_log, has_qdel_log, has_initialize_log,
-                            game_log_size, game_log_mtime, qdel_log_size, qdel_log_mtime,
-                            line_count, gameplay_line_count, category_counts_json,
-                            started_at, ended_at, indexed_mtime, indexed_size, indexed_at,
-                            includes_debug, index_error
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
-                        ON CONFLICT(round_uid) DO UPDATE SET
-                            round_id = excluded.round_id,
-                            round_date = excluded.round_date,
-                            dir_path = excluded.dir_path,
-                            has_game_log = excluded.has_game_log,
-                            has_qdel_log = excluded.has_qdel_log,
-                            has_initialize_log = excluded.has_initialize_log,
-                            game_log_size = excluded.game_log_size,
-                            game_log_mtime = excluded.game_log_mtime,
-                            qdel_log_size = excluded.qdel_log_size,
-                            qdel_log_mtime = excluded.qdel_log_mtime,
-                            line_count = excluded.line_count,
-                            gameplay_line_count = excluded.gameplay_line_count,
-                            category_counts_json = excluded.category_counts_json,
-                            started_at = excluded.started_at,
-                            ended_at = excluded.ended_at,
-                            indexed_mtime = excluded.indexed_mtime,
-                            indexed_size = excluded.indexed_size,
-                            indexed_at = excluded.indexed_at,
-                            includes_debug = excluded.includes_debug,
-                            index_error = NULL
-                        """,
-                        (
-                            uid,
-                            item["source_type"],
-                            final_round_id,
-                            final_round_date,
-                            item["dir_path"],
-                            label,
-                            uploaded_by,
-                            uploaded_at,
-                            item["has_game_log"],
-                            item["has_qdel_log"],
-                            item["has_initialize_log"],
-                            item["game_log_size"],
-                            item["game_log_mtime"],
-                            item["qdel_log_size"],
-                            item["qdel_log_mtime"],
-                            meta["total_lines"],
-                            meta["gameplay_lines"],
-                            json.dumps(meta["category_counts"], ensure_ascii=False),
-                            meta["started_at"],
-                            meta["ended_at"],
-                            item["game_log_mtime"],
-                            item["game_log_size"],
-                            time.time(),
-                            int(bool(include_debug)),
-                        ),
-                    )
-                    conn.execute("DELETE FROM log_entries WHERE round_uid = ?", (uid,))
-                    if fts_rows:
-                        conn.executemany(
-                            """
-                            INSERT INTO log_entries (
-                                round_uid, file_name, line_no, timestamp, category,
-                                ckeys_space, message, coord_x, coord_y, coord_z
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            """,
-                            fts_rows,
-                        )
-                indexed_rounds += 1
-                indexed_lines += len(fts_rows)
-            except Exception as exc:
-                errors += 1
-                logger.warning("Failed indexing round %s: %s", uid, exc)
-                with conn:
-                    conn.execute(
-                        """
-                        INSERT INTO log_rounds (round_uid, source_type, round_id, round_date, dir_path, index_error)
-                        VALUES (?, ?, ?, ?, ?, ?)
-                        ON CONFLICT(round_uid) DO UPDATE SET index_error = excluded.index_error
-                        """,
-                        (uid, item["source_type"], item["round_id"], item["round_date"], item["dir_path"], str(exc)[:300]),
-                    )
-
+def _index_file(conn, item, old, *, include_debug, force_reindex):
+    from core.log_parser.filters import _decode_log_line, parse_raw_line
+    uid = item["round_uid"]
+    path = Path(item["dir_path"]) / "game.log"
+    if not item["has_game_log"]:
+        conn.execute("UPDATE log_rounds SET indexed_at=?,index_error=NULL WHERE round_uid=?", (time.time(), uid))
         conn.commit()
-    finally:
-        conn.close()
-
-    return {
-        "discovered": len(all_found),
-        "indexed_rounds": indexed_rounds,
-        "indexed_lines": indexed_lines,
-        "skipped_unchanged": skipped_unchanged,
-        "removed_stale": removed_count,
-        "errors": errors,
-        "elapsed_seconds": round(time.monotonic() - t0, 3),
+        return 0, False
+    active = int(old.get("active_generation", 0))
+    checkpoints = {
+        int(row[0]): json.loads(row[1])
+        for row in conn.execute("SELECT generation,checkpoint_json FROM log_index_checkpoints WHERE round_uid=?", (uid,))
     }
+    with path.open("rb") as stream:
+        stat = os.fstat(stream.fileno())
+        limit = stat.st_size
+        cp = checkpoints.get(active)
+        pending = max((g for g in checkpoints if g > active), default=None)
+        rebuilding = True
+        if pending is not None and _valid_checkpoint(stream, checkpoints[pending], stat, include_debug):
+            generation, cp = pending, checkpoints[pending]
+        elif not force_reindex and _valid_checkpoint(stream, cp, stat, include_debug) and not (
+            cp["offset"] == limit and cp.get("mtime_ns") != stat.st_mtime_ns
+        ):
+            generation = active
+            rebuilding = False
+            if cp["offset"] == limit and cp.get("mtime_ns") == stat.st_mtime_ns:
+                return 0, True
+        else:
+            generation = max([active, *checkpoints.keys()]) + 1
+            cp = {
+                "file_id": [stat.st_dev, stat.st_ino], "include_debug": bool(include_debug),
+                "offset": 0, "line_no": 0, "prev_ts": "", "prev_cat": "SYSTEM",
+                "boundary": hashlib.sha256(b"").hexdigest(),
+                "meta": {"total_lines": 0, "gameplay_lines": 0, "category_counts": {},
+                         "round_id": None, "started_at": None, "ended_at": None},
+            }
+        cp["mtime_ns"] = stat.st_mtime_ns
+        stream.seek(cp["offset"])
+        rows = []
+        lines_in_batch = 0
+        added = 0
+
+        def flush():
+            nonlocal rows, lines_in_batch
+            cp["boundary"] = _boundary_hash(stream, cp["offset"])
+            with conn:
+                if rows:
+                    conn.executemany(
+                        """INSERT INTO log_entries (round_uid,file_name,line_no,timestamp,category,
+                        ckeys_space,message,coord_x,coord_y,coord_z,generation,byte_offset,byte_length,is_continuation)
+                        VALUES (?,'game.log',?,?,?,?,?,?,?,?,?,?,?,?)""", rows,
+                    )
+                _write_checkpoint(conn, uid, generation, cp)
+                if not rebuilding:
+                    _publish_meta(conn, item, generation, cp)
+            rows = []
+            lines_in_batch = 0
+
+        while stream.tell() < limit:
+            offset = stream.tell()
+            raw = stream.readline(limit - offset)
+            if not raw:
+                break
+            if item["source_type"] == "disk" and not raw.endswith(b"\n"):
+                break
+            cp["line_no"] += 1
+            decoded = _decode_log_line(raw)
+            if cp["line_no"] == 1:
+                decoded = decoded.lstrip("\ufeff")
+            ts, cat, msg, continuation = parse_raw_line(cp["line_no"], decoded, cp["prev_ts"], cp["prev_cat"])
+            if not continuation:
+                cp["prev_ts"], cp["prev_cat"] = ts, cat
+            meta = cp["meta"]
+            meta["total_lines"] += 1
+            meta["gameplay_lines"] += int(cat not in TECHNICAL_NOISE_CATEGORIES)
+            meta["category_counts"][cat] = meta["category_counts"].get(cat, 0) + 1
+            if ts:
+                meta["started_at"] = meta["started_at"] or ts
+                meta["ended_at"] = ts
+            if meta["round_id"] is None and not continuation and cat == "SYSTEM":
+                match = re.search(r"Starting up.*\(ID:\s*([A-Za-z0-9_-]+)\)", msg)
+                if match:
+                    meta["round_id"] = match.group(1)
+            if include_debug or cat != "DEBUG":
+                _, plain = sanitize_byond_html(msg)
+                coords = primary_coord_from_text(msg) or (None, None, None)
+                rows.append((uid, cp["line_no"], ts, cat, " ".join(extract_ckeys_from_text(plain)), plain,
+                             *coords, generation, offset, len(raw), int(continuation)))
+                added += 1
+            cp["offset"] = stream.tell()
+            lines_in_batch += 1
+            if lines_in_batch >= 1000:
+                flush()
+        flush()
+        # The previous generation remains searchable until this single commit.
+        with conn:
+            _publish_meta(conn, item, generation, cp)
+        # Collect obsolete rows in bounded transactions, preserving active readers' WAL snapshots.
+        while True:
+            with conn:
+                count = conn.execute(
+                    "DELETE FROM log_entries WHERE id IN (SELECT id FROM log_entries WHERE round_uid=? AND generation!=? LIMIT 1000)",
+                    (uid, generation),
+                ).rowcount
+            if not count:
+                break
+        with conn:
+            conn.execute("DELETE FROM log_index_checkpoints WHERE round_uid=? AND generation!=?", (uid, generation))
+        return added, False
 
 
-async def sync_and_index_rounds(
-    root_dir: Optional[Path],
-    uploads_dir: Optional[Path],
-    *,
-    include_debug: bool = False,
-    force_reindex: bool = False,
-) -> Dict[str, Any]:
-    """Thread-safe incremental discovery + SQLite FTS5 indexing for disk & uploaded rounds."""
+def _sync_rounds_conn(conn, root_dir, uploads_dir, *, include_debug=False, force_reindex=False):
+    started = time.monotonic()
+    now = time.time()
+    conn.row_factory = sqlite3.Row
+    sources = {"disk": _discover_dirs_with_logs(root_dir, "disk"),
+               "upload": _discover_dirs_with_logs(uploads_dir, "upload")}
+    existing = {row["round_uid"]: dict(row) for row in conn.execute("SELECT * FROM log_rounds")}
+    summary = dict(discovered=sum(map(len, sources.values())), indexed_rounds=0, indexed_lines=0,
+                   skipped_unchanged=0, removed_stale=0, errors=0)
+    for source, found in sources.items():
+        root = root_dir if source == "disk" else uploads_dir
+        complete = getattr(found, "complete", True)
+        errors = getattr(found, "errors", [])
+        summary["errors"] += int(not complete)
+        found_uids = {item["round_uid"] for item in found}
+        with conn:
+            conn.execute(
+                """INSERT INTO log_sources(source,status,last_scan_at,last_success_at,error) VALUES (?,?,?,?,?)
+                ON CONFLICT(source) DO UPDATE SET status=excluded.status,last_scan_at=excluded.last_scan_at,
+                last_success_at=COALESCE(excluded.last_success_at,log_sources.last_success_at),error=excluded.error""",
+                (source, "disabled" if root is None else ("indexing" if complete else "degraded"), now,
+                 None, "; ".join(errors)[:500] or None),
+            )
+            for uid, old in existing.items():
+                if old["source_type"] != source or root is None or not complete:
+                    continue
+                if uid in found_uids:
+                    conn.execute("UPDATE log_rounds SET missing_since=NULL WHERE round_uid=?", (uid,))
+                elif old.get("missing_since") is not None and now - old["missing_since"] >= 60:
+                    conn.execute("DELETE FROM log_rounds WHERE round_uid=?", (uid,))
+                    summary["removed_stale"] += 1
+                elif old.get("missing_since") is None:
+                    conn.execute("UPDATE log_rounds SET missing_since=? WHERE round_uid=?", (now, uid))
+        pending_bytes = 0
+        source_failed = not complete
+        for item in found:
+            uid = item["round_uid"]
+            old = existing.get(uid, {})
+            label, uploaded_by, uploaded_at = old.get("label", ""), old.get("uploaded_by"), old.get("uploaded_at")
+            metadata = Path(item["dir_path"]) / ".hilleye_meta.json"
+            if metadata.is_file():
+                try:
+                    data = json.loads(metadata.read_text(encoding="utf-8"))
+                    label = label or str(data.get("label") or "")
+                    uploaded_by = uploaded_by or data.get("uploaded_by")
+                    uploaded_at = uploaded_at or data.get("uploaded_at")
+                except (ValueError, OSError):
+                    pass
+            with conn:
+                conn.execute(
+                    """INSERT INTO log_rounds(round_uid,source_type,round_id,round_date,dir_path,label,uploaded_by,uploaded_at)
+                    VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(round_uid) DO UPDATE SET dir_path=excluded.dir_path""",
+                    (uid, source, item["round_id"], item["round_date"], item["dir_path"], label, uploaded_by, uploaded_at),
+                )
+                keys = ("has_game_log", "has_qdel_log", "has_initialize_log", "game_log_size", "game_log_mtime", "qdel_log_size", "qdel_log_mtime")
+                conn.execute(f"UPDATE log_rounds SET {','.join(k+'=?' for k in keys)} WHERE round_uid=?", [*(item[k] for k in keys), uid])
+            try:
+                added, unchanged = _index_file(conn, item, old, include_debug=include_debug, force_reindex=force_reindex)
+                summary["skipped_unchanged"] += int(unchanged)
+                summary["indexed_rounds"] += int(not unchanged)
+                summary["indexed_lines"] += added
+            except Exception as exc:
+                logger.exception("Failed indexing round %s", uid)
+                summary["errors"] += 1
+                source_failed = True
+                with conn:
+                    conn.execute("UPDATE log_rounds SET index_error=? WHERE round_uid=?", (str(exc)[:300], uid))
+            indexed = conn.execute("SELECT indexed_size FROM log_rounds WHERE round_uid=?", (uid,)).fetchone()[0] or 0
+            pending_bytes += max(0, item["game_log_size"] - indexed)
+        with conn:
+            conn.execute("""UPDATE log_sources SET pending_bytes=?,status=?,
+                         last_success_at=CASE WHEN ? THEN ? ELSE last_success_at END WHERE source=?""",
+                         (pending_bytes, "disabled" if root is None else ("degraded" if source_failed else "ok"),
+                          int(root is not None and not source_failed), time.time(), source))
+    summary["elapsed_seconds"] = round(time.monotonic() - started, 3)
+    return summary
+
+
+def _sync_rounds_sync(db_path, root_dir, uploads_dir, *, include_debug=False, force_reindex=False):
+    from core.file_lock import FileLock, lock_path
+    with FileLock(lock_path(db_path, "index-write")):
+        with closing(sqlite3.connect(db_path, timeout=15)) as conn:
+            conn.execute("PRAGMA foreign_keys=ON")
+            conn.execute("PRAGMA busy_timeout=5000")
+            return _sync_rounds_conn(conn, root_dir, uploads_dir, include_debug=include_debug, force_reindex=force_reindex)
+
+
+async def sync_and_index_rounds(root_dir, uploads_dir, *, include_debug=False, force_reindex=False):
     import core.logs_db as _ldb
-
+    from core.file_lock import lease, lock_path
+    from core.log_operations import finish_thread
     async with _ldb._sync_lock:
         if _ldb._current_logs_db_path == ":memory:":
-            # For :memory: test DBs, operate directly on the open async connection
             conn = await _ldb.get_logs_connection()
-            disk_rounds = _discover_dirs_with_logs(root_dir, "disk")
-            upload_rounds = _discover_dirs_with_logs(uploads_dir, "upload")
-            indexed_rounds = 0
-            indexed_lines = 0
-            for item in disk_rounds + upload_rounds:
-                uid = item["round_uid"]
-                game_path = Path(item["dir_path"]) / "game.log"
-                label = ""
-                uploaded_by = None
-                uploaded_at = None
-                meta_file = Path(item["dir_path"]) / ".hilleye_meta.json"
-                if meta_file.is_file():
-                    try:
-                        mdata = json.loads(meta_file.read_text(encoding="utf-8"))
-                        label = str(mdata.get("label") or "")
-                        uploaded_by = mdata.get("uploaded_by")
-                        uploaded_at = mdata.get("uploaded_at")
-                    except Exception:
-                        pass
-                if item["has_game_log"] and game_path.is_file():
-                    meta, fts_rows = _build_index_rows_for_game_log(uid, game_path, include_debug=include_debug)
-                else:
-                    meta = {
-                        "total_lines": 0,
-                        "gameplay_lines": 0,
-                        "category_counts": {},
-                        "round_id": None,
-                        "started_at": None,
-                        "ended_at": None,
-                    }
-                    fts_rows = []
-                await conn.execute(
-                    """
-                    INSERT OR REPLACE INTO log_rounds (
-                        round_uid, source_type, round_id, round_date, dir_path, label,
-                        uploaded_by, uploaded_at,
-                        has_game_log, has_qdel_log, has_initialize_log,
-                        game_log_size, game_log_mtime, qdel_log_size, qdel_log_mtime,
-                        line_count, gameplay_line_count, category_counts_json,
-                        started_at, ended_at, indexed_mtime, indexed_size, indexed_at, includes_debug
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        uid,
-                        item["source_type"],
-                        meta["round_id"] or item["round_id"],
-                        item["round_date"],
-                        item["dir_path"],
-                        label,
-                        uploaded_by,
-                        uploaded_at,
-                        item["has_game_log"],
-                        item["has_qdel_log"],
-                        item["has_initialize_log"],
-                        item["game_log_size"],
-                        item["game_log_mtime"],
-                        item["qdel_log_size"],
-                        item["qdel_log_mtime"],
-                        meta["total_lines"],
-                        meta["gameplay_lines"],
-                        json.dumps(meta["category_counts"]),
-                        meta["started_at"],
-                        meta["ended_at"],
-                        item["game_log_mtime"],
-                        item["game_log_size"],
-                        time.time(),
-                        int(bool(include_debug)),
-                    ),
-                )
-                await conn.execute("DELETE FROM log_entries WHERE round_uid = ?", (uid,))
-                if fts_rows:
-                    await conn.executemany(
-                        "INSERT INTO log_entries (round_uid, file_name, line_no, timestamp, category, ckeys_space, message, coord_x, coord_y, coord_z) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                        fts_rows,
-                    )
-                indexed_rounds += 1
-                indexed_lines += len(fts_rows)
-            await conn.commit()
-            return {
-                "discovered": len(disk_rounds) + len(upload_rounds),
-                "indexed_rounds": indexed_rounds,
-                "indexed_lines": indexed_lines,
-                "skipped_unchanged": 0,
-                "removed_stale": 0,
-                "errors": 0,
-                "elapsed_seconds": 0.0,
-            }
-
-        return await asyncio.to_thread(
-            _sync_rounds_sync,
-            _ldb._current_logs_db_path,
-            root_dir,
-            uploads_dir,
-            include_debug=include_debug,
-            force_reindex=force_reindex,
-        )
+            return await conn._execute(_sync_rounds_conn, conn._conn, root_dir, uploads_dir,
+                                       include_debug=include_debug, force_reindex=force_reindex)
+        # Publication/deletion and backup share this lock so a scan sees complete uploads.
+        async with lease(lock_path(_ldb._current_logs_db_path, "uploads")):
+            async with lease(lock_path(_ldb._current_logs_db_path, "index-write")):
+                def run():
+                    with closing(sqlite3.connect(_ldb._current_logs_db_path, timeout=15)) as conn:
+                        conn.execute("PRAGMA foreign_keys=ON")
+                        conn.execute("PRAGMA busy_timeout=5000")
+                        return _sync_rounds_conn(conn, root_dir, uploads_dir, include_debug=include_debug, force_reindex=force_reindex)
+                return await finish_thread(run)

@@ -118,6 +118,9 @@ class AppConfig(BaseModel):
     logs_max_archive_files: int = Field(default=100, ge=1, le=1000)
     logs_index_include_debug: bool = Field(default=False)
     logs_auto_scan_on_startup: bool = Field(default=True)
+    logs_periodic_scan: bool = Field(default=True)
+    logs_scan_interval_seconds: float = Field(default=60, ge=1, le=86400, allow_inf_nan=False)
+    logs_regex_timeout_seconds: float = Field(default=5, gt=0, le=60, allow_inf_nan=False)
 
     maps_repo_dir: str = Field(default="", description="Local SierraBay12 git repo directory for DMM/DMI map rendering")
     maps_github_repo: str = Field(default="ImJustKisik/SierraBay12", description="GitHub owner/repo fallback for maps")
@@ -280,6 +283,9 @@ class AppConfig(BaseModel):
             "max_archive_files": "logs_max_archive_files",
             "index_include_debug": "logs_index_include_debug",
             "auto_scan_on_startup": "logs_auto_scan_on_startup",
+            "periodic_scan": "logs_periodic_scan",
+            "scan_interval_seconds": "logs_scan_interval_seconds",
+            "regex_timeout_seconds": "logs_regex_timeout_seconds",
         }
         for key, canonical in logs_aliases.items():
             if key in (logs_cfg or {}) and canonical not in data:
@@ -440,7 +446,7 @@ def load_config(config_path: Union[str, Path] = DEFAULT_CONFIG_PATH) -> AppConfi
     Loads configuration from a JSON file.
     A missing file uses defaults; an invalid existing configuration stops startup.
     """
-    path = Path(config_path)
+    path = Path(os.getenv("HILLEYE_CONFIG_PATH", str(config_path))) if Path(config_path) == DEFAULT_CONFIG_PATH else Path(config_path)
     if not path.is_file():
         logger.info("Config file '%s' not found. Using default configuration.", path)
         return AppConfig(**_apply_env_overrides({"db_path": "tracker.db"}))

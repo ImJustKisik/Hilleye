@@ -7,13 +7,18 @@ import io
 import logging
 import math
 import time
+import tempfile
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.parse import quote, urlencode
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
-from fastapi.responses import RedirectResponse, Response
+from fastapi.responses import RedirectResponse, Response, JSONResponse
 
 from core import discord_auth, logs_db, map_renderer
+from core.log_operations import heavy_slot, finish_thread, staging_directory
+from core.log_jobs import map_job_status
+import asyncio
 from web.logs_routes.deps import LogsRouteContext
 from web.logs_routes.viewmodels import (
     _AUDIT_ACTION_GROUPS,
@@ -27,6 +32,24 @@ from web.logs_routes.viewmodels import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+async def _index_job(request, config, user, kind, payload, background):
+    runner = getattr(request.app.state, "log_jobs", None)
+    if runner is not None and runner.path == config.resolved_logs_db_path():
+        try:
+            job_id = await runner.submit(kind, user.discord_id, payload)
+        except OverflowError as exc:
+            raise HTTPException(429, str(exc), headers={"Retry-After": "2"}) from exc
+        if background:
+            await logs_db.record_audit_event(kind, discord_id=user.discord_id, target=job_id, details="background=1")
+            return JSONResponse({"ok": True, "job_id": job_id}, status_code=202)
+        return await runner.wait(job_id)
+    if background:
+        raise HTTPException(503, "Фоновый обработчик ещё не готов.")
+    return await logs_db.sync_and_index_rounds(config.resolved_logs_root_dir(), config.resolved_logs_uploads_dir(),
+                                              include_debug=payload.get("include_debug", config.logs_index_include_debug),
+                                              force_reindex=kind == "reindex")
 
 
 def _csv_safe_cell(val: Any) -> str:
@@ -252,7 +275,7 @@ def register_admin_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
         stats["last_indexed_rel"] = _fmt_relative_ru(stats.get("last_indexed_at"), now=now_ts)
         index_errors = await logs_db.get_index_error_rounds(limit=50)
         map_manifest = map_renderer.get_map_manifest(config.resolved_maps_cache_dir())
-        map_build_status = map_renderer.get_map_build_status()
+        map_build_status = await asyncio.to_thread(map_job_status, config.resolved_logs_db_path()) or map_renderer.get_map_build_status()
 
         return ctx.templates.TemplateResponse(
             request=request,
@@ -339,16 +362,14 @@ def register_admin_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
         request: Request,
         csrf_token: str = Form(default=""),
         next_url: str = Form(default="/logs"),
+        background: str = Form(default="0"),
     ):
         user = await ctx.require_api_user(request)
         discord_auth.verify_csrf(user, csrf_token or request.headers.get("x-csrf-token"))
         config = ctx.get_config_fn()
-        summary = await logs_db.sync_and_index_rounds(
-            config.resolved_logs_root_dir(),
-            config.resolved_logs_uploads_dir(),
-            include_debug=config.logs_index_include_debug,
-            force_reindex=False,
-        )
+        summary = await _index_job(request, config, user, "refresh", {}, _parse_bool_flag(background))
+        if isinstance(summary, Response):
+            return summary
         await logs_db.record_audit_event(
             "refresh",
             discord_id=user.discord_id,
@@ -369,17 +390,15 @@ def register_admin_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
         request: Request,
         csrf_token: str = Form(default=""),
         include_debug: str = Form(default="0"),
+        background: str = Form(default="0"),
     ):
         user = await ctx.require_api_user(request, require_admin=True)
         discord_auth.verify_csrf(user, csrf_token or request.headers.get("x-csrf-token"))
         config = ctx.get_config_fn()
         inc_dbg = _parse_bool_flag(include_debug, default=config.logs_index_include_debug)
-        summary = await logs_db.sync_and_index_rounds(
-            config.resolved_logs_root_dir(),
-            config.resolved_logs_uploads_dir(),
-            include_debug=inc_dbg,
-            force_reindex=True,
-        )
+        summary = await _index_job(request, config, user, "reindex", {"include_debug": inc_dbg}, _parse_bool_flag(background))
+        if isinstance(summary, Response):
+            return summary
         await logs_db.record_audit_event(
             "reindex",
             discord_id=user.discord_id,
@@ -406,6 +425,21 @@ def register_admin_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
         config = ctx.get_config_fn()
         prefer_gh = source.strip().lower() == "github"
         run_bg = _parse_bool_flag(background, default=False)
+        runner = getattr(request.app.state, "log_jobs", None)
+        if runner is not None and runner.path == config.resolved_logs_db_path():
+            try:
+                job_id = await runner.submit("map_rebuild", user.discord_id, {"force": True, "prefer_github": prefer_gh})
+            except OverflowError as exc:
+                raise HTTPException(429, str(exc), headers={"Retry-After": "2"}) from exc
+            await logs_db.record_audit_event("rebuild_maps", discord_id=user.discord_id, target=job_id)
+            if run_bg:
+                if _prefers_json(request):
+                    return {"ok": True, "started": True, "job_id": job_id}
+                return RedirectResponse(f"/logs/admin?notice={quote('Сборка карты запущена')}", status_code=303)
+            manifest = await runner.wait(job_id)
+            if _prefers_json(request):
+                return {"ok": True, **manifest}
+            return RedirectResponse(f"/logs/admin?notice={quote('Карта пересобрана')}", status_code=303)
         if run_bg:
             started = map_renderer.start_map_rebuild_background(
                 config,
@@ -473,33 +507,25 @@ def register_admin_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
 
         max_upload_bytes = int(config.logs_max_upload_mb) * 1024 * 1024
         max_extracted_bytes = int(config.logs_max_extracted_mb) * 1024 * 1024
-        chunks: List[bytes] = []
-        total_read = 0
-        while True:
-            chunk = await file.read(1024 * 1024)
-            if not chunk:
-                break
-            total_read += len(chunk)
-            if total_read > max_upload_bytes:
-                raise HTTPException(
-                    status_code=413,
-                    detail=f"Файл превышает максимальный размер ({config.logs_max_upload_mb} МБ).",
-                )
-            chunks.append(chunk)
-        raw_bytes = b"".join(chunks)
-
         try:
-            created = await logs_db.ingest_uploaded_log(
-                file.filename or "uploaded.log",
-                raw_bytes,
-                uploads_dir=config.resolved_logs_uploads_dir(),
-                label=label,
-                uploaded_by=user.discord_id,
-                max_upload_bytes=max_upload_bytes,
-                max_extracted_bytes=max_extracted_bytes,
-                max_archive_files=int(config.logs_max_archive_files),
-                include_debug=config.logs_index_include_debug,
-            )
+            async with heavy_slot(config):
+                async with staging_directory(prefix="hilleye-upload-") as staging:
+                    source = staging / "input"
+                    total_read = 0
+                    with source.open("wb") as stream:
+                        while chunk := await file.read(1024 * 1024):
+                            total_read += len(chunk)
+                            if total_read > max_upload_bytes:
+                                raise HTTPException(413, f"Файл превышает максимальный размер ({config.logs_max_upload_mb} МБ).")
+                            await finish_thread(stream.write, chunk)
+                    created = await logs_db.ingest_uploaded_log(
+                        file.filename or "uploaded.log", source,
+                        uploads_dir=config.resolved_logs_uploads_dir(), label=label,
+                        uploaded_by=user.discord_id, max_upload_bytes=max_upload_bytes,
+                        max_extracted_bytes=max_extracted_bytes,
+                        max_archive_files=int(config.logs_max_archive_files),
+                        include_debug=config.logs_index_include_debug,
+                    )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 

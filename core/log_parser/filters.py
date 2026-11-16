@@ -511,7 +511,10 @@ def filter_game_log_file(
     anchor_hint = 0
 
     acc = _RoundMetaAccumulator()
-    matched_raw: List[Tuple[int, str, str, str, bool, Optional[str], Optional[Tuple[str, str]]]] = []
+    matched_raw = []
+    total_matches = 0
+    focus_index = None
+    start_idx = (page - 1) * per_page
 
     for line_no, ts, cat, raw_msg, is_cont in iter_parsed_file_lines(file_path):
         acc.observe(ts, cat, raw_msg, is_cont)
@@ -531,20 +534,33 @@ def filter_game_log_file(
         if not matched:
             continue
 
-        matched_raw.append((line_no, ts, cat, raw_msg, is_cont, pre_display_raw, pre_sanitized))
+        if line_no == focus_line:
+            focus_index = total_matches
+        if start_idx <= total_matches < start_idx + per_page:
+            matched_raw.append((line_no, ts, cat, raw_msg, is_cont, pre_display_raw, pre_sanitized))
+        total_matches += 1
 
-    total_matches = len(matched_raw)
     total_pages = max(1, (total_matches + per_page - 1) // per_page)
-
-    if focus_line is not None and focus_line > 0 and matched_raw:
-        for idx, item in enumerate(matched_raw):
-            if item[0] == focus_line:
-                page = (idx // per_page) + 1
+    selected_page = (focus_index // per_page) + 1 if focus_index is not None else min(page, total_pages)
+    if selected_page != page:
+        matched_raw = []
+        anchor_hint = 0
+        match_index = 0
+        start_idx = (selected_page - 1) * per_page
+        for line_no, ts, cat, raw_msg, is_cont in iter_parsed_file_lines(file_path):
+            if filt.regex_error:
                 break
-
-    page = min(page, total_pages)
-    start_idx = (page - 1) * per_page
-    end_idx = start_idx + per_page
+            matched, pre_display_raw, pre_sanitized, anchor_hint = _evaluate_line_filter(
+                ts, cat, raw_msg, filt, mask_ips=mask_ips, line_no=line_no,
+                anchors=anchors, anchor_hint=anchor_hint,
+            )
+            if matched:
+                if start_idx <= match_index < start_idx + per_page:
+                    matched_raw.append((line_no, ts, cat, raw_msg, is_cont, pre_display_raw, pre_sanitized))
+                match_index += 1
+                if match_index >= start_idx + per_page:
+                    break
+    page = selected_page
     page_entries = [
         _build_entry(
             ln,
@@ -557,7 +573,7 @@ def filter_game_log_file(
             pre_display_raw=pre_disp,
             pre_sanitized=pre_san,
         )
-        for ln, ts, cat, msg, is_cont, pre_disp, pre_san in matched_raw[start_idx:end_idx]
+        for ln, ts, cat, msg, is_cont, pre_disp, pre_san in matched_raw
     ]
 
     return LogPageResult(
@@ -575,7 +591,7 @@ def filter_game_log_file(
     )
 
 
-def export_filtered_game_log(
+def iter_export_filtered_game_log(
     file_path: Path,
     *,
     preset: str = "gameplay",
@@ -587,7 +603,7 @@ def export_filtered_game_log(
     time_from: str = "",
     time_to: str = "",
     mask_ips: bool = False,
-) -> str:
+) -> Iterator[str]:
     """Render filtered game.log lines back into plain text for download."""
     filt = _prepare_log_filter(
         preset=preset,
@@ -609,7 +625,6 @@ def export_filtered_game_log(
     )
     anchor_hint = 0
 
-    out_lines: List[str] = []
     for line_no, ts, cat, raw_msg, is_cont in iter_parsed_file_lines(file_path):
         matched, pre_display_raw, _, anchor_hint = _evaluate_line_filter(
             ts,
@@ -630,13 +645,29 @@ def export_filtered_game_log(
             else (mask_sensitive_text(raw_msg) if mask_ips else raw_msg)
         )
         if is_cont:
-            out_lines.append(display_msg)
+            yield display_msg + "\n"
         elif cat == "SYSTEM":
-            out_lines.append(f"[{ts}] {display_msg}" if ts else display_msg)
+            yield (f"[{ts}] {display_msg}" if ts else display_msg) + "\n"
         else:
-            out_lines.append(f"[{ts}] {cat}: {display_msg}" if ts else f"{cat}: {display_msg}")
+            yield (f"[{ts}] {cat}: {display_msg}" if ts else f"{cat}: {display_msg}") + "\n"
 
-    return "\n".join(out_lines) + ("\n" if out_lines else "")
+
+def export_filtered_game_log(file_path: Path, **kwargs) -> str:
+    """Compatibility helper for callers needing an in-memory string."""
+    return "".join(iter_export_filtered_game_log(file_path, **kwargs))
+
+
+def export_filtered_game_log_to_file(file_path: Path, output_path: Path, **kwargs) -> str:
+    with Path(output_path).open("w", encoding="utf-8", newline="") as stream:
+        stream.writelines(iter_export_filtered_game_log(file_path, **kwargs))
+    return str(output_path)
+
+
+def mask_log_to_file(file_path: Path, output_path: Path) -> str:
+    with file_path.open("rb") as source, Path(output_path).open("w", encoding="utf-8", newline="") as target:
+        for line in source:
+            target.write(mask_sensitive_text(_decode_log_line(line)))
+    return str(output_path)
 
 
 def read_context_lines(

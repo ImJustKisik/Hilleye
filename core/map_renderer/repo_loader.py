@@ -154,6 +154,17 @@ async def _download_github_repo_subset(
     extract_task: Optional[asyncio.Task] = None
     eof_sent = False
 
+    async def put_chunk(chunk):
+        while True:
+            if extract_task is not None and extract_task.done():
+                await extract_task
+                return False
+            try:
+                chunk_queue.put_nowait(chunk)
+                return True
+            except queue.Full:
+                await asyncio.sleep(0.01)
+
     try:
         async with httpx.AsyncClient(**client_kwargs) as client:
             async with client.stream("GET", url) as resp:
@@ -177,14 +188,14 @@ async def _download_github_repo_subset(
                         raise ValueError("Архив GitHub превышает допустимый размер.")
                     if extract_task.done():
                         break
-                    await asyncio.to_thread(chunk_queue.put, chunk)
+                    if not await put_chunk(chunk):
+                        break
                     _set_build_status(
                         downloaded_mb=round(downloaded / (1024 * 1024), 1),
                         detail=f"Скачивание и распаковка с GitHub: {downloaded / (1024 * 1024):.1f} МБ...",
                     )
         if extract_task is not None:
-            await asyncio.to_thread(chunk_queue.put, None)
-            eof_sent = True
+            eof_sent = await put_chunk(None)
             await extract_task
     finally:
         if extract_task is not None:

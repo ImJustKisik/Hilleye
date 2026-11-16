@@ -33,6 +33,10 @@ from core import map_renderer as core_maps
 from core.hub_scraper import KNOWN_PAGER_ENDPOINTS
 from core.tracker import get_tracker
 from core.config import get_config
+from core.log_jobs import JobRunner
+from core.log_operations import finish_thread
+from core.storage import validate_storage
+from core.telemetry import telemetry, monitor_loop
 from web.logs_routes import create_logs_router
 from web.routes import (
     api_router,
@@ -113,73 +117,33 @@ async def lifespan(app: FastAPI):
     """
     logger.info("Initializing Hilleye SQLite WAL database...")
     config = get_config()
-    await core_db.init_db(config.resolved_db_path())
-    await core_logs_db.init_logs_db(config.resolved_logs_db_path())
+    await finish_thread(validate_storage, config)
+    try:
+        await core_db.init_db(config.resolved_db_path())
+        await core_logs_db.init_logs_db(config.resolved_logs_db_path())
+    except BaseException:
+        await core_logs_db.close_logs_db()
+        await core_db.close_db()
+        raise
 
     logger.info("Starting Hilleye background telemetry tracker...")
     tracker = get_tracker(config=config)
-    log_sync_task: Optional[asyncio.Task] = None
-    map_build_task: Optional[asyncio.Task] = None
-
-    async def _initial_log_sync() -> None:
-        try:
-            root_dir = config.resolved_logs_root_dir()
-            uploads_dir = config.resolved_logs_uploads_dir()
-            if (root_dir and root_dir.is_dir()) or uploads_dir.is_dir():
-                summary = await core_logs_db.sync_and_index_rounds(
-                    root_dir,
-                    uploads_dir,
-                    include_debug=config.logs_index_include_debug,
-                    force_reindex=False,
-                )
-                logger.info(
-                    "Initial log index sync complete: %s rounds discovered, %s indexed (%ss)",
-                    summary["discovered"],
-                    summary["indexed_rounds"],
-                    summary["elapsed_seconds"],
-                )
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.exception("Background log index sync failed")
-
-    async def _initial_map_build() -> None:
-        try:
-            cache_dir = config.resolved_maps_cache_dir()
-            manifest = core_maps.get_map_manifest(cache_dir)
-            if not manifest.get("ready"):
-                built = await core_maps.build_map_cache(config, force=False)
-                logger.info(
-                    "Station map cache ready (%s, %s Z-levels in %ss)",
-                    built.get("source_kind"),
-                    len(built.get("levels", [])),
-                    built.get("elapsed_seconds"),
-                )
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.warning("Background station map cache build failed", exc_info=True)
+    jobs = JobRunner(config)
+    app.state.log_jobs = jobs
+    lag_task = None
 
     try:
         await tracker.start()
-        if config.logs_auto_scan_on_startup:
-            root_dir = config.resolved_logs_root_dir()
-            uploads_dir = config.resolved_logs_uploads_dir()
-            if (root_dir and root_dir.is_dir()) or uploads_dir.is_dir():
-                log_sync_task = asyncio.create_task(_initial_log_sync())
-        if config.maps_auto_build_on_startup:
-            cache_dir = config.resolved_maps_cache_dir()
-            if not core_maps.get_map_manifest(cache_dir).get("ready"):
-                repo_dir = config.resolved_maps_repo_dir()
-                if (repo_dir and (repo_dir / "maps" / "sierra").is_dir()) or config.maps_github_repo:
-                    map_build_task = asyncio.create_task(_initial_map_build())
+        await jobs.start()
+        lag_task = asyncio.create_task(monitor_loop())
         yield
     finally:
         try:
-            for bg_task in (log_sync_task, map_build_task):
-                if bg_task is not None and not bg_task.done():
-                    bg_task.cancel()
-                    await asyncio.gather(bg_task, return_exceptions=True)
+            await jobs.stop()
+            app.state.log_jobs = None
+            if lag_task is not None:
+                lag_task.cancel()
+                await asyncio.gather(lag_task, return_exceptions=True)
             await tracker.stop()
             tasks = list(_manifest_tasks.values())
             for task in tasks:
@@ -240,7 +204,10 @@ async def _get_shell_context() -> Dict[str, Any]:
 
 @app.middleware("http")
 async def response_headers(request: Request, call_next):
+    started = time.monotonic()
     response = await call_next(request)
+    route = request.scope.get("route")
+    telemetry.record(getattr(route, "path", "unmatched"), time.monotonic() - started)
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "SAMEORIGIN"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
@@ -274,6 +241,11 @@ async def validation_error(request: Request, exc: RequestValidationError):
 
 @app.exception_handler(StarletteHTTPException)
 async def http_error_handler(request: Request, exc: StarletteHTTPException):
+    if exc.status_code in (408, 429) and request.headers.get("HX-Request") == "true":
+        return templates.TemplateResponse(
+            request=request, name="partials/logs_operation_error.html",
+            context={"message": str(exc.detail)}, status_code=exc.status_code, headers=exc.headers,
+        )
     if _prefers_html(request):
         shell = await _get_shell_context()
         if exc.status_code == 404:
@@ -281,7 +253,7 @@ async def http_error_handler(request: Request, exc: StarletteHTTPException):
             message = "The requested page or resource could not be found."
         else:
             heading = "Request error"
-            message = "The server could not complete this request."
+            message = str(exc.detail) if exc.status_code in (408, 429) else "The server could not complete this request."
         return templates.TemplateResponse(
             request=request,
             name="error.html",
@@ -292,6 +264,7 @@ async def http_error_handler(request: Request, exc: StarletteHTTPException):
                 "message": message,
             },
             status_code=exc.status_code,
+            headers=exc.headers,
         )
     return await http_exception_handler(request, exc)
 

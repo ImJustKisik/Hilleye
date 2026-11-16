@@ -8,12 +8,16 @@ import logging
 from pathlib import Path
 import shutil
 import tempfile
+import os
+import uuid
 import time
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from PIL import Image
 
 from core.config import AppConfig
+from core.file_lock import lease, lock_path
+from core.log_operations import finish_thread
 from core.map_renderer.dm_parser import (
     _DmiSpriteAtlas,
     _decode_rle,
@@ -380,7 +384,9 @@ def get_map_image_path(cache_dir: Path, z_level: int) -> Optional[Path]:
     if z_level not in _LEVEL_BY_Z:
         return None
     root = cache_dir.resolve()
-    candidate = (root / f"z{int(z_level)}.png").resolve()
+    manifest = get_map_manifest(cache_dir)
+    level = next((item for item in manifest.get("levels", []) if item.get("z") == z_level), {})
+    candidate = (root / level.get("image_file", f"z{int(z_level)}.png")).resolve()
     if not candidate.is_relative_to(root) or not candidate.is_file():
         return None
     return candidate
@@ -391,7 +397,9 @@ def get_map_areas_path(cache_dir: Path, z_level: int) -> Optional[Path]:
     if z_level not in _LEVEL_BY_Z:
         return None
     root = cache_dir.resolve()
-    candidate = (root / f"areas_z{int(z_level)}.json").resolve()
+    manifest = get_map_manifest(cache_dir)
+    level = next((item for item in manifest.get("levels", []) if item.get("z") == z_level), {})
+    candidate = (root / level.get("areas_file", f"areas_z{int(z_level)}.json")).resolve()
     if not candidate.is_relative_to(root) or not candidate.is_file():
         return None
     return candidate
@@ -409,15 +417,17 @@ def _ensure_area_cache_loaded(cache_dir: Path) -> Dict[int, Tuple[int, int, List
     import core.map_renderer as _mr
 
     manifest_path = cache_dir / "manifest.json"
-    mtime = manifest_path.stat().st_mtime if manifest_path.is_file() else -1.0
+    mtime = manifest_path.stat().st_mtime_ns if manifest_path.is_file() else -1
     key = (str(cache_dir.resolve()), mtime)
     with _mr._area_cache_lock:
         if _mr._area_cache_key == key and _mr._area_grids:
             return _mr._area_grids
         loaded: Dict[int, Tuple[int, int, List[str], List[int]]] = {}
+        manifest = get_map_manifest(cache_dir)
+        levels = {item["z"]: item for item in manifest.get("levels", [])}
         for spec in SIERRA_Z_LEVELS:
-            p = cache_dir / f"areas_z{spec.z}.json"
-            if not p.is_file():
+            p = (cache_dir / levels.get(spec.z, {}).get("areas_file", f"areas_z{spec.z}.json")).resolve()
+            if not p.is_relative_to(cache_dir.resolve()) or not p.is_file():
                 continue
             try:
                 data = json.loads(p.read_text(encoding="utf-8"))
@@ -450,7 +460,7 @@ def lookup_area_name(cache_dir: Path, z_level: int, x: int, y: int) -> str:
     return ""
 
 
-async def build_map_cache(
+async def _build_map_cache_unpublished(
     config: AppConfig,
     *,
     force: bool = False,
@@ -485,8 +495,8 @@ async def build_map_cache(
         )
         try:
             if use_local and local_repo is not None:
-                commit_sha = await asyncio.to_thread(_detect_local_git_commit, local_repo)
-                manifest = await asyncio.to_thread(
+                commit_sha = await finish_thread(_detect_local_git_commit, local_repo)
+                manifest = await finish_thread(
                     _render_maps_from_repo_sync,
                     local_repo,
                     cache_dir,
@@ -512,7 +522,7 @@ async def build_map_cache(
                         phase="rendering",
                         detail="Рендер палуб Z1–Z7 (.dmm + .dmi)...",
                     )
-                    manifest = await asyncio.to_thread(
+                    manifest = await finish_thread(
                         _render_maps_from_repo_sync,
                         tmp_path,
                         cache_dir,
@@ -540,6 +550,43 @@ async def build_map_cache(
             finished_at=time.strftime("%Y-%m-%d %H:%M:%S"),
         )
         return manifest
+
+
+async def build_map_cache(config: AppConfig, *, force=False, prefer_github=False):
+    root = config.resolved_maps_cache_dir()
+    await finish_thread(root.mkdir, parents=True, exist_ok=True)
+    async with lease(lock_path(str(root / "map-cache"), "map-write"), timeout=3600):
+        existing = get_map_manifest(root)
+        if not force and existing.get("ready"):
+            return existing
+        def clean_abandoned_staging():
+            # Every builder holds map-write until its threads finish. No live builder can own these.
+            for path in root.glob(".build-*"):
+                if path.is_dir() and not path.is_symlink() and path.resolve().is_relative_to(root.resolve()):
+                    shutil.rmtree(path)
+        await finish_thread(clean_abandoned_staging)
+        with tempfile.TemporaryDirectory(prefix=".build-", dir=root) as tmp:
+            rendered = Path(tmp) / "rendered"
+            staged_config = config.model_copy(update={"maps_cache_dir": str(rendered)})
+            manifest = await _build_map_cache_unpublished(staged_config, force=True, prefer_github=prefer_github)
+            if not manifest.get("ready"):
+                raise ValueError("Map build produced no usable levels; previous version was preserved")
+            version = f"versions/{uuid.uuid4().hex}"
+            def publish():
+                (root / "versions").mkdir(exist_ok=True)
+                rendered.rename(root / version)
+                for level in manifest["levels"]:
+                    for key in ("image_file", "areas_file"):
+                        level[key] = f"{version}/{level[key]}"
+                pending = root / f".manifest-{uuid.uuid4().hex}.json"
+                try:
+                    pending.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+                    os.replace(pending, root / "manifest.json")
+                finally:
+                    pending.unlink(missing_ok=True)
+                invalidate_area_cache()
+            await finish_thread(publish)
+            return manifest
 
 
 def start_map_rebuild_background(

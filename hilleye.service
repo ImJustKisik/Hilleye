@@ -12,6 +12,10 @@ StateDirectoryMode=0750
 WorkingDirectory=/opt/Hilleye
 Environment="PATH=/opt/Hilleye/venv/bin"
 Environment="HILLEYE_DB_PATH=/var/lib/hilleye/tracker.db"
+Environment="HILLEYE_LOGS_DB_PATH=/var/lib/hilleye/logs.db"
+Environment="HILLEYE_LOGS_UPLOADS_DIR=/var/lib/hilleye/uploaded_logs"
+Environment="HILLEYE_MAPS_CACHE_DIR=/var/lib/hilleye/map_cache"
+EnvironmentFile=-/etc/hilleye/hilleye.env
 ExecStart=/opt/Hilleye/venv/bin/python run.py
 Restart=always
 RestartSec=5s

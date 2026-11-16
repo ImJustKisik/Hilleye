@@ -99,7 +99,7 @@ async def get_logs_stats() -> Dict[str, Any]:
             """
         )
     ).fetchone()
-    fts_cnt = await (await conn.execute("SELECT COUNT(*) FROM log_entries")).fetchone()
+    fts_cnt = await (await conn.execute("SELECT COUNT(*) FROM log_entries e JOIN log_rounds r ON r.round_uid=e.round_uid WHERE e.generation=r.active_generation")).fetchone()
     dates_cur = await conn.execute(
         "SELECT round_date, COUNT(*) AS cnt FROM log_rounds GROUP BY round_date ORDER BY round_date DESC LIMIT 60"
     )
@@ -251,6 +251,7 @@ async def search_logs_fts(
     if not where_clauses:
         return [], 0
 
+    where_clauses.append("e.generation = r.active_generation")
     where_sql = " AND ".join(where_clauses)
     if use_fts:
         from_sql = """

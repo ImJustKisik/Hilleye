@@ -15,4 +15,7 @@ backups/
 uploaded_logs/
 map_cache/
 /output/
+.hilleye-locks/
+*.tar.gz.partial
+.venv/
 

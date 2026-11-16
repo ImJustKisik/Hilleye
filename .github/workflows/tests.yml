@@ -1,0 +1,38 @@
+name: Tests
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ['3.10', '3.14']
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.12.23'
+          python-version: ${{ matrix.python }}
+      - run: uv sync --locked
+      - run: uv run --locked python -m pytest -q
+      - name: Check requirements exports
+        shell: bash
+        run: |
+          uv export --quiet --locked --no-dev --no-emit-project --format requirements.txt --output-file requirements.txt > /dev/null
+          uv export --quiet --locked --no-emit-project --format requirements.txt --output-file requirements-dev.txt > /dev/null
+          git diff --exit-code -- requirements.txt requirements-dev.txt
+      - name: Validate systemd unit
+        if: runner.os == 'Linux'
+        run: python tools/service_smoke.py --verify-unit
+  service-smoke:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.12.23'
+      - run: uv sync --locked --python /usr/bin/python3
+      - run: sudo .venv/bin/python tools/service_smoke.py --runtime

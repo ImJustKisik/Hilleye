@@ -18,7 +18,7 @@
 ```bash
 git clone https://github.com/ImJustKisik/Hilleye.git
 cd Hilleye
-pip install -r requirements.txt
+pip install --require-hashes -r requirements.txt
 ```
 
 ### Running the Service
@@ -27,11 +27,15 @@ python run.py
 ```
 The terminal will launch on `http://localhost:8080`; `web.port` in `config.json` controls the port.
 The default config and relative database paths resolve from the project directory.
-`HILLEYE_DB_PATH` overrides the configured database location. Invalid config files stop startup.
+`HILLEYE_CONFIG_PATH` selects the configuration file; explicit environment variables override its values.
+`HILLEYE_DB_PATH` overrides the tracker database location. Invalid config files or unwritable runtime directories stop startup.
+
+Dependencies are locked in `uv.lock`; `requirements*.txt` are generated exports. An alternative setup is
+`uv sync --locked` followed by `uv run --locked python run.py`. See [operations and rollout](docs/OPERATIONS.md).
 
 ### Running Tests
 ```bash
-pip install -r requirements-dev.txt
+pip install --require-hashes -r requirements-dev.txt
 python -m pytest -v
 ```
 The unit, adversarial, concurrency, and E2E tests use temporary databases and local network mocks.
@@ -45,9 +49,11 @@ in `examples/selfbot_example.py`; they skip when those packages are absent.
 
 `GET /live` checks the web process. `/health` and `/ready` return HTTP 503 while the
 database is unavailable, the collector is stopped, no recent cycle has completed, or the
-leader's clock is untrusted. Hub and Topic failures in a completed cycle return HTTP 200
-with `status: degraded`, `ready: true`, and `collection_status: degraded`; diagnostics
-remain in `tracker`. Monitor HTTP availability and collection quality separately.
+leader's clock is untrusted. A completed cycle with Hub/collection errors returns HTTP 200
+with `status: degraded`, `ready: true`, and `collection_status: degraded`. Unreachable Topic
+targets alone do not degrade a healthy Hub collection; their counters remain in `tracker`.
+Log-source errors are reported independently in `logs` without changing tracker readiness.
+HTTP p50/p95, event-loop lag, database/WAL sizes and backup time are also exposed in `/health`.
 Multiple web workers sharing
 one local SQLite file elect one collector through an OS file lock; a follower retries
 ownership every second after the owner exits. SQLite and the lock file must be on the same
@@ -81,22 +87,25 @@ The unit stores data in `/var/lib/hilleye/tracker.db` and requires read access t
 and virtual environment under `/opt/Hilleye`. To move an existing database, stop all writers,
 make a SQLite backup including committed WAL contents, restore it into the state directory,
 and grant `hilleye:hilleye` ownership before starting the unit. Do not copy only the `.db`
-file while WAL writers are running. Validate the unit and permissions on the Linux host;
-the repository's Windows tests do not exercise systemd. Retries are unlimited with a five
+file while WAL writers are running. The unit explicitly places both databases, uploads and map cache
+in the state directory. `tools/service_smoke.py --runtime` tests a separate service with two workers
+under the same hardening settings; it requires root and a venv built with `/usr/bin/python3`. Retries are unlimited with a five
 second delay; configure an external alert for persistent failures.
 
 Schema changes are additive and transactional. On first upgraded startup, duplicate open
 sessions are finalized at their last observation without deleting rows, and server/player
 aggregates are backfilled. Session triggers maintain aggregates for inserts, updates and
-deletes, including external SQL writers. Older application versions can read the expanded
-schema; roll back by stopping all processes before replacing the code. Keep a verified
-pre-upgrade SQLite backup to restore the exact pre-migration open-session state.
+deletes, including external SQL writers. Stop all processes for the first upgrade; mixed-version writers are unsupported. Log index migrations
+are additive and preserve the active generation until its replacement is ready. Roll back by stopping
+all processes and restoring the previous code and matching pre-upgrade databases together.
 
 Players and session history are retained until a retention policy is chosen. Low free disk
 space makes readiness fail (threshold `tracker.min_free_disk_mb`, default 100). Snapshot
-retention is seven days, runs after at least 24 hours of stable process time, and pauses
-after a clock jump. Backups, restoration drills, disk alerts and a history/archive policy
-remain deployment responsibilities; this service does not silently delete session history.
+retention is 90 days, runs after at least 24 hours of stable process time, and pauses
+after a clock jump. `python -m core.maintenance backup` creates verified backups of both databases and raw logs;
+`verify` and `restore` validate and restore them. Successful archives have seven-day local retention.
+Scheduling, off-host copies and disk alerts remain deployment responsibilities. This service does
+not silently delete session history. Full backup and rollback instructions are in [OPERATIONS.md](docs/OPERATIONS.md).
 
 ---
 
@@ -150,3 +159,30 @@ state; keep them when cleaning development artifacts.
 
 ## License
 MIT License.
+
+### Log indexing and background jobs
+
+`logs.periodic_scan` defaults to true, `logs.scan_interval_seconds` to 60, and
+`logs.regex_timeout_seconds` to 5. `logs.auto_scan_on_startup` only controls the immediate
+first scan. Missing or partially readable sources preserve the last index; confirmed missing
+rounds are removed only after two complete scans at least a minute apart. Growing disk logs
+are append-only between rotations; use reindex after manually editing an earlier line.
+
+Regex work runs in a terminable process. Two OS-shared slots bound heavy user operations;
+capacity errors return 429 with `Retry-After`, regex deadlines return 408. Ordinary indexed
+pages use byte offsets; complex filters preserve their streaming behavior.
+
+The UI submits refresh/reindex in the background. `POST /logs/refresh` and `/logs/reindex`
+accept `background=1` and return 202 with `job_id`; the default still waits for completion.
+The existing background map rebuild response also contains `job_id`. Authenticated users can
+read `/api/v1/logs/jobs/{job_id}` for their jobs and `/api/v1/logs/status`; admins can inspect all jobs.
+Index and map jobs have independent OS-elected owners. Job state, heartbeat and results survive
+web-worker changes. Map assets are published as complete versions, preserving previous versions.
+
+To refresh the generated requirements with uv 0.12.23:
+
+```bash
+uv lock
+uv export --quiet --locked --no-dev --no-emit-project --format requirements.txt --output-file requirements.txt
+uv export --quiet --locked --no-emit-project --format requirements.txt --output-file requirements-dev.txt
+```

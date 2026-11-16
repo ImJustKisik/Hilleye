@@ -574,7 +574,10 @@ def test_whitelist_environment_survives_file_reload(tmp_path, monkeypatch):
              n.name in ("WhitelistManager", "extract_discord_user_id")]
     namespace = dict(Path=Path, Set=Set, Optional=Optional, os=os, json=json,
                      re=__import__("re"), WHITELIST_PATH=tmp_path / "whitelist.json")
-    exec(compile(ast.Module(body=nodes, type_ignores=[]), "whitelist", "exec"), namespace)
+    # Preserve the source module's deferred annotations on Python versions before 3.14.
+    future = ast.ImportFrom(module="__future__", names=[ast.alias(name="annotations")], level=0)
+    extracted = ast.fix_missing_locations(ast.Module(body=[future, *nodes], type_ignores=[]))
+    exec(compile(extracted, "whitelist", "exec"), namespace)
     monkeypatch.setenv("HILLEYE_WHITELIST_IDS", "123456789012345")
     path = tmp_path / "whitelist.json"
     path.write_text(json.dumps({"allowed_user_ids": [234567890123456]}))

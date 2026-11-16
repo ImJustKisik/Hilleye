@@ -10,6 +10,8 @@ from urllib.parse import urlencode
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from core import discord_auth, logs_db, map_renderer
+from core.log_operations import run_log_operation
+from core.logs_db.reader import read_log_page
 from core.byond_topic import normalize_ckey
 from core.log_parser import (
     CATEGORY_META,
@@ -206,9 +208,8 @@ def register_viewer_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
         cache_dir = config.resolved_maps_cache_dir()
         map_manifest = map_renderer.get_map_manifest(cache_dir)
 
-        result = await asyncio.to_thread(
-            filter_game_log_file,
-            file_path,
+        result = await read_log_page(
+            request, ctx.get_config_fn(), round_uid, file_path,
             preset=active_preset,
             categories=selected_cats or None,
             ckey=ckey,

@@ -3,12 +3,18 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
+import tempfile
 from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import FileResponse, Response
 
 from core import discord_auth, logs_db, map_renderer
+from core.log_operations import run_log_operation, finish_thread
+from core.logs_db.reader import read_log_page
+from core.log_jobs import get_job, logs_status, map_job_status
+from core.log_parser.filters import export_filtered_game_log_to_file, mask_log_to_file
 from core.log_parser import (
     LOG_PRESETS,
     collect_round_map_events,
@@ -22,7 +28,36 @@ from core.log_parser import (
 from web.logs_routes.deps import LogsRouteContext
 
 
+class _ExportResponse(FileResponse):
+    def __init__(self, *args, staging, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.staging = staging
+
+    async def __call__(self, scope, receive, send):
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            await finish_thread(self.staging.cleanup)
+
+
 def register_api_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
+    @router.get("/api/v1/logs/jobs/{job_id}")
+    async def api_log_job(request: Request, job_id: str):
+        user = await ctx.require_api_user(request)
+        job = await asyncio.to_thread(get_job, ctx.get_config_fn().resolved_logs_db_path(), job_id,
+                                      user_id=user.discord_id, admin=user.is_admin)
+        if job is None:
+            raise HTTPException(404, "Задача не найдена.")
+        return job
+
+    @router.get("/api/v1/logs/status")
+    async def api_log_status(request: Request):
+        user = await ctx.require_api_user(request)
+        result = await asyncio.to_thread(logs_status, ctx.get_config_fn().resolved_logs_db_path())
+        if not user.is_admin:
+            result.pop("running", None)
+        return result
+
     @router.get("/api/v1/logs/rounds")
     async def api_logs_rounds(
         request: Request,
@@ -59,9 +94,8 @@ def register_api_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
         await ctx.require_api_user(request)
         _rnd, file_path = await ctx.resolve_round_and_file(round_uid, file)
 
-        res = await asyncio.to_thread(
-            filter_game_log_file,
-            file_path,
+        res = await read_log_page(
+            request, ctx.get_config_fn(), round_uid, file_path,
             preset=preset,
             categories=cat or None,
             ckey=ckey,
@@ -188,47 +222,40 @@ def register_api_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
             details=f"mode={mode}, preset={preset}, mask_ips={mask_ips}",
         )
 
-        if mode == "raw" or file == "qdel.log":
-            content_bytes = file_path.read_bytes()
-            if mask_ips:
-                content_bytes = mask_sensitive_text(decode_log_bytes(content_bytes)).encode("utf-8")
-            dl_name = f"round-{rnd['round_id']}-{file}"
-        else:
-            try:
-                text = await asyncio.to_thread(
-                    export_filtered_game_log,
-                    file_path,
-                    preset=preset,
-                    categories=cat or None,
-                    ckey=ckey,
-                    radius=radius,
-                    q=q,
-                    use_regex=regex,
-                    time_from=time_from,
-                    time_to=time_to,
-                    mask_ips=mask_ips,
-                )
-            except ValueError as exc:
-                raise HTTPException(status_code=400, detail=str(exc)) from exc
-            content_bytes = text.encode("utf-8")
-            dl_name = f"round-{rnd['round_id']}-{preset}-{file}"
-
+        raw = mode == "raw" or file == "qdel.log"
+        dl_name = f"round-{rnd['round_id']}-{file}" if raw else f"round-{rnd['round_id']}-{preset}-{file}"
         safe_dl_name = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in dl_name)
-        return Response(
-            content=content_bytes,
-            media_type="text/plain; charset=utf-8",
-            headers={
-                "Content-Disposition": f'attachment; filename="{safe_dl_name}"',
-                "X-Content-Type-Options": "nosniff",
-            },
-        )
+        if raw and not mask_ips:
+            return FileResponse(file_path, media_type="text/plain; charset=utf-8", filename=safe_dl_name)
+        staging = tempfile.TemporaryDirectory(prefix="hilleye-export-")
+        output_path = Path(staging.name) / "export.log"
+        try:
+            if raw:
+                await run_log_operation(request, ctx.get_config_fn(), mask_log_to_file, file_path, output_path)
+            else:
+                await run_log_operation(
+                    request, ctx.get_config_fn(), export_filtered_game_log_to_file,
+                    file_path, output_path, preset=preset, categories=cat or None,
+                    ckey=ckey, radius=radius, q=q, use_regex=regex,
+                    time_from=time_from, time_to=time_to, mask_ips=mask_ips,
+                )
+            return _ExportResponse(
+                output_path, media_type="text/plain; charset=utf-8", filename=safe_dl_name,
+                staging=staging,
+            )
+        except BaseException as exc:
+            await finish_thread(staging.cleanup)
+            if isinstance(exc, ValueError):
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            raise
 
     @router.get("/logs/maps/manifest")
     async def logs_maps_manifest(request: Request):
         await ctx.require_api_user(request)
         config = ctx.get_config_fn()
         manifest = map_renderer.get_map_manifest(config.resolved_maps_cache_dir())
-        return {**manifest, "build_status": map_renderer.get_map_build_status()}
+        shared = await asyncio.to_thread(map_job_status, config.resolved_logs_db_path())
+        return {**manifest, "build_status": shared or map_renderer.get_map_build_status()}
 
     @router.get("/logs/maps/z/{z_level}.png")
     async def logs_map_tile_image(request: Request, z_level: int):
@@ -289,8 +316,8 @@ def register_api_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
 
         selected_cats = [c.strip().upper() for c in cat if c and c.strip()]
         active_preset = preset if preset in LOG_PRESETS else "gameplay"
-        payload = await asyncio.to_thread(
-            collect_round_map_events,
+        payload = await run_log_operation(
+            request, ctx.get_config_fn(), collect_round_map_events,
             file_path,
             preset=active_preset,
             categories=selected_cats or None,

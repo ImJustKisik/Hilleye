@@ -326,7 +326,12 @@ class TestSocketConcurrencyAndDisconnections:
 
     async def test_server_hang_respects_timeout(self):
         async def handle_client(reader, writer):
-            await asyncio.sleep(10.0)
+            try:
+                # Never reply; wait for the timed-out client to close, then release the socket.
+                await reader.read()
+            finally:
+                writer.close()
+                await writer.wait_closed()
 
         server = await asyncio.start_server(handle_client, "127.0.0.1", 0)
         port = server.sockets[0].getsockname()[1]
@@ -384,7 +389,11 @@ class TestSocketConcurrencyAndDisconnections:
             await w.wait_closed()
 
         async def h_hang(r, w):
-            await asyncio.sleep(5.0)
+            try:
+                await r.read()
+            finally:
+                w.close()
+                await w.wait_closed()
 
         async def h_drop(r, w):
             w.close()

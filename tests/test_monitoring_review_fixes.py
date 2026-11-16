@@ -207,6 +207,7 @@ async def test_schema_index_trigger_v2_and_dossier_totals(test_db):
 
 def test_backup_sh_uses_systemd_state_dir():
     content = Path("backup.sh").read_text(encoding="utf-8")
-    assert "/var/lib/hilleye/tracker.db" in content
-    assert "logs.db" in content
+    # The wrapper now shares the application config/env resolver instead of guessing DB paths.
+    assert "-m core.maintenance backup" in content
+    assert '"$@"' in content
     assert "/opt/Hilleye/tracker.db" not in content
