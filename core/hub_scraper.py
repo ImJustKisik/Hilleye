@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set, Tuple
 import httpx
 from core.byond_topic import bounded_int, normalize_ckey, parse_round_duration
+from core.db.schema import NON_IDENTIFYING_TITLES, normalize_server_title
 from core.text_encoding import decode_byond_text
 
 logger = logging.getLogger(__name__)
@@ -485,16 +486,23 @@ def parse_hub_json(data: Any) -> HubResult:
     return HubResult(servers, errors=errors + int(len(entries) > MAX_HUB_SERVERS))
 
 
-def parse_pager_endpoints_payload(raw: Any) -> Dict[str, Tuple[str, int]]:
-    """Parses a pager_endpoints.json payload into {identifier: (ip, port)}."""
+def parse_pager_endpoints_with_titles(
+    raw: Any,
+) -> Tuple[Dict[str, Tuple[str, int]], Dict[str, Tuple[str, int]]]:
+    """
+    Parses a pager_endpoints.json payload into:
+      - identifier -> (ip, port)
+      - unambiguous normalized title -> (ip, port) fallback for restarted BYOND.world IDs.
+    """
     if isinstance(raw, dict) and isinstance(raw.get("endpoints"), dict):
         source_map = raw["endpoints"]
     elif isinstance(raw, dict):
         source_map = raw
     else:
-        return {}
+        return {}, {}
 
     parsed: Dict[str, Tuple[str, int]] = {}
+    title_candidates: Dict[str, Optional[Tuple[str, int]]] = {}
     for raw_ident, target in source_map.items():
         if not isinstance(raw_ident, str) or not raw_ident.strip():
             continue
@@ -504,9 +512,11 @@ def parse_pager_endpoints_payload(raw: Any) -> Dict[str, Tuple[str, int]]:
 
         ip = ""
         port = 0
+        raw_title = None
         if isinstance(target, dict):
             ip = str(target.get("ip") or "").strip()
             port = bounded_int(target.get("port"), maximum=65535) or 0
+            raw_title = target.get("title")
         elif isinstance(target, (list, tuple)) and len(target) >= 2:
             ip = str(target[0] or "").strip()
             port = bounded_int(target[1], maximum=65535) or 0
@@ -516,15 +526,35 @@ def parse_pager_endpoints_payload(raw: Any) -> Dict[str, Tuple[str, int]]:
             port = bounded_int(port_part.strip(), maximum=65535) or 0
 
         if ip and 1 <= port <= 65535:
-            parsed[ident] = (ip, port)
+            endpoint = (ip, port)
+            parsed[ident] = endpoint
+            norm_t = normalize_server_title(raw_title) if isinstance(raw_title, str) else ""
+            if norm_t not in NON_IDENTIFYING_TITLES:
+                if norm_t not in title_candidates:
+                    title_candidates[norm_t] = endpoint
+                elif title_candidates[norm_t] is not None:
+                    prev_ip, prev_port = title_candidates[norm_t]
+                    if (prev_ip.lower(), prev_port) != (ip.lower(), port):
+                        title_candidates[norm_t] = None
+
+    title_endpoints = {t: ep for t, ep in title_candidates.items() if ep is not None}
+    return parsed, title_endpoints
+
+
+def parse_pager_endpoints_payload(raw: Any) -> Dict[str, Tuple[str, int]]:
+    """Parses a pager_endpoints.json payload into {identifier: (ip, port)}."""
+    parsed, _ = parse_pager_endpoints_with_titles(raw)
     return parsed
 
 
-async def load_pager_endpoints(source: str, timeout: float = 5.0) -> Dict[str, Tuple[str, int]]:
-    """Loads resolved BYOND.world.<id> -> (ip, port) mappings from a local file or HTTP(S) URL."""
+async def load_pager_endpoints_with_titles(
+    source: str,
+    timeout: float = 5.0,
+) -> Tuple[Dict[str, Tuple[str, int]], Dict[str, Tuple[str, int]]]:
+    """Loads resolved BYOND.world.<id> and title -> (ip, port) mappings from a file or HTTP(S) URL."""
     src = (source or "").strip()
     if not src:
-        return {}
+        return {}, {}
     try:
         if src.lower().startswith(("http://", "https://")):
             async with httpx.AsyncClient(
@@ -536,7 +566,7 @@ async def load_pager_endpoints(source: str, timeout: float = 5.0) -> Dict[str, T
                 resp.raise_for_status()
                 if len(resp.content) > MAX_HUB_BYTES:
                     logger.warning("pager_endpoints_source response too large (%d bytes)", len(resp.content))
-                    return {}
+                    return {}, {}
                 data = resp.json()
         else:
             path = Path(src)
@@ -546,18 +576,25 @@ async def load_pager_endpoints(source: str, timeout: float = 5.0) -> Dict[str, T
                     path = project_candidate
             if not path.is_file():
                 logger.debug("pager_endpoints_source file not found: %s", src)
-                return {}
+                return {}, {}
             data = json.loads(path.read_text(encoding="utf-8"))
-        return parse_pager_endpoints_payload(data)
+        return parse_pager_endpoints_with_titles(data)
     except Exception as exc:
         logger.warning("Failed to load pager_endpoints_source (%s): %s", src, exc)
-        return {}
+        return {}, {}
+
+
+async def load_pager_endpoints(source: str, timeout: float = 5.0) -> Dict[str, Tuple[str, int]]:
+    """Loads resolved BYOND.world.<id> -> (ip, port) mappings from a local file or HTTP(S) URL."""
+    parsed, _ = await load_pager_endpoints_with_titles(source, timeout=timeout)
+    return parsed
 
 
 def merge_custom_servers(
     hub_servers: List[ServerInfo],
     custom_servers: Optional[List[Dict[str, Any]]] = None,
     extra_pager_endpoints: Optional[Dict[str, Tuple[str, int]]] = None,
+    extra_pager_title_endpoints: Optional[Dict[str, Tuple[str, int]]] = None,
 ) -> List[ServerInfo]:
     """
     Merges custom user-defined servers with hub-discovered servers.
@@ -577,15 +614,19 @@ def merge_custom_servers(
     hub_map: Dict[str, ServerInfo] = {}
     hub_endpoint_map: Dict[Tuple[str, int], ServerInfo] = {}
     hub_pager_title_map: Dict[str, ServerInfo] = {}
+    hub_title_counts: Dict[str, int] = {}
 
     for s in hub_servers:
         if not getattr(s, "from_hub", True):
             continue
         hub_map[s.identifier] = s
+        norm_t = normalize_server_title(s.title)
+        if norm_t not in NON_IDENTIFYING_TITLES:
+            hub_title_counts[norm_t] = hub_title_counts.get(norm_t, 0) + 1
         if s.port > 0 and s.ip:
             hub_endpoint_map[(s.ip, s.port)] = s
-        elif s.title and s.title != "Unknown Station":
-            hub_pager_title_map.setdefault(s.title.strip().lower(), s)
+        elif norm_t not in NON_IDENTIFYING_TITLES:
+            hub_pager_title_map.setdefault(norm_t, s)
 
     # Merge custom servers first (custom servers have priority)
     if custom_servers and isinstance(custom_servers, list):
@@ -642,13 +683,15 @@ def merge_custom_servers(
             if title.lower() == "none":
                 title = ""
 
-            # Check if matched in hub (by identifier, endpoint, or pager title when custom has real ip:port)
+            # Check if matched in hub (by identifier, endpoint, or unambiguous pager title when custom has real ip:port)
             existing = hub_map.get(identifier) or (hub_endpoint_map.get((ip, port)) if (port > 0 and ip) else None)
-            if existing is None and title and port > 0 and ip:
-                pager_match = hub_pager_title_map.get(title.lower())
-                if pager_match is not None and pager_match.identifier not in seen_identifiers:
-                    existing = pager_match
-                    seen_identifiers.add(pager_match.identifier)
+            norm_custom_title = normalize_server_title(title)
+            if existing is None and norm_custom_title not in NON_IDENTIFYING_TITLES and port > 0 and ip:
+                if hub_title_counts.get(norm_custom_title, 0) == 1:
+                    pager_match = hub_pager_title_map.get(norm_custom_title)
+                    if pager_match is not None and pager_match.identifier not in seen_identifiers:
+                        existing = pager_match
+                        seen_identifiers.add(pager_match.identifier)
 
             players = existing.players if existing else []
             player_count = existing.player_count if existing else 0
@@ -688,25 +731,36 @@ def merge_custom_servers(
             continue
 
         # Upgrade known pager addresses to their real TCP endpoints if not already overridden
-        if s.port == 0 and s.identifier in pager_map:
-            known_ip, known_port = pager_map[s.identifier]
-            if (known_ip, known_port) not in seen_endpoints:
-                s = ServerInfo(
-                    identifier=s.identifier,
-                    title=s.title,
-                    ip=known_ip,
-                    port=known_port,
-                    players=s.players,
-                    player_count=s.player_count,
-                    roster_known=s.roster_known,
-                    from_hub=s.from_hub,
-                    trusted=(s.identifier in KNOWN_PAGER_ENDPOINTS),
-                    count_known=s.count_known,
-                    roster_complete=s.roster_complete,
-                    map_name=s.map_name,
-                    gamemode=s.gamemode,
-                    round_duration=s.round_duration,
-                )
+        if s.port == 0:
+            known_target: Optional[Tuple[str, int]] = None
+            from_builtin_known = False
+            if s.identifier in pager_map:
+                known_target = pager_map[s.identifier]
+                from_builtin_known = s.identifier in KNOWN_PAGER_ENDPOINTS
+            elif extra_pager_title_endpoints:
+                norm_t = normalize_server_title(s.title)
+                if hub_title_counts.get(norm_t, 0) == 1 and norm_t in extra_pager_title_endpoints:
+                    known_target = extra_pager_title_endpoints[norm_t]
+
+            if known_target is not None:
+                known_ip, known_port = known_target
+                if (known_ip, known_port) not in seen_endpoints:
+                    s = ServerInfo(
+                        identifier=s.identifier,
+                        title=s.title,
+                        ip=known_ip,
+                        port=known_port,
+                        players=s.players,
+                        player_count=s.player_count,
+                        roster_known=s.roster_known,
+                        from_hub=s.from_hub,
+                        trusted=from_builtin_known,
+                        count_known=s.count_known,
+                        roster_complete=s.roster_complete,
+                        map_name=s.map_name,
+                        gamemode=s.gamemode,
+                        round_duration=s.round_duration,
+                    )
 
         merged.append(s)
         seen_identifiers.add(s.identifier)

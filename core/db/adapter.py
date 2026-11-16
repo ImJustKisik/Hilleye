@@ -41,6 +41,10 @@ class Database:
         respawn_allowed: Optional[bool] = None,
         admin_list: Optional[List[Dict[str, str]]] = None,
         manifest: Optional[Dict[str, List[Dict[str, str]]]] = None,
+        *,
+        live_identifiers: Optional[Set[str]] = None,
+        target_server_id: Optional[int] = None,
+        cycle_claimed_ids: Optional[Set[int]] = None,
     ) -> int:
         import core.db as _db
 
@@ -63,7 +67,15 @@ class Database:
             respawn_allowed=respawn_allowed,
             admin_list=admin_list,
             manifest=manifest,
+            live_identifiers=live_identifiers,
+            target_server_id=target_server_id,
+            cycle_claimed_ids=cycle_claimed_ids,
         )
+
+    async def consolidate_duplicate_servers(self) -> int:
+        import core.db as _db
+
+        return await _db.consolidate_duplicate_servers()
 
     async def record_server_snapshot(
         self,

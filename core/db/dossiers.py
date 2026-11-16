@@ -676,8 +676,7 @@ async def get_server_details(
 
     conn = await _db.get_connection()
     async with conn.cursor() as cur:
-        await cur.execute(
-            """
+        server_sql = """
             SELECT
                 id, identifier, title, ip, port, last_seen, is_active,
                 current_players, map_name, round_duration, gamemode, admins_count, version,
@@ -685,10 +684,19 @@ async def get_server_details(
                 roster_observed_at, telemetry_observed_at, manifest_observed_at
             FROM servers
             WHERE id = ?;
-            """,
-            (int(server_id),),
-        )
+        """
+        await cur.execute(server_sql, (int(server_id),))
         srv_row = await cur.fetchone()
+        if srv_row is None:
+            await cur.execute(
+                "SELECT canonical_id FROM server_aliases WHERE old_id = ?;",
+                (int(server_id),),
+            )
+            alias_row = await cur.fetchone()
+            if alias_row is not None:
+                server_id = int(alias_row["canonical_id"])
+                await cur.execute(server_sql, (int(server_id),))
+                srv_row = await cur.fetchone()
         if srv_row is None:
             return None
 

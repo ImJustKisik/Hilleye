@@ -158,6 +158,10 @@ async def server_page(request: Request, server_id: int, time_range: str = Query(
     import web.app as _app
 
     server_details = await _app.core_db.get_server_details(server_id, time_range=time_range)
+    if server_details is not None and int(server_details["id"]) != int(server_id):
+        norm_range = server_details.get("time_range", "day")
+        suffix = f"?time_range={norm_range}" if norm_range and norm_range != "day" else ""
+        return RedirectResponse(url=f"/server/{server_details['id']}{suffix}", status_code=302)
     servers = await _app.core_db.get_active_servers()
     tracker = _app.get_tracker()
     tracker_stats = tracker.get_stats() if tracker else {}
@@ -216,6 +220,7 @@ async def fetch_server_manifest_htmx(request: Request, server_id: int):
             status_code=404,
         )
 
+    canonical_server_id = int(server_details["id"])
     ip = server_details.get("ip")
     port = int(server_details.get("port") or 0)
     ident = server_details.get("identifier") or ""
@@ -223,7 +228,7 @@ async def fetch_server_manifest_htmx(request: Request, server_id: int):
         ip, port = _app.KNOWN_PAGER_ENDPOINTS[ident]
     query_error: Optional[str] = None
 
-    cache_key = (_app.core_db._current_db_path, server_id)
+    cache_key = (_app.core_db._current_db_path, canonical_server_id)
 
     async def refresh():
         error = None
@@ -272,7 +277,7 @@ async def fetch_server_manifest_htmx(request: Request, server_id: int):
             )
             if recognized:
                 manifest = _app.parse_manifest_response(raw)
-                await _app.core_db.save_manifest(server_id, manifest, time.time())
+                await _app.core_db.save_manifest(canonical_server_id, manifest, time.time())
             else:
                 error = "Manifest unavailable or unrecognized; displaying previously received data."
         except Exception as exc:

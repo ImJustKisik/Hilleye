@@ -31,6 +31,7 @@ from core.db.dossiers import (
     search_players,
 )
 from core.db.schema import (
+    NON_IDENTIFYING_TITLES,
     SCHEMA_SQL,
     _DEPT_LABELS,
     _SERVER_MIGRATION_COLUMNS,
@@ -39,9 +40,13 @@ from core.db.schema import (
     format_duration,
     format_hms,
     format_timestamp,
+    has_real_endpoint,
     normalize_ckey,
+    normalize_server_title,
 )
 from core.db.servers import (
+    _consolidate_duplicate_servers,
+    consolidate_duplicate_servers,
     expire_stale_servers,
     get_active_servers,
     get_collector_state,
@@ -49,6 +54,7 @@ from core.db.servers import (
     prune_server_snapshots,
     record_collector_cycle,
     record_server_snapshot,
+    resolve_servers_for_cycle,
     save_manifest,
     save_observation,
     set_preferred_topic_query,
@@ -71,6 +77,7 @@ _operation_connection: ContextVar[Optional[aiosqlite.Connection]] = ContextVar("
 
 __all__ = [
     "SCHEMA_SQL",
+    "NON_IDENTIFYING_TITLES",
     "_DEPT_LABELS",
     "_SERVER_MIGRATION_COLUMNS",
     "_current_db_path",
@@ -82,15 +89,20 @@ __all__ = [
     "_write_transaction",
     "_read_snapshot",
     "normalize_ckey",
+    "normalize_server_title",
+    "has_real_endpoint",
     "format_timestamp",
     "format_duration",
     "format_hms",
     "_migrate_schema",
     "_open_database",
     "_initialize_aggregates",
+    "_consolidate_duplicate_servers",
+    "consolidate_duplicate_servers",
     "init_db",
     "close_db",
     "get_connection",
+    "resolve_servers_for_cycle",
     "upsert_server",
     "save_observation",
     "expire_stale_servers",

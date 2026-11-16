@@ -216,6 +216,7 @@ async def _open_database(path: str) -> aiosqlite.Connection:
                             ON sessions(server_id,ckey) WHERE ended_at IS NULL"""
         )
         await _db._initialize_aggregates(conn)
+        await _db._consolidate_duplicate_servers(conn)
         await conn.commit()
         return conn
     except BaseException:

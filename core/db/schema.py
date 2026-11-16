@@ -96,6 +96,10 @@ CREATE INDEX IF NOT EXISTS idx_totals_rank ON server_player_totals(server_id,tot
 CREATE INDEX IF NOT EXISTS idx_totals_ckey ON server_player_totals(ckey,server_id,total_seconds,sessions_count,last_seen);
 CREATE INDEX IF NOT EXISTS idx_sessions_player_seen ON sessions(server_id,ckey,last_seen_at);
 CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY);
+CREATE TABLE IF NOT EXISTS server_aliases (
+    old_id INTEGER PRIMARY KEY,
+    canonical_id INTEGER NOT NULL REFERENCES servers(id) ON DELETE CASCADE
+);
 """
 
 _SERVER_MIGRATION_COLUMNS: List[Tuple[str, str]] = [
@@ -142,6 +146,26 @@ _DEPT_LABELS: Dict[str, str] = {
     "bot": "Synthetics / Silicons",
     "sil": "Synthetics / Silicons",
 }
+
+
+NON_IDENTIFYING_TITLES = frozenset({"", "unknown station"})
+
+
+def normalize_server_title(title: Optional[str]) -> str:
+    """Normalizes a server title for canonical deduplication."""
+    if not title or not isinstance(title, str):
+        return ""
+    return " ".join(title.split()).strip().lower()
+
+
+def has_real_endpoint(ip: Optional[str], port: Any) -> bool:
+    """Returns True when ip and port represent a direct TCP endpoint rather than a BYOND.world placeholder."""
+    try:
+        port_num = int(port or 0)
+    except (TypeError, ValueError):
+        return False
+    ip_str = str(ip or "").strip()
+    return port_num > 0 and bool(ip_str) and not ip_str.lower().startswith("byond.world.")
 
 
 def normalize_ckey(raw: Optional[str]) -> str:

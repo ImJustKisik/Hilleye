@@ -29,13 +29,20 @@ from core.collector_lock import CollectorLock
 from core.config import AppConfig, DEFAULT_TOPIC_PROBE_QUERIES, get_config
 from core.db import (
     get_active_servers,
+    has_real_endpoint,
     normalize_ckey,
     prune_server_snapshots,
     record_server_snapshot,
     update_player_sessions,
     upsert_server,
 )
-from core.hub_scraper import ServerInfo, fetch_hub_servers, load_pager_endpoints, merge_custom_servers
+from core.hub_scraper import (
+    ServerInfo,
+    fetch_hub_servers,
+    load_pager_endpoints,
+    load_pager_endpoints_with_titles,
+    merge_custom_servers,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +119,7 @@ class Tracker:
             getattr(self.config, "pager_endpoints_refresh_seconds", 600)
         )
         self._cached_pager_endpoints: Dict[str, Tuple[str, int]] = {}
+        self._cached_pager_title_endpoints: Dict[str, Tuple[str, int]] = {}
         self._pager_endpoints_fetched_at: float = 0.0
         self.custom_servers: List[Dict[str, Any]] = list(
             getattr(self.config, "custom_servers", [])
@@ -221,9 +229,10 @@ class Tracker:
             started - self._pager_endpoints_fetched_at >= self.pager_endpoints_refresh_seconds
             or self._pager_endpoints_fetched_at == 0.0
         ):
-            loaded = await load_pager_endpoints(self.pager_endpoints_source)
+            loaded, loaded_titles = await load_pager_endpoints_with_titles(self.pager_endpoints_source)
             if loaded:
                 self._cached_pager_endpoints = loaded
+                self._cached_pager_title_endpoints = loaded_titles
             self._pager_endpoints_fetched_at = started
 
         discovered_servers = []
@@ -239,11 +248,12 @@ class Tracker:
             if not hub_healthy:
                 collector_errors += 1
                 self._errors_count += max(1, hub_warnings)
-            if self._cached_pager_endpoints:
+            if self._cached_pager_endpoints or self._cached_pager_title_endpoints:
                 discovered_servers = merge_custom_servers(
                     discovered_servers,
                     self.custom_servers,
                     extra_pager_endpoints=self._cached_pager_endpoints,
+                    extra_pager_title_endpoints=self._cached_pager_title_endpoints,
                 )
             if not hub_healthy:
                 self._degraded_reasons.append("Hub discovery unavailable or partial")
@@ -257,14 +267,21 @@ class Tracker:
                 [],
                 self.custom_servers,
                 extra_pager_endpoints=self._cached_pager_endpoints,
+                extra_pager_title_endpoints=self._cached_pager_title_endpoints,
             )
 
         self._servers_tracked = len(discovered_servers)
         total_online_seen: Set[str] = set()
+        live_identifiers: Set[str] = {str(srv.identifier) for srv in discovered_servers}
         try:
             preferred_queries = await core_db.get_preferred_topic_queries()
         except Exception:
             preferred_queries = {}
+        try:
+            resolved_cycle = await core_db.resolve_servers_for_cycle(discovered_servers)
+        except Exception:
+            resolved_cycle = {}
+        cycle_claimed_ids: Set[int] = {int(info["id"]) for info in resolved_cycle.values()}
 
         def trusted(srv):
             return srv.trusted or any(
@@ -273,29 +290,38 @@ class Tracker:
                 for c in self.custom_servers
             )
 
-        async def process_server(srv):
+        async def process_server(idx: int, srv: ServerInfo):
             nonlocal topic_failures, topic_successes
+            resolved_info = resolved_cycle.get(idx)
+            target_server_id = int(resolved_info["id"]) if resolved_info else None
+            probe_ip = srv.ip
+            probe_port = srv.port
+            if probe_port == 0 and resolved_info and has_real_endpoint(resolved_info.get("ip"), resolved_info.get("port")):
+                probe_ip = str(resolved_info["ip"])
+                probe_port = int(resolved_info["port"])
+
             roster = {normalize_ckey(p) for p in srv.players if normalize_ckey(p)}
             roster_known = srv.roster_known or bool(srv.players)
             roster_complete = srv.roster_complete
             data = None
-            if srv.ip and 0 < srv.port <= 65535:
+            preferred = (
+                (resolved_info.get("preferred_topic_query") if resolved_info else None)
+                or preferred_queries.get(srv.identifier)
+            )
+            winning_query: Optional[str] = None
+            should_clear = False
+            if probe_ip and 0 < probe_port <= 65535:
                 try:
-                    ip = srv.ip if trusted(srv) else await asyncio.wait_for(public_topic_ip(srv.ip, srv.port), self.socket_timeout)
-                    preferred = preferred_queries.get(srv.identifier)
+                    ip = probe_ip if trusted(srv) else await asyncio.wait_for(public_topic_ip(probe_ip, probe_port), self.socket_timeout)
                     data, winning_query, should_clear = await probe_server_topic(
                         ip=ip,
-                        port=srv.port,
+                        port=probe_port,
                         queries=self.topic_probe_queries,
                         preferred_query=preferred,
                         timeout=self.socket_timeout,
                         semaphore=self.semaphore,
                         query_fn=query_topic,
                     )
-                    if winning_query and winning_query != preferred:
-                        await core_db.set_preferred_topic_query(srv.identifier, winning_query)
-                    elif should_clear:
-                        await core_db.set_preferred_topic_query(srv.identifier, None)
                     if data is None:
                         topic_failures += 1
                         self._topic_failures_count += 1
@@ -309,6 +335,9 @@ class Tracker:
             topic_received = data is not None
             # Failed custom probes do not update last_seen or fabricate snapshots.
             if not topic_received and not srv.from_hub:
+                if should_clear:
+                    clear_ident = str(resolved_info["identifier"]) if resolved_info else srv.identifier
+                    await core_db.set_preferred_topic_query(clear_ident, None)
                 return
             ts = float(now_ts) if now_ts is not None else self._observation_time()
             metrics: Dict[str, Any] = {}
@@ -367,17 +396,27 @@ class Tracker:
             await core_db.save_observation(
                 dict(identifier=srv.identifier, title=srv.title, ip=srv.ip, port=srv.port,
                      is_active=True, now_ts=ts, current_players=player_count, **metrics),
-                roster if roster_known else None, self.grace_period_seconds, topic_received, roster_complete,
+                roster if roster_known else None,
+                self.grace_period_seconds,
+                topic_received,
+                roster_complete,
+                live_identifiers=live_identifiers,
+                target_server_id=target_server_id,
+                cycle_claimed_ids=cycle_claimed_ids,
             )
+            if winning_query and winning_query != preferred:
+                await core_db.set_preferred_topic_query(srv.identifier, winning_query)
+            elif should_clear:
+                await core_db.set_preferred_topic_query(srv.identifier, None)
             total_online_seen.update(roster)
 
         # A fixed worker set bounds task creation as well as socket concurrency.
-        pending = iter(discovered_servers)
+        pending = iter(enumerate(discovered_servers))
         async def worker():
             nonlocal collector_errors
-            for srv in pending:
+            for idx, srv in pending:
                 try:
-                    await process_server(srv)
+                    await process_server(idx, srv)
                 except Exception:
                     collector_errors += 1
                     self._errors_count += 1
