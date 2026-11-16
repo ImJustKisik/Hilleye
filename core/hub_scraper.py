@@ -65,33 +65,68 @@ class HubResult(list):
 HubServer = ServerInfo
 
 
+def _extract_balanced_bold(text: str) -> Optional[Tuple[str, str]]:
+    """Extracts the first balanced <b>...</b> inner text and the prefix immediately before it."""
+    open_match = re.search(r"<b(?:\s+[^>]*)?>", text, re.IGNORECASE)
+    if not open_match:
+        return None
+    prefix = text[: open_match.start()]
+    pos = open_match.end()
+    depth = 1
+    tag_re = re.compile(r"<(/?)b(?:\s+[^>]*)?>", re.IGNORECASE)
+    for m in tag_re.finditer(text, pos):
+        if m.group(1):
+            depth -= 1
+            if depth == 0:
+                return prefix, text[pos : m.start()]
+        else:
+            depth += 1
+    return prefix, text[pos:]
+
+
+def _strip_status_markup(fragment: str) -> str:
+    unescaped = html.unescape(fragment)
+    no_scripts = re.sub(r"<script\b[^>]*>.*?</script>", "", unescaped, flags=re.IGNORECASE | re.DOTALL)
+    no_comments = re.sub(r"<!--.*?-->", "", no_scripts, flags=re.DOTALL)
+    clean = re.sub(r"<[^>]+>", "", no_comments)
+    clean = clean.replace(r"\[", "[").replace(r"\]", "]").replace(r"\"", '"')
+    return " ".join(clean.split()).strip()
+
+
 def clean_server_title(raw_status: str) -> str:
     """
     Cleans raw HTML markup from BYOND server status strings.
 
-    Extracts primary title from <b>...</b> tags if present, unescapes
-    HTML entities, unescapes BYOND slash escapes, and strips leftover tags.
-    Handles <b style="..."> styled tags properly without leaking adjacent text.
+    Extracts primary title from the first balanced <b>...</b> section on the
+    header line if present (restoring an immediately preceding '[' left outside
+    the tag), unescapes HTML entities and BYOND slash escapes, and strips
+    leftover tags. Falls back to the first non-empty header line if the bold
+    section is empty or only on later metadata lines.
     """
     if not raw_status:
         return "Unknown Station"
 
-    # Extract bold section if present as primary station title (supports HTML attributes)
-    bold_match = re.search(r"<b(?:\s+[^>]*)?>(.*?)</b>", raw_status, re.IGNORECASE | re.DOTALL)
-    candidate = bold_match.group(1) if bold_match else raw_status
+    normalized = raw_status.replace(r"\r\n", "\n").replace(r"\n", "\n")
+    lines = [line for line in re.split(r"<br\s*/?>|\r\n|\r|\n", normalized, flags=re.IGNORECASE) if line.strip()]
+    first_line = lines[0] if lines else normalized
 
-    # Unescape HTML entities
-    unescaped = html.unescape(candidate)
+    if re.search(r"<b(?:\s+[^>]*)?>", first_line, re.IGNORECASE):
+        bold_extracted = _extract_balanced_bold(normalized)
+        if bold_extracted is not None:
+            prefix, bold_inner = bold_extracted
+            clean = _strip_status_markup(bold_inner)
+            if clean:
+                clean_prefix = _strip_status_markup(prefix)
+                # Some BYOND hubs place '[' outside <b> (e.g. "\[<b>RU\] Name</b>").
+                if clean_prefix.endswith("[") and "]" in clean and not clean.startswith("["):
+                    clean = "[" + clean
+                return clean
 
-    # Remove all HTML tags
-    clean = re.sub(r"<[^>]+>", "", unescaped)
-
-    # Remove BYOND backslash escapes like \[ and \]
-    clean = clean.replace(r"\[", "[").replace(r"\]", "]").replace(r"\"", '"')
-
-    # Normalize whitespace
-    clean = " ".join(clean.split()).strip()
-    return clean or "Unknown Station"
+    for line in lines or [normalized]:
+        clean = _strip_status_markup(line)
+        if clean:
+            return clean
+    return "Unknown Station"
 
 
 def parse_hub_status_metadata(raw_status: str) -> Dict[str, Any]:
@@ -505,6 +540,10 @@ async def load_pager_endpoints(source: str, timeout: float = 5.0) -> Dict[str, T
                 data = resp.json()
         else:
             path = Path(src)
+            if not path.is_file() and not path.is_absolute():
+                project_candidate = Path(__file__).resolve().parent.parent / path
+                if project_candidate.is_file():
+                    path = project_candidate
             if not path.is_file():
                 logger.debug("pager_endpoints_source file not found: %s", src)
                 return {}
@@ -540,6 +579,8 @@ def merge_custom_servers(
     hub_pager_title_map: Dict[str, ServerInfo] = {}
 
     for s in hub_servers:
+        if not getattr(s, "from_hub", True):
+            continue
         hub_map[s.identifier] = s
         if s.port > 0 and s.ip:
             hub_endpoint_map[(s.ip, s.port)] = s

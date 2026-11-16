@@ -53,8 +53,8 @@
           {% if server.version %}
           <span class="mono-val sector-endpoint">BYOND {{ server.version }}</span>
           {% endif %}
-          <a href="/server/{{ server.id }}" class="raw-json-link" title="Refresh server telemetry">Refresh</a>
-          <a href="/api/v1/server/{{ server.id }}" target="_blank" rel="noopener" class="raw-json-link" title="View raw machine-readable JSON">Raw JSON</a>
+          <a href="/server/{{ server.id }}{% if time_range and time_range != 'day' %}?time_range={{ time_range }}{% endif %}" class="raw-json-link" title="Refresh server telemetry">Refresh</a>
+          <a href="/api/v1/server/{{ server.id }}{% if time_range and time_range != 'day' %}?time_range={{ time_range }}{% endif %}" target="_blank" rel="noopener" class="raw-json-link" title="View raw machine-readable JSON">Raw JSON</a>
         </div>
         <h1 class="subject-ckey server-heading">{{ server.title }}</h1>
       </div>
@@ -135,7 +135,7 @@
         <div class="cell-label">Admins</div>
         <div class="cell-value">{{ server.admins_count if server.admins_count is not none else 'Unknown' }}</div>
         <div class="cell-sub">
-          {% if server.admin_list %}
+          {% if server.admin_list and server.admins_count != 0 %}
           {% for adm in server.admin_list[:3] %}{{ adm.key }}{% if adm.rank %} ({{ adm.rank }}){% endif %}{% if not loop.last %}, {% endif %}{% endfor %}{% if server.admin_list|length > 3 %} (+{{ server.admin_list|length - 3 }} more){% endif %}
           {% elif server.admins_count == 0 %}
           No staff online
@@ -224,7 +224,7 @@
                     y1="{{ server.chart_24h.trend.line.y1 }}"
                     x2="{{ server.chart_24h.trend.line.x2 }}"
                     y2="{{ server.chart_24h.trend.line.y2 }}"
-                    class="sparkline-trend-line is-{{ server.chart_24h.trend.direction }}"
+                    class="sparkline-trend-line is-{{ server.chart_24h.trend.line.direction or server.chart_24h.trend.direction }}"
                     vector-effect="non-scaling-stroke" />
               {% endif %}
               {% for segment in server.chart_24h.segments %}

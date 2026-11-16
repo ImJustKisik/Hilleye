@@ -68,8 +68,8 @@ async def search_players(
             SELECT
                 p.ckey,
                 p.last_seen,
-                COALESCE(t.total_seconds, 0) AS total_seconds,
-                COALESCE(t.sessions_count, 0) AS sessions_count,
+                COALESCE((SELECT SUM(t.total_seconds) FROM server_player_totals t WHERE t.ckey = p.ckey), 0) AS total_seconds,
+                COALESCE((SELECT SUM(t.sessions_count) FROM server_player_totals t WHERE t.ckey = p.ckey), 0) AS sessions_count,
                 act.server_id AS current_server_id,
                 act.server_title AS current_server,
                 CASE
@@ -78,11 +78,6 @@ async def search_players(
                     ELSE 2
                 END AS match_rank
             FROM players p
-            LEFT JOIN (
-                SELECT ckey, SUM(total_seconds) AS total_seconds, SUM(sessions_count) AS sessions_count
-                FROM server_player_totals
-                GROUP BY ckey
-            ) t ON t.ckey = p.ckey
             LEFT JOIN (
                 SELECT s.ckey, s.server_id, COALESCE(srv.title, 'Sector #' || s.server_id) AS server_title
                 FROM sessions s
@@ -138,16 +133,11 @@ async def search_players(
                 SELECT
                     p.ckey,
                     p.last_seen,
-                    COALESCE(t.total_seconds, 0) AS total_seconds,
-                    COALESCE(t.sessions_count, 0) AS sessions_count,
+                    COALESCE((SELECT SUM(t.total_seconds) FROM server_player_totals t WHERE t.ckey = p.ckey), 0) AS total_seconds,
+                    COALESCE((SELECT SUM(t.sessions_count) FROM server_player_totals t WHERE t.ckey = p.ckey), 0) AS sessions_count,
                     act.server_id AS current_server_id,
                     act.server_title AS current_server
                 FROM players p
-                LEFT JOIN (
-                    SELECT ckey, SUM(total_seconds) AS total_seconds, SUM(sessions_count) AS sessions_count
-                    FROM server_player_totals
-                    GROUP BY ckey
-                ) t ON t.ckey = p.ckey
                 LEFT JOIN (
                     SELECT s.ckey, s.server_id, COALESCE(srv.title, 'Sector #' || s.server_id) AS server_title
                     FROM sessions s
@@ -260,47 +250,34 @@ async def get_player_dossier(
             current_server = None
             current_duration_str = None
 
-        # Playtime summary
-        await cur.execute(
-            """
-            SELECT 
-                COALESCE(SUM(duration_seconds), 0) as total_playtime_seconds,
-                COUNT(DISTINCT server_id) as servers_count,
-                COUNT(id) as sessions_count
-            FROM sessions
-            WHERE ckey = ?;
-            """,
-            (norm_ckey,),
-        )
-        summary_row = await cur.fetchone()
-        total_playtime_seconds = int(summary_row["total_playtime_seconds"]) if summary_row else 0
-        total_hours = round(total_playtime_seconds / 3600.0, 1)
-        servers_count = int(summary_row["servers_count"]) if summary_row else 0
-        sessions_count = int(summary_row["sessions_count"]) if summary_row else 0
-
         first_seen_str = format_timestamp(player_row["first_seen"])
         last_seen_str = format_timestamp(player_row["last_seen"])
 
-        # Server breakdown
+        # Playtime summary and per-server breakdown from indexed aggregate table
         await cur.execute(
             """
-            SELECT 
-                s.server_id,
-                COALESCE(srv.title, 'Unknown Sector ' || s.server_id) as title,
-                COALESCE(SUM(s.duration_seconds), 0) as total_seconds,
-                MAX(s.last_seen_at) as last_visit
-            FROM sessions s
-            LEFT JOIN servers srv ON s.server_id = srv.id
-            WHERE s.ckey = ?
-            GROUP BY s.server_id
-            ORDER BY total_seconds DESC;
+            SELECT
+                t.server_id,
+                COALESCE(srv.title, 'Unknown Sector ' || t.server_id) AS title,
+                t.total_seconds,
+                t.sessions_count,
+                t.last_seen AS last_visit
+            FROM server_player_totals t
+            LEFT JOIN servers srv ON t.server_id = srv.id
+            WHERE t.ckey = ?
+            ORDER BY t.total_seconds DESC;
             """,
             (norm_ckey,),
         )
         breakdown_rows = await cur.fetchall()
+        total_playtime_seconds = sum(int(b["total_seconds"] or 0) for b in breakdown_rows)
+        total_hours = round(total_playtime_seconds / 3600.0, 1)
+        servers_count = len(breakdown_rows)
+        sessions_count = sum(int(b["sessions_count"] or 0) for b in breakdown_rows)
+
         server_breakdown: List[Dict[str, Any]] = []
         for b in breakdown_rows:
-            sec = int(b["total_seconds"])
+            sec = int(b["total_seconds"] or 0)
             pct = round((sec / total_playtime_seconds * 100.0), 1) if total_playtime_seconds > 0 else 0.0
             server_breakdown.append(
                 {
@@ -396,7 +373,7 @@ def _compute_chart_trend(
 ) -> Dict[str, Any]:
     """Computes half-to-half trend summary and OLS linear trend-line SVG coordinates."""
     if len(points) < 2:
-        val = float(points[0]["player_count"]) if points else 0.0
+        val = round(float(points[0].get("avg_count", points[0]["player_count"])), 1) if points else 0.0
         return {
             "direction": "flat",
             "delta": 0.0,
@@ -413,15 +390,25 @@ def _compute_chart_trend(
     t_first = float(points[0]["timestamp"])
     t_last = float(points[-1]["timestamp"])
     mid_ts = (t_first + t_last) / 2.0
-    first_vals = [float(p["player_count"]) for p in points if float(p["timestamp"]) <= mid_ts]
-    second_vals = [float(p["player_count"]) for p in points if float(p["timestamp"]) > mid_ts]
-    if not first_vals or not second_vals:
+    first_pts = [p for p in points if float(p["timestamp"]) <= mid_ts]
+    second_pts = [p for p in points if float(p["timestamp"]) > mid_ts]
+    if not first_pts or not second_pts:
         mid_idx = len(points) // 2
-        first_vals = [float(p["player_count"]) for p in points[:mid_idx]]
-        second_vals = [float(p["player_count"]) for p in points[mid_idx:]]
+        first_pts = points[:mid_idx]
+        second_pts = points[mid_idx:]
 
-    first_avg = round(sum(first_vals) / len(first_vals), 1)
-    second_avg = round(sum(second_vals) / len(second_vals), 1)
+    def _weighted_avg(bucket_pts: List[Dict[str, Any]]) -> float:
+        total_w = 0
+        total_val = 0.0
+        for pt in bucket_pts:
+            w = max(1, int(pt.get("samples", 1)))
+            val = float(pt.get("avg_count", pt["player_count"]))
+            total_w += w
+            total_val += val * w
+        return round(total_val / total_w, 1) if total_w > 0 else 0.0
+
+    first_avg = _weighted_avg(first_pts)
+    second_avg = _weighted_avg(second_pts)
     delta = round(second_avg - first_avg, 1)
     pct = round(((second_avg - first_avg) / first_avg) * 100.0, 1) if first_avg > 0 else None
 
@@ -478,11 +465,14 @@ def _compute_chart_trend(
                     else:
                         t1 = min(t1, r)
             if t0 <= t1:
+                line_delta = pred_end - pred_start
+                line_dir = "flat" if abs(line_delta) < 0.3 else ("up" if line_delta > 0 else "down")
                 trend_line = {
                     "x1": round(x1 + t0 * dx, 1),
                     "y1": round(y1_raw + t0 * dy, 1),
                     "x2": round(x1 + t1 * dx, 1),
                     "y2": round(y1_raw + t1 * dy, 1),
+                    "direction": line_dir,
                 }
 
     return {
@@ -521,8 +511,8 @@ def _build_chart_24h(points: List[Dict[str, Any]], window_start=None, window_end
         }
 
     counts = [int(p["player_count"]) for p in points]
-    min_p = min(counts)
-    max_p = max(counts)
+    min_p = min(int(p.get("min_count", p["player_count"])) for p in points)
+    max_p = max(int(p.get("max_count", p["player_count"])) for p in points)
     avg_p = round(sum(counts) / len(counts), 1)
 
     x_min, x_max = 10.0, 590.0

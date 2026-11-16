@@ -140,6 +140,10 @@ class Tracker:
         self._start_time: Optional[float] = None
         self._poll_count: int = 0
         self._errors_count: int = 0
+        self._topic_failures_count: int = 0
+        self._last_topic_failures: int = 0
+        self._last_topic_successes: int = 0
+        self._last_hub_warnings: int = 0
         self._last_poll_time: Optional[float] = None
         self._last_poll_duration: float = 0.0
         self._servers_tracked: int = 0
@@ -183,6 +187,10 @@ class Tracker:
             "last_poll_duration": round(self._last_poll_duration, 3),
             "errors": self._errors_count,
             "errors_count": self._errors_count,
+            "topic_failures": self._last_topic_failures,
+            "topic_failures_total": self._topic_failures_count,
+            "topic_successes": self._last_topic_successes,
+            "hub_warnings": self._last_hub_warnings,
             "poll_interval": self.poll_interval,
             "grace_period_seconds": self.grace_period_seconds,
         }
@@ -204,7 +212,10 @@ class Tracker:
 
     async def _poll_once(self, now_ts: Optional[float]) -> Dict[str, Any]:
         started = time.monotonic()
-        errors_before = self._errors_count
+        collector_errors = 0
+        topic_failures = 0
+        topic_successes = 0
+        hub_warnings = 0
         self._degraded_reasons = []
         if self.pager_endpoints_source and (
             started - self._pager_endpoints_fetched_at >= self.pager_endpoints_refresh_seconds
@@ -224,7 +235,10 @@ class Tracker:
                     hub_url=self.hub_url, fallback_url=self.hub_text_url,
                 )
             hub_healthy = getattr(discovered_servers, "healthy", True)
-            self._errors_count += getattr(discovered_servers, "errors", 0)
+            hub_warnings = int(getattr(discovered_servers, "errors", 0) or 0)
+            if not hub_healthy:
+                collector_errors += 1
+                self._errors_count += max(1, hub_warnings)
             if self._cached_pager_endpoints:
                 discovered_servers = merge_custom_servers(
                     discovered_servers,
@@ -234,6 +248,7 @@ class Tracker:
             if not hub_healthy:
                 self._degraded_reasons.append("Hub discovery unavailable or partial")
         except Exception:
+            collector_errors += 1
             self._errors_count += 1
             self._degraded_reasons.append("Hub discovery failed")
             logger.exception("Hub discovery failed")
@@ -259,6 +274,7 @@ class Tracker:
             )
 
         async def process_server(srv):
+            nonlocal topic_failures, topic_successes
             roster = {normalize_ckey(p) for p in srv.players if normalize_ckey(p)}
             roster_known = srv.roster_known or bool(srv.players)
             roster_complete = srv.roster_complete
@@ -281,10 +297,14 @@ class Tracker:
                     elif should_clear:
                         await core_db.set_preferred_topic_query(srv.identifier, None)
                     if data is None:
-                        self._errors_count += 1
+                        topic_failures += 1
+                        self._topic_failures_count += 1
+                    else:
+                        topic_successes += 1
                 except Exception:
-                    self._errors_count += 1
-                    logger.exception("Topic error for %s", srv.identifier)
+                    topic_failures += 1
+                    self._topic_failures_count += 1
+                    logger.debug("Topic probe failed for %s", srv.identifier, exc_info=True)
 
             topic_received = data is not None
             # Failed custom probes do not update last_seen or fabricate snapshots.
@@ -338,6 +358,8 @@ class Tracker:
                 admins = len(raw_admins) if isinstance(raw_admins, list) else bounded_int(raw_admins)
                 if admins is None and "admin_list" in metrics:
                     admins = len(metrics["admin_list"])
+                if admins == 0 and "admin_list" not in metrics:
+                    metrics["admin_list"] = []
                 metrics["admins_count"] = admins
 
             if roster_known and player_count is None:
@@ -352,10 +374,12 @@ class Tracker:
         # A fixed worker set bounds task creation as well as socket concurrency.
         pending = iter(discovered_servers)
         async def worker():
+            nonlocal collector_errors
             for srv in pending:
                 try:
                     await process_server(srv)
                 except Exception:
+                    collector_errors += 1
                     self._errors_count += 1
                     logger.exception("Failed processing server %s", srv.identifier)
         await asyncio.gather(*(worker() for _ in range(min(self.topic_concurrency, len(discovered_servers)))))
@@ -372,16 +396,20 @@ class Tracker:
             self._last_prune_time = mono
         if not self._clock_trusted:
             self._degraded_reasons.append("System clock changed; retention paused")
-        path = Path(core_db._current_db_path).resolve().parent
-        if core_db._current_db_path != ":memory:" and shutil.disk_usage(path).free < self.config.min_free_disk_mb * 1024**2:
-            self._degraded_reasons.append("Low free disk space")
+        if core_db._current_db_path != ":memory:":
+            path = Path(core_db._current_db_path).resolve().parent
+            if shutil.disk_usage(path).free < self.config.min_free_disk_mb * 1024**2:
+                self._degraded_reasons.append("Low free disk space")
         self._tracked_players = len(total_online_seen)
         self._poll_count += 1
         self._last_poll_time = ts
         self._last_poll_duration = mono - started
-        self._cycle_healthy = hub_healthy and self._errors_count == errors_before and not self._degraded_reasons
-        if self._errors_count > errors_before:
+        self._last_topic_failures = topic_failures
+        self._last_topic_successes = topic_successes
+        self._last_hub_warnings = hub_warnings
+        if collector_errors > 0 and "One or more collection operations failed" not in self._degraded_reasons:
             self._degraded_reasons.append("One or more collection operations failed")
+        self._cycle_healthy = hub_healthy and collector_errors == 0 and not self._degraded_reasons
         if self._cycle_healthy:
             self._last_success_monotonic = mono
         await core_db.record_collector_cycle(ts, self._cycle_healthy)

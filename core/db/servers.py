@@ -46,6 +46,7 @@ async def upsert_server(
     ins_respawn = (1 if respawn_allowed else 0) if respawn_allowed is not None else None
     ins_admin_json = json.dumps(admin_list, ensure_ascii=False) if admin_list is not None else None
     ins_manifest_json = json.dumps(manifest, ensure_ascii=False) if manifest is not None else None
+    ins_manifest_obs = ts if manifest is not None else None
 
     conn = await _db.get_connection()
     async with conn.cursor() as cur:
@@ -54,9 +55,9 @@ async def upsert_server(
             INSERT INTO servers (
                 identifier, title, ip, port, last_seen, is_active,
                 current_players, map_name, round_duration, gamemode, admins_count, version,
-                active_players, station_time, enter_allowed, respawn_allowed, admin_list_json, manifest_json
+                active_players, station_time, enter_allowed, respawn_allowed, admin_list_json, manifest_json, manifest_observed_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(identifier) DO UPDATE SET
                 title = excluded.title,
                 ip = excluded.ip,
@@ -74,7 +75,18 @@ async def upsert_server(
                 enter_allowed = CASE WHEN ? IS NOT NULL THEN excluded.enter_allowed ELSE servers.enter_allowed END,
                 respawn_allowed = CASE WHEN ? IS NOT NULL THEN excluded.respawn_allowed ELSE servers.respawn_allowed END,
                 admin_list_json = CASE WHEN ? IS NOT NULL THEN excluded.admin_list_json ELSE servers.admin_list_json END,
-                manifest_json = CASE WHEN ? IS NOT NULL THEN excluded.manifest_json ELSE servers.manifest_json END;
+                manifest_json = CASE
+                    WHEN ? IS NOT NULL THEN excluded.manifest_json
+                    WHEN excluded.round_duration IS NOT NULL AND servers.round_duration IS NOT NULL
+                         AND excluded.round_duration + 60 < servers.round_duration THEN NULL
+                    ELSE servers.manifest_json
+                END,
+                manifest_observed_at = CASE
+                    WHEN ? IS NOT NULL THEN excluded.manifest_observed_at
+                    WHEN excluded.round_duration IS NOT NULL AND servers.round_duration IS NOT NULL
+                         AND excluded.round_duration + 60 < servers.round_duration THEN NULL
+                    ELSE servers.manifest_observed_at
+                END;
             """,
             (
                 identifier,
@@ -95,6 +107,7 @@ async def upsert_server(
                 ins_respawn,
                 ins_admin_json,
                 ins_manifest_json,
+                ins_manifest_obs,
                 current_players,
                 map_name,
                 round_duration,
@@ -107,14 +120,13 @@ async def upsert_server(
                 ins_respawn,
                 ins_admin_json,
                 ins_manifest_json,
+                ins_manifest_json,
             ),
         )
         await cur.execute("SELECT id FROM servers WHERE identifier = ?;", (identifier,))
         row = await cur.fetchone()
         if row is None:
             raise RuntimeError(f"Failed to retrieve id for upserted server '{identifier}'")
-        if manifest is not None:
-            await cur.execute("UPDATE servers SET manifest_observed_at=? WHERE id=?", (ts, row["id"]))
         return int(row["id"])
 
 
@@ -152,7 +164,7 @@ async def expire_stale_servers(now_ts: float, max_age: int) -> None:
     import core.db as _db
 
     conn = await _db.get_connection()
-    await conn.execute("UPDATE servers SET is_active=0 WHERE last_seen < ?", (now_ts - max_age,))
+    await conn.execute("UPDATE servers SET is_active=0 WHERE is_active=1 AND last_seen < ?", (now_ts - max_age,))
     await conn.execute(
         """UPDATE sessions SET ended_at=last_seen_at
                           WHERE ended_at IS NULL AND (last_seen_at < ? OR server_id IN

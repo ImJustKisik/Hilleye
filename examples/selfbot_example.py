@@ -296,7 +296,7 @@ class WhitelistManager:
         self.path = Path(path)
         self.allowed_ids: Set[int] = set()
         self.env_ids: Set[int] = set()
-        self._last_mtime: int = 0
+        self._last_stat: Optional[Tuple[int, int]] = None
         self.load()
 
         # Parse HILLEYE_WHITELIST_IDS env var (comma-separated snowflakes)
@@ -309,10 +309,11 @@ class WhitelistManager:
     def _safe_load_from_disk(self) -> Tuple[Any, bool]:
         """Self-contained safe JSON loader for WhitelistManager."""
         if not self.path.is_file():
+            self._last_stat = None
             return {"allowed_user_ids": []}, True
         try:
-            mtime = self.path.stat().st_mtime_ns
-            self._last_mtime = mtime
+            st = self.path.stat()
+            self._last_stat = (st.st_mtime_ns, st.st_size)
             data = json.loads(self.path.read_text(encoding="utf-8"))
             return data, True
         except Exception:
@@ -343,7 +344,8 @@ class WhitelistManager:
         tmp.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
         os.replace(tmp, self.path)
         try:
-            self._last_mtime = self.path.stat().st_mtime_ns
+            st = self.path.stat()
+            self._last_stat = (st.st_mtime_ns, st.st_size)
         except Exception:
             pass
 
@@ -365,16 +367,17 @@ class WhitelistManager:
         return False
 
     def is_allowed(self, author_id: int, owner_id: Optional[int] = None) -> bool:
-        """Checks if author_id is the account owner or in whitelist (checks mtime)."""
+        """Checks if author_id is the account owner or in whitelist (checks mtime and size)."""
         uid = int(author_id)
         if owner_id is not None and uid == int(owner_id):
             return True
 
-        # Check if file changed on disk via fast stat check
+        # Check if file changed on disk via fast stat check (mtime + size for coarse FS timers)
         try:
             if self.path.is_file():
-                current_mtime = self.path.stat().st_mtime_ns
-                if current_mtime != self._last_mtime:
+                st = self.path.stat()
+                current_stat = (st.st_mtime_ns, st.st_size)
+                if current_stat != self._last_stat:
                     self.load()
         except Exception:
             pass

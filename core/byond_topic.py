@@ -607,6 +607,8 @@ def is_usable_topic_payload(data: Dict[str, Any]) -> bool:
         for k in ("version", "map", "map_name", "mode", "gamemode")
     ):
         return True
+    if isinstance(data.get("version"), (int, float)) and not isinstance(data.get("version"), bool):
+        return True
     if any(parse_round_duration(data.get(k)) is not None for k in ("round_duration", "roundduration")):
         return True
     return False
@@ -628,8 +630,8 @@ async def probe_server_topic(
         (normalized_payload, winning_query, should_clear_preferred)
         - Stops immediately on transport/socket errors without clearing preferred_query.
         - Falls back across remaining queries if the server responds with unusable data.
-        - Sets should_clear_preferred=True if preferred_query was set and all probes
-          responded with unusable data.
+        - Sets should_clear_preferred=True if preferred_query was set and the server
+          returned non-empty unusable payloads across all probes.
     """
     ordered_queries: List[str] = []
     if preferred_query:
@@ -639,6 +641,7 @@ async def probe_server_topic(
             ordered_queries.append(q)
 
     active_query_fn = query_fn or query_topic
+    saw_non_empty_response = False
     for query in ordered_queries:
         try:
             if active_query_fn is query_topic:
@@ -667,8 +670,10 @@ async def probe_server_topic(
         ):
             return None, None, False
 
+        if candidate is not None:
+            saw_non_empty_response = True
         normalized = normalize_topic_payload(candidate)
         if normalized is not None and is_usable_topic_payload(normalized):
             return normalized, query, False
 
-    return None, None, bool(preferred_query)
+    return None, None, bool(preferred_query) and saw_non_empty_response

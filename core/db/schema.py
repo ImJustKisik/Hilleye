@@ -90,6 +90,7 @@ CREATE TABLE IF NOT EXISTS server_player_totals (
     PRIMARY KEY(server_id,ckey)
 );
 CREATE INDEX IF NOT EXISTS idx_totals_rank ON server_player_totals(server_id,total_seconds DESC,ckey);
+CREATE INDEX IF NOT EXISTS idx_totals_ckey ON server_player_totals(ckey,server_id,total_seconds,sessions_count,last_seen);
 CREATE INDEX IF NOT EXISTS idx_sessions_player_seen ON sessions(server_id,ckey,last_seen_at);
 CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY);
 """
@@ -215,6 +216,10 @@ async def _initialize_aggregates(conn: aiosqlite.Connection) -> None:
             FROM sessions GROUP BY server_id,ckey"""
         )
         await conn.execute("INSERT INTO schema_migrations VALUES (1)")
+    row2 = await (await conn.execute("SELECT version FROM schema_migrations WHERE version=2")).fetchone()
+    if row2 is None:
+        await conn.execute("DROP TRIGGER IF EXISTS totals_update")
+        await conn.execute("INSERT INTO schema_migrations VALUES (2)")
     insert = """INSERT INTO server_player_totals VALUES
         (NEW.server_id,NEW.ckey,COALESCE(NEW.duration_seconds,0),1,NEW.last_seen_at)
         ON CONFLICT(server_id,ckey) DO UPDATE SET
@@ -227,7 +232,7 @@ async def _initialize_aggregates(conn: aiosqlite.Connection) -> None:
         DELETE FROM server_player_totals WHERE server_id=OLD.server_id AND ckey=OLD.ckey AND sessions_count=0;"""
     for name, event, body in (
         ("insert", "INSERT", insert),
-        ("update", "UPDATE", remove + insert),
+        ("update", "UPDATE OF duration_seconds, last_seen_at, server_id, ckey", remove + insert),
         ("delete", "DELETE", remove),
     ):
         await conn.execute(f"CREATE TRIGGER IF NOT EXISTS totals_{name} AFTER {event} ON sessions BEGIN {body} END")

@@ -10,12 +10,16 @@ from pathlib import Path
 
 class CollectorLock:
     def __init__(self, db_path: str):
-        self.path = Path(db_path + ".collector.lock")
+        self.in_memory = str(db_path) == ":memory:"
+        self.path = None if self.in_memory else Path(str(db_path) + ".collector.lock")
         self.handle = None
 
     def acquire(self) -> bool:
+        if self.in_memory:
+            return True
         if self.handle is not None:
             return True
+        assert self.path is not None
         self.path.parent.mkdir(parents=True, exist_ok=True)
         handle = self.path.open("a+b")
         handle.seek(0)

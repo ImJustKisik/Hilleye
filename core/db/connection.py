@@ -56,6 +56,7 @@ def _read_snapshot(func):
             await _db.get_connection()
             async with aiosqlite.connect(_db._current_db_path) as conn:
                 conn.row_factory = aiosqlite.Row
+                await conn.execute("PRAGMA busy_timeout=5000")
                 await conn.execute("PRAGMA query_only=ON")
                 await conn.execute("BEGIN")
                 token = _db._operation_connection.set(conn)
