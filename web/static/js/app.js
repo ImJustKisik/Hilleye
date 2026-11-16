@@ -370,16 +370,143 @@
     });
   }
 
+  function initServerActivityChart() {
+    var stages = document.querySelectorAll(".sparkline-stage[data-chart-points]");
+    stages.forEach(function (stage) {
+      if (stage.dataset.chartBound) return;
+      stage.dataset.chartBound = "1";
+
+      var points = [];
+      try {
+        points = JSON.parse(stage.dataset.chartPoints || "[]");
+      } catch (err) {
+        return;
+      }
+      if (!Array.isArray(points) || !points.length) return;
+
+      var svg = stage.querySelector(".sparkline-svg");
+      var hoverLine = stage.querySelector(".sparkline-hover-line");
+      var marker = stage.querySelector(".sparkline-hover-marker");
+      var tooltip = stage.querySelector(".sparkline-tooltip");
+      if (!svg || !tooltip) return;
+
+      function findNearestPoint(svgX) {
+        var lo = 0;
+        var hi = points.length - 1;
+        while (lo < hi) {
+          var mid = (lo + hi) >> 1;
+          if (points[mid].x < svgX) {
+            lo = mid + 1;
+          } else {
+            hi = mid;
+          }
+        }
+        if (lo > 0 && Math.abs(points[lo - 1].x - svgX) < Math.abs(points[lo].x - svgX)) {
+          return points[lo - 1];
+        }
+        return points[lo];
+      }
+
+      function hideHover() {
+        if (hoverLine) hoverLine.setAttribute("hidden", "");
+        if (marker) marker.hidden = true;
+        tooltip.hidden = true;
+      }
+
+      function renderTooltip(pt) {
+        tooltip.textContent = "";
+
+        var valLine = document.createElement("div");
+        valLine.className = "sparkline-tooltip-val";
+        var countNum = Number(pt.c);
+        valLine.textContent = countNum + (countNum === 1 ? " player" : " players");
+        tooltip.appendChild(valLine);
+
+        var timeLine = document.createElement("div");
+        timeLine.className = "sparkline-tooltip-time";
+        timeLine.textContent = (pt.t || "") + " UTC";
+        tooltip.appendChild(timeLine);
+
+        var hasRange = pt.n && pt.n > 1 && pt.min !== pt.max;
+        if (hasRange || pt.m) {
+          var subLine = document.createElement("div");
+          subLine.className = "sparkline-tooltip-sub";
+          var parts = [];
+          if (hasRange) {
+            parts.push("Range " + pt.min + "\u2013" + pt.max + " (avg " + pt.avg + ")");
+          }
+          if (pt.m) {
+            parts.push(pt.m);
+          }
+          subLine.textContent = parts.join(" \u00b7 ");
+          tooltip.appendChild(subLine);
+        }
+      }
+
+      function updateAtClientX(clientX) {
+        var rect = svg.getBoundingClientRect();
+        if (!rect.width) return;
+        var relX = Math.max(0, Math.min(rect.width, clientX - rect.left));
+        var svgX = (relX / rect.width) * 600.0;
+        var pt = findNearestPoint(svgX);
+        if (!pt) return;
+
+        if (hoverLine) {
+          hoverLine.setAttribute("x1", String(pt.x));
+          hoverLine.setAttribute("x2", String(pt.x));
+          hoverLine.removeAttribute("hidden");
+        }
+
+        var leftPct = (pt.x / 600.0) * 100.0;
+        var topPct = (pt.y / 120.0) * 100.0;
+        if (marker) {
+          marker.style.left = leftPct.toFixed(2) + "%";
+          marker.style.top = topPct.toFixed(2) + "%";
+          marker.hidden = false;
+        }
+
+        renderTooltip(pt);
+        tooltip.hidden = false;
+
+        var pxX = (pt.x / 600.0) * rect.width;
+        var tipWidth = tooltip.offsetWidth || 140;
+        var offset = 10;
+        var leftPx = pxX + offset;
+        if (leftPx + tipWidth > rect.width - 4) {
+          leftPx = Math.max(4, pxX - tipWidth - offset);
+        }
+        tooltip.style.left = Math.round(leftPx) + "px";
+      }
+
+      stage.addEventListener("pointermove", function (ev) {
+        updateAtClientX(ev.clientX);
+      });
+
+      stage.addEventListener("pointerdown", function (ev) {
+        updateAtClientX(ev.clientX);
+      });
+
+      stage.addEventListener("pointerleave", hideHover);
+      stage.addEventListener("pointercancel", hideHover);
+    });
+  }
+
   document.addEventListener("DOMContentLoaded", function () {
     initDirectoryControls();
     initRosterFilter();
     initCopyButtons();
     initPlayerTypeahead();
+    initServerActivityChart();
+  });
+
+  document.addEventListener("htmx:afterSettle", function () {
+    initServerActivityChart();
   });
 
   document.addEventListener("htmx:historyRestore", function () {
     initDirectoryControls();
     initRosterFilter();
     initPlayerTypeahead();
+    initServerActivityChart();
   });
 })();

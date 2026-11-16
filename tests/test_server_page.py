@@ -552,3 +552,98 @@ async def test_pager_server_upgrade_and_hub_status_metadata_fallback(test_db, mo
     assert pager_only["map_name"] == "SEV Torch"
     assert pager_only["gamemode"] == "extended"
     assert pager_only["round_duration"] == 5400
+
+
+@pytest.mark.asyncio
+async def test_server_chart_time_ranges_trend_and_y_ticks(async_client):
+    """
+    Verifies:
+    1. Multi-range snapshot queries (6h, day, 3d, week, month, all) + alias & invalid fallback.
+    2. Trend calculation (up/down/flat, previous-period comparison, regression line bounds).
+    3. Y-axis ticks, hover_points JSON, and CSP-safe HTML rendering (no inline onchange).
+    """
+    import json
+
+    now_ts = time.time()
+    server_id = await core_db.upsert_server(
+        identifier="byond://127.0.0.1:8888",
+        title="Trend Test Station",
+        ip="127.0.0.1",
+        port=8888,
+        now_ts=now_ts,
+        current_players=40,
+        map_name="NSV Sierra",
+    )
+
+    # Seed snapshots across 40 days so 6h / day / 3d / week / month / all all differ cleanly.
+    # 35 days ago (only in 'all'): 5 players
+    await core_db.record_server_snapshot(server_id, player_count=5, map_name="OldMap", ts=now_ts - 35 * 86400)
+    # 15 days ago (in 'month', 'all'): 10 players
+    await core_db.record_server_snapshot(server_id, player_count=10, map_name="BoxStation", ts=now_ts - 15 * 86400)
+    # 5 days ago (in 'week', 'month', 'all'): 12 players
+    await core_db.record_server_snapshot(server_id, player_count=12, map_name="MetaStation", ts=now_ts - 5 * 86400)
+    # 2 days ago (in '3d', 'week', 'month', 'all' — and also previous 24h window for 'day'): 8 players
+    await core_db.record_server_snapshot(server_id, player_count=8, map_name="SEV Torch", ts=now_ts - 36 * 3600)
+    # Within last 24h (upward trend: 15 -> 20 -> 35 -> 40)
+    await core_db.record_server_snapshot(server_id, player_count=15, map_name="NSV Sierra", ts=now_ts - 18 * 3600)
+    await core_db.record_server_snapshot(server_id, player_count=20, map_name="NSV Sierra", ts=now_ts - 12 * 3600)
+    await core_db.record_server_snapshot(server_id, player_count=35, map_name="NSV Sierra", ts=now_ts - 3 * 3600)
+    await core_db.record_server_snapshot(server_id, player_count=40, map_name="NSV Sierra", ts=now_ts - 60)
+
+    day_details = await core_db.get_server_details(server_id, now_ts=now_ts, time_range="day")
+    assert day_details["time_range"] == "day"
+    assert day_details["chart_24h"]["raw_count"] == 4
+    assert day_details["chart_24h"]["min_players"] == 15
+    assert day_details["chart_24h"]["max_players"] == 40
+    assert day_details["chart_24h"]["y_ticks"] == {"top": "40", "mid": "28", "bottom": "15"}
+    assert day_details["chart_24h"]["trend"]["direction"] == "up"
+    assert day_details["chart_24h"]["trend"]["delta"] > 0
+    assert day_details["chart_24h"]["trend"]["prev_avg"] == 8.0
+    assert day_details["chart_24h"]["trend"]["line"] is not None
+    assert 16.0 <= day_details["chart_24h"]["trend"]["line"]["y1"] <= 104.0
+    assert 16.0 <= day_details["chart_24h"]["trend"]["line"]["y2"] <= 104.0
+    pts = json.loads(day_details["chart_24h"]["points_json"])
+    assert len(pts) == 4
+    assert pts[-1]["c"] == 40 and pts[-1]["m"] == "NSV Sierra"
+
+    week_details = await core_db.get_server_details(server_id, now_ts=now_ts, time_range="week")
+    assert week_details["time_range"] == "week"
+    assert week_details["chart_24h"]["raw_count"] == 6
+    assert week_details["chart_24h"]["min_players"] == 8
+
+    month_details = await core_db.get_server_details(server_id, now_ts=now_ts, time_range="month")
+    assert month_details["time_range"] == "month"
+    assert month_details["chart_24h"]["raw_count"] == 7
+
+    all_details = await core_db.get_server_details(server_id, now_ts=now_ts, time_range="all")
+    assert all_details["time_range"] == "all"
+    assert all_details["chart_24h"]["raw_count"] == 8
+    assert all_details["chart_24h"]["min_players"] == 5
+    assert all_details["chart_24h"]["max_players"] == 40
+
+    # Aliases and invalid values safely fall back without crashing
+    assert (await core_db.get_server_details(server_id, now_ts=now_ts, time_range="7d"))["time_range"] == "week"
+    assert (await core_db.get_server_details(server_id, now_ts=now_ts, time_range="bogus"))["time_range"] == "day"
+
+    # Web route renders each range cleanly and uses CSP-safe navigation (no inline onchange)
+    for r_key, expected_title in (
+        ("day", "Last 24 Hours"),
+        ("week", "Last 7 Days"),
+        ("month", "Last 30 Days"),
+        ("all", "All Time"),
+        ("bogus", "Last 24 Hours"),
+    ):
+        resp = await async_client.get(f"/server/{server_id}?time_range={r_key}")
+        assert resp.status_code == 200
+        html = resp.text
+        assert f"Online Activity ({expected_title})" in html
+        assert "onchange=" not in html
+        assert "sparkline-y-axis" in html
+        assert "sparkline-tooltip" in html
+        assert "Trend:" in html
+
+    # REST API also supports time_range query param
+    api_week = await async_client.get(f"/api/v1/server/{server_id}?time_range=week")
+    assert api_week.status_code == 200
+    assert api_week.json()["time_range"] == "week"
+    assert api_week.json()["chart_24h"]["raw_count"] == 6

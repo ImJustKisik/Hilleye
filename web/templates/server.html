@@ -154,51 +154,99 @@
       </div>
     </div>
 
-    <!-- 3. 24-Hour Online Activity Sparkline (Inline SVG) -->
-    <section class="dossier-block" aria-label="24-Hour Online History">
-      <div class="block-header">
-        <h2 class="block-title">Online Activity (Last {{ {'day': '24 Hours', 'week': '7 Days', 'all': 'All Time'}[time_range] }})</h2>
-        <div class="chart-stats mono-val">
-          <select name="time_range" onchange="window.location.href='/server/{{ server.id }}?time_range=' + this.value">
-            <option value="day" {% if time_range == 'day' %}selected{% endif %}>Last Day</option>
-            <option value="week" {% if time_range == 'week' %}selected{% endif %}>Last Week</option>
-            <option value="all" {% if time_range == 'all' %}selected{% endif %}>All Time</option>
-          </select>
-          <span class="sep">&bull;</span>
-          <span>Min: <strong>{{ server.chart_24h.min_players }}</strong></span>
-          <span class="sep">&bull;</span>
-          <span>Max: <strong>{{ server.chart_24h.max_players }}</strong></span>
-          <span class="sep">&bull;</span>
-          <span>Avg: <strong>{{ server.chart_24h.avg_players }}</strong></span>
+    <!-- 3. Online Activity Sparkline (Interactive SVG + Y-Axis + Trend + Range Selector) -->
+    <section class="dossier-block" id="activity-chart-section" aria-label="Online Activity History">
+      <div class="block-header chart-block-header">
+        <div class="chart-title-group">
+          <h2 class="block-title">Online Activity ({{ server.chart_24h.range_title or 'Last 24 Hours' }})</h2>
+          {% if server.chart_24h and server.chart_24h.count > 0 and server.chart_24h.trend %}
+          <span class="chart-trend-badge is-{{ server.chart_24h.trend.direction }}"
+                title="1st half avg: {{ server.chart_24h.trend.first_avg }} &rarr; 2nd half avg: {{ server.chart_24h.trend.second_avg }}{% if server.chart_24h.trend.prev_avg is not none %} | Previous period avg: {{ server.chart_24h.trend.prev_avg }} ({{ '%+.1f'|format(server.chart_24h.trend.prev_delta) }}{% if server.chart_24h.trend.prev_pct is not none %}, {{ '%+.1f'|format(server.chart_24h.trend.prev_pct) }}%{% endif %}){% endif %}">
+            <span class="trend-arrow" aria-hidden="true">{% if server.chart_24h.trend.direction == 'up' %}&nearr;{% elif server.chart_24h.trend.direction == 'down' %}&searr;{% else %}&rarr;{% endif %}</span>
+            <span>Trend: {{ server.chart_24h.trend.label }}</span>
+          </span>
+          {% endif %}
+        </div>
+
+        <div class="chart-controls-row mono-val">
+          {% if server.chart_24h.available_ranges %}
+          <nav class="chart-range-tabs" aria-label="Activity time range">
+            {% for opt in server.chart_24h.available_ranges %}
+            <a href="/server/{{ server.id }}?time_range={{ opt.key }}"
+               hx-get="/server/{{ server.id }}?time_range={{ opt.key }}"
+               hx-select="#activity-chart-section"
+               hx-target="#activity-chart-section"
+               hx-swap="outerHTML"
+               hx-push-url="true"
+               class="chart-range-btn {% if opt.key == server.chart_24h.range_key %}is-active{% endif %}"
+               title="{{ opt.title }}"
+               {% if opt.key == server.chart_24h.range_key %}aria-current="true"{% endif %}>{{ opt.label }}</a>
+            {% endfor %}
+          </nav>
+          {% endif %}
+
+          <div class="chart-stats">
+            <span>Min: <strong>{{ server.chart_24h.min_players }}</strong></span>
+            <span class="sep">&bull;</span>
+            <span>Max: <strong>{{ server.chart_24h.max_players }}</strong></span>
+            <span class="sep">&bull;</span>
+            <span>Avg: <strong>{{ server.chart_24h.avg_players }}</strong></span>
+          </div>
         </div>
       </div>
 
       {% if server.chart_24h and server.chart_24h.count > 0 %}
       <div class="sparkline-container">
-        <svg class="sparkline-svg"
-             viewBox="0 0 600 120"
-             preserveAspectRatio="none"
-             role="img"
-             aria-label="24-hour player count sparkline, min {{ server.chart_24h.min_players }}, max {{ server.chart_24h.max_players }}">
-          <line x1="10" y1="16" x2="590" y2="16" class="sparkline-grid-line" vector-effect="non-scaling-stroke" />
-          <line x1="10" y1="60" x2="590" y2="60" class="sparkline-grid-line" vector-effect="non-scaling-stroke" />
-          <line x1="10" y1="104" x2="590" y2="104" class="sparkline-grid-line" vector-effect="non-scaling-stroke" />
-          <text x="0" y="20" font-size="10" fill="#888">{{ server.chart_24h.max_players }}</text>
-          <text x="0" y="110" font-size="10" fill="#888">{{ server.chart_24h.min_players }}</text>
-          {% for segment in server.chart_24h.segments %}
-          <polygon points="{{ segment.area_points_str }}" class="sparkline-area" />
-          <polyline points="{{ segment.points_str }}" class="sparkline-line" fill="none" vector-effect="non-scaling-stroke" />
-          {% if segment.single %}<line x1="{{ segment.x }}" y1="{{ segment.y }}" x2="{{ segment.x }}" y2="{{ segment.y }}" class="sparkline-point" vector-effect="non-scaling-stroke" />{% endif %}
-          {% endfor %}
-        </svg>
+        <div class="sparkline-layout">
+          <div class="sparkline-y-axis mono-val" aria-hidden="true">
+            {% if server.chart_24h.y_ticks and server.chart_24h.y_ticks.top != '' %}
+            <span class="sparkline-y-tick tick-top">{{ server.chart_24h.y_ticks.top }}</span>
+            {% endif %}
+            {% if server.chart_24h.y_ticks and server.chart_24h.y_ticks.mid != '' %}
+            <span class="sparkline-y-tick tick-mid">{{ server.chart_24h.y_ticks.mid }}</span>
+            {% endif %}
+            {% if server.chart_24h.y_ticks and server.chart_24h.y_ticks.bottom != '' %}
+            <span class="sparkline-y-tick tick-bottom">{{ server.chart_24h.y_ticks.bottom }}</span>
+            {% endif %}
+          </div>
+
+          <div class="sparkline-stage" data-chart-points="{{ server.chart_24h.points_json }}">
+            <svg class="sparkline-svg"
+                 viewBox="0 0 600 120"
+                 preserveAspectRatio="none"
+                 role="img"
+                 aria-label="{{ server.chart_24h.range_title or '24-hour' }} player count sparkline, min {{ server.chart_24h.min_players }}, max {{ server.chart_24h.max_players }}">
+              <line x1="10" y1="16" x2="590" y2="16" class="sparkline-grid-line" vector-effect="non-scaling-stroke" />
+              <line x1="10" y1="60" x2="590" y2="60" class="sparkline-grid-line" vector-effect="non-scaling-stroke" />
+              <line x1="10" y1="104" x2="590" y2="104" class="sparkline-grid-line" vector-effect="non-scaling-stroke" />
+              {% if server.chart_24h.trend and server.chart_24h.trend.line %}
+              <line x1="{{ server.chart_24h.trend.line.x1 }}"
+                    y1="{{ server.chart_24h.trend.line.y1 }}"
+                    x2="{{ server.chart_24h.trend.line.x2 }}"
+                    y2="{{ server.chart_24h.trend.line.y2 }}"
+                    class="sparkline-trend-line is-{{ server.chart_24h.trend.direction }}"
+                    vector-effect="non-scaling-stroke" />
+              {% endif %}
+              {% for segment in server.chart_24h.segments %}
+              <polygon points="{{ segment.area_points_str }}" class="sparkline-area" />
+              <polyline points="{{ segment.points_str }}" class="sparkline-line" fill="none" vector-effect="non-scaling-stroke" />
+              {% if segment.single %}<line x1="{{ segment.x }}" y1="{{ segment.y }}" x2="{{ segment.x }}" y2="{{ segment.y }}" class="sparkline-point" vector-effect="non-scaling-stroke" />{% endif %}
+              {% endfor %}
+              <line x1="0" y1="16" x2="0" y2="104" class="sparkline-hover-line" vector-effect="non-scaling-stroke" hidden />
+            </svg>
+            <span class="sparkline-hover-marker" hidden></span>
+            <div class="sparkline-tooltip mono-val" role="status" hidden></div>
+          </div>
+        </div>
+
         <div class="sparkline-axis mono-val">
-          <span>{{ server.chart_24h.window_start_label or server.chart_24h.start_label or '24h ago' }} UTC</span>
-          <span>{{ server.chart_24h.count }} snapshots (Min {{ server.chart_24h.min_players }} / Max {{ server.chart_24h.max_players }})</span>
+          <span>{{ server.chart_24h.window_start_label or server.chart_24h.start_label or 'Start' }} UTC</span>
+          <span>{{ server.chart_24h.raw_count or server.chart_24h.count }} snapshots (Min {{ server.chart_24h.min_players }} / Max {{ server.chart_24h.max_players }})</span>
           <span>{{ server.chart_24h.window_end_label or server.chart_24h.end_label or 'Now' }} UTC</span>
         </div>
       </div>
       {% else %}
-      <div class="block-empty">No online snapshots recorded in the last 24 hours.</div>
+      <div class="block-empty">No online snapshots recorded for {{ (server.chart_24h.range_title or 'the selected period')|lower }}.</div>
       {% endif %}
     </section>
 

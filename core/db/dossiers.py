@@ -4,14 +4,42 @@ from __future__ import annotations
 
 import difflib
 import json
-import logging
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
-logger = logging.getLogger(__name__)
-
 from core.db.connection import _read_snapshot
 from core.db.schema import format_duration, format_hms, format_timestamp, normalize_ckey
+
+
+CHART_TIME_RANGES: Tuple[Dict[str, Any], ...] = (
+    {"key": "6h", "label": "6H", "title": "Last 6 Hours", "seconds": 6 * 3600, "bucket_sec": 60, "gap_sec": 600},
+    {"key": "day", "label": "24H", "title": "Last 24 Hours", "seconds": 86400, "bucket_sec": 60, "gap_sec": 600},
+    {"key": "3d", "label": "3D", "title": "Last 3 Days", "seconds": 3 * 86400, "bucket_sec": 300, "gap_sec": 900},
+    {"key": "week", "label": "7D", "title": "Last 7 Days", "seconds": 7 * 86400, "bucket_sec": 900, "gap_sec": 1800},
+    {"key": "month", "label": "30D", "title": "Last 30 Days", "seconds": 30 * 86400, "bucket_sec": 3600, "gap_sec": 7200},
+    {"key": "all", "label": "All Time", "title": "All Time", "seconds": None, "bucket_sec": None, "gap_sec": None},
+)
+
+_TIME_RANGE_MAP: Dict[str, Dict[str, Any]] = {item["key"]: item for item in CHART_TIME_RANGES}
+
+_TIME_RANGE_ALIASES: Dict[str, str] = {
+    "6h": "6h",
+    "day": "day",
+    "1d": "day",
+    "24h": "day",
+    "3d": "3d",
+    "week": "week",
+    "7d": "week",
+    "month": "month",
+    "30d": "month",
+    "all": "all",
+}
+
+
+def normalize_time_range(time_range: Optional[str]) -> str:
+    """Normalizes user-supplied time_range query values into a supported key."""
+    key = str(time_range or "day").strip().lower()
+    return _TIME_RANGE_ALIASES.get(key, "day")
 
 
 @_read_snapshot
@@ -358,6 +386,119 @@ async def get_player_dossier(
     return dossier
 
 
+def _compute_chart_trend(
+    points: List[Dict[str, Any]],
+    coords: List[Tuple[float, float]],
+    min_p: int,
+    max_p: int,
+    y_top: float = 16.0,
+    y_bottom: float = 104.0,
+) -> Dict[str, Any]:
+    """Computes half-to-half trend summary and OLS linear trend-line SVG coordinates."""
+    if len(points) < 2:
+        val = float(points[0]["player_count"]) if points else 0.0
+        return {
+            "direction": "flat",
+            "delta": 0.0,
+            "pct": None,
+            "first_avg": val,
+            "second_avg": val,
+            "prev_avg": None,
+            "prev_delta": None,
+            "prev_pct": None,
+            "label": "Stable" if points else "N/A",
+            "line": None,
+        }
+
+    t_first = float(points[0]["timestamp"])
+    t_last = float(points[-1]["timestamp"])
+    mid_ts = (t_first + t_last) / 2.0
+    first_vals = [float(p["player_count"]) for p in points if float(p["timestamp"]) <= mid_ts]
+    second_vals = [float(p["player_count"]) for p in points if float(p["timestamp"]) > mid_ts]
+    if not first_vals or not second_vals:
+        mid_idx = len(points) // 2
+        first_vals = [float(p["player_count"]) for p in points[:mid_idx]]
+        second_vals = [float(p["player_count"]) for p in points[mid_idx:]]
+
+    first_avg = round(sum(first_vals) / len(first_vals), 1)
+    second_avg = round(sum(second_vals) / len(second_vals), 1)
+    delta = round(second_avg - first_avg, 1)
+    pct = round(((second_avg - first_avg) / first_avg) * 100.0, 1) if first_avg > 0 else None
+
+    if abs(delta) < 0.3 or (pct is not None and abs(pct) < 2.0 and abs(delta) < 0.8):
+        direction = "flat"
+    elif delta > 0:
+        direction = "up"
+    else:
+        direction = "down"
+
+    if direction == "flat" and delta == 0.0:
+        label = "0.0 (Stable)"
+    elif pct is not None:
+        label = f"{delta:+.1f} ({pct:+.1f}%)"
+    else:
+        label = f"{delta:+.1f}"
+
+    # OLS linear regression line mapped into SVG coordinates [y_top, y_bottom]
+    trend_line = None
+    x1, x2 = coords[0][0], coords[-1][0]
+    if x2 > x1 and max_p > min_p:
+        xs = [float(c[0]) for c in coords]
+        ys = [float(p["player_count"]) for p in points]
+        x_mean = sum(xs) / len(xs)
+        y_mean = sum(ys) / len(ys)
+        denom = sum((xv - x_mean) ** 2 for xv in xs)
+        if denom > 0:
+            slope = sum((xv - x_mean) * (yv - y_mean) for xv, yv in zip(xs, ys)) / denom
+            pred_start = y_mean + slope * (x1 - x_mean)
+            pred_end = y_mean + slope * (x2 - x_mean)
+
+            def _to_y_float(val: float) -> float:
+                ratio = (val - min_p) / float(max_p - min_p)
+                return y_bottom - ratio * (y_bottom - y_top)
+
+            y1_raw = _to_y_float(pred_start)
+            y2_raw = _to_y_float(pred_end)
+            # Clip line segment to [y_top, y_bottom] while preserving slope.
+            dy = y2_raw - y1_raw
+            dx = x2 - x1
+            t0, t1 = 0.0, 1.0
+            for edge_ok, p_val, q_val in (
+                (True, -dy, y1_raw - y_top),
+                (True, dy, y_bottom - y1_raw),
+            ):
+                if p_val == 0:
+                    if q_val < 0:
+                        t0, t1 = 1.0, 0.0
+                        break
+                else:
+                    r = q_val / p_val
+                    if p_val < 0:
+                        t0 = max(t0, r)
+                    else:
+                        t1 = min(t1, r)
+            if t0 <= t1:
+                trend_line = {
+                    "x1": round(x1 + t0 * dx, 1),
+                    "y1": round(y1_raw + t0 * dy, 1),
+                    "x2": round(x1 + t1 * dx, 1),
+                    "y2": round(y1_raw + t1 * dy, 1),
+                }
+
+    return {
+        "direction": direction,
+        "delta": delta,
+        "pct": pct,
+        "first_avg": first_avg,
+        "second_avg": second_avg,
+        "prev_avg": None,
+        "prev_delta": None,
+        "prev_pct": None,
+        "label": label,
+        "line": trend_line,
+    }
+
+
 def _build_chart_24h(points: List[Dict[str, Any]], window_start=None, window_end=None) -> Dict[str, Any]:
     """Builds lightweight SVG polyline coordinates (viewBox 0 0 600 120) and summary metrics."""
     if not points:
@@ -373,6 +514,10 @@ def _build_chart_24h(points: List[Dict[str, Any]], window_start=None, window_end
             "window_start_label": format_timestamp(window_start) if window_start is not None else None,
             "window_end_label": format_timestamp(window_end) if window_end is not None else None,
             "segments": [],
+            "y_ticks": {"top": "", "mid": "", "bottom": ""},
+            "hover_points": [],
+            "points_json": "[]",
+            "trend": _compute_chart_trend([], [], 0, 0),
         }
 
     counts = [int(p["player_count"]) for p in points]
@@ -392,16 +537,32 @@ def _build_chart_24h(points: List[Dict[str, Any]], window_start=None, window_end
         return round(y_bottom - ratio * (y_bottom - y_top), 1)
 
     coords: List[Tuple[float, float]] = []
+    hover_points: List[Dict[str, Any]] = []
     n = len(points)
     start = window_start if window_start is not None else points[0]["timestamp"]
     end = window_end if window_end is not None else points[-1]["timestamp"]
     segments = []
     segment = []
     for i, c in enumerate(counts):
-        x_val = round(x_min + ((points[i]["timestamp"] - start) / max(1, end - start)) * (x_max - x_min), 1)
-        coord = (x_val, _calc_y(c))
+        p_item = points[i]
+        x_val = round(x_min + ((p_item["timestamp"] - start) / max(1, end - start)) * (x_max - x_min), 1)
+        y_val = _calc_y(c)
+        coord = (x_val, y_val)
         coords.append(coord)
-        if i and points[i].get("gap_before"):
+        hover_points.append(
+            {
+                "x": x_val,
+                "y": y_val,
+                "c": c,
+                "t": p_item.get("time_str") or format_timestamp(p_item["timestamp"]),
+                "m": p_item.get("map_name") or "",
+                "min": int(p_item.get("min_count", c)),
+                "max": int(p_item.get("max_count", c)),
+                "avg": float(p_item.get("avg_count", c)),
+                "n": int(p_item.get("samples", 1)),
+            }
+        )
+        if i and p_item.get("gap_before"):
             segments.append(segment)
             segment = []
         segment.append(coord)
@@ -417,8 +578,20 @@ def _build_chart_24h(points: List[Dict[str, Any]], window_start=None, window_end
             "single": len(segment) == 1,
         }
 
+    if max_p <= 0:
+        y_ticks = {"top": "", "mid": "", "bottom": "0"}
+    elif max_p == min_p:
+        y_ticks = {"top": "", "mid": str(max_p), "bottom": ""}
+    else:
+        y_ticks = {
+            "top": str(max_p),
+            "mid": str(round((max_p + min_p) / 2.0)) if (max_p - min_p) >= 2 else "",
+            "bottom": str(min_p),
+        }
+
     points_str = " ".join(f"{x},{y}" for x, y in coords)
     area_points_str = f"{coords[0][0]},{y_bottom} {points_str} {coords[-1][0]},{y_bottom}"
+    trend = _compute_chart_trend(points, coords, min_p, max_p, y_top=y_top, y_bottom=y_bottom)
 
     return {
         "points_str": points_str,
@@ -432,6 +605,10 @@ def _build_chart_24h(points: List[Dict[str, Any]], window_start=None, window_end
         "window_start_label": format_timestamp(window_start) if window_start is not None else points[0].get("time_str"),
         "window_end_label": format_timestamp(window_end) if window_end is not None else points[-1].get("time_str"),
         "segments": [segment_data(s) for s in segments],
+        "y_ticks": y_ticks,
+        "hover_points": hover_points,
+        "points_json": json.dumps(hover_points, separators=(",", ":"), ensure_ascii=False),
+        "trend": trend,
     }
 
 
@@ -605,56 +782,132 @@ async def get_server_details(
         total_playtime_seconds = int(agg_row["total_playtime_seconds"] or 0) if agg_row else 0
         total_hours = round(total_playtime_seconds / 3600.0, 1)
 
-        # History points
-        # Dynamically set cutoff based on range
-        range_seconds = {
-        'day': 86400,
-        'week': 86400 * 7,
-        'all': 365 * 86400 # Just over a year for all time
-        }.get(time_range, 86400)
-        logger.debug(f'DEBUG: time_range={time_range}, range_seconds={range_seconds}')
-        
-        ref_snap_ts = float(now_ts) if now_ts is not None else current_wall_ts
-        cutoff_ts = ref_snap_ts - range_seconds
-        
-        await cur.execute(
-        """
-        SELECT id, timestamp, player_count, round_duration, map_name
-        FROM server_snapshots
-        WHERE server_id = ? AND timestamp >= ? AND timestamp <= ?
-        ORDER BY timestamp ASC;
-        """,
-        (int(server_id), cutoff_ts, ref_snap_ts),
-        )
-        snap_rows = await cur.fetchall()
-        logger.debug(f'DEBUG: Retrieved {len(snap_rows)} snapshots for server_id={server_id}')
+        # Online history points for selected time range
+        norm_range = normalize_time_range(time_range)
+        range_cfg = _TIME_RANGE_MAP[norm_range]
+        range_seconds = range_cfg["seconds"]
 
-        # Preserve gaps before reducing dense observations into minute maxima.
+        ref_snap_ts = float(now_ts) if now_ts is not None else current_wall_ts
+        cutoff_ts: Optional[float] = (ref_snap_ts - float(range_seconds)) if range_seconds is not None else None
+
+        if cutoff_ts is not None:
+            await cur.execute(
+                """
+                SELECT id, timestamp, player_count, round_duration, map_name
+                FROM server_snapshots
+                WHERE server_id = ? AND timestamp >= ? AND timestamp <= ?
+                ORDER BY timestamp ASC;
+                """,
+                (int(server_id), cutoff_ts, ref_snap_ts),
+            )
+        else:
+            await cur.execute(
+                """
+                SELECT id, timestamp, player_count, round_duration, map_name
+                FROM server_snapshots
+                WHERE server_id = ? AND timestamp <= ?
+                ORDER BY timestamp ASC;
+                """,
+                (int(server_id), ref_snap_ts),
+            )
+        snap_rows = await cur.fetchall()
+
+        prev_avg: Optional[float] = None
+        if cutoff_ts is not None and range_seconds is not None:
+            prev_start = cutoff_ts - float(range_seconds)
+            await cur.execute(
+                """
+                SELECT COUNT(*) AS cnt, AVG(player_count) AS avg_cnt
+                FROM server_snapshots
+                WHERE server_id = ? AND timestamp >= ? AND timestamp < ?;
+                """,
+                (int(server_id), prev_start, cutoff_ts),
+            )
+            prev_row = await cur.fetchone()
+            if prev_row and int(prev_row["cnt"] or 0) > 0 and prev_row["avg_cnt"] is not None:
+                prev_avg = round(float(prev_row["avg_cnt"]), 1)
+
+        # Determine bucket & gap thresholds appropriate for the span.
+        if range_cfg["bucket_sec"] is not None:
+            bucket_sec = int(range_cfg["bucket_sec"])
+            gap_sec = int(range_cfg["gap_sec"])
+        elif len(snap_rows) >= 2:
+            span = max(1.0, float(snap_rows[-1]["timestamp"]) - float(snap_rows[0]["timestamp"]))
+            bucket_sec = max(60, int(span // 360))
+            gap_sec = max(600, bucket_sec * 3)
+        else:
+            bucket_sec = 60
+            gap_sec = 600
+
+        # Preserve gaps before reducing dense observations into bucket maxima.
         snapshots_24h: List[Dict[str, Any]] = []
         previous_ts = None
         for sr in snap_rows:
             ts = float(sr["timestamp"])
-            gap = previous_ts is not None and ts - previous_ts > 600
+            cnt = int(sr["player_count"])
+            gap = previous_ts is not None and (ts - previous_ts) > gap_sec
             point = dict(
                 timestamp=ts,
                 time_str=format_timestamp(ts),
-                player_count=int(sr["player_count"]),
+                player_count=cnt,
+                min_count=cnt,
+                max_count=cnt,
+                avg_count=float(cnt),
+                samples=1,
+                _sum=cnt,
                 round_duration=sr["round_duration"],
                 map_name=sr["map_name"],
                 gap_before=gap,
             )
-            if snapshots_24h and not gap and int(ts // 60) == int(snapshots_24h[-1]["timestamp"] // 60):
-                if point["player_count"] >= snapshots_24h[-1]["player_count"]:
-                    point["gap_before"] = snapshots_24h[-1]["gap_before"]
+            if snapshots_24h and not gap and int(ts // bucket_sec) == int(snapshots_24h[-1]["timestamp"] // bucket_sec):
+                prev_pt = snapshots_24h[-1]
+                new_samples = prev_pt["samples"] + 1
+                new_sum = prev_pt["_sum"] + cnt
+                new_min = min(prev_pt["min_count"], cnt)
+                new_max = max(prev_pt["max_count"], cnt)
+                new_avg = round(new_sum / new_samples, 1)
+                if cnt >= prev_pt["player_count"]:
+                    point["gap_before"] = prev_pt["gap_before"]
+                    point["min_count"] = new_min
+                    point["max_count"] = new_max
+                    point["avg_count"] = new_avg
+                    point["samples"] = new_samples
+                    point["_sum"] = new_sum
                     snapshots_24h[-1] = point
+                else:
+                    prev_pt["min_count"] = new_min
+                    prev_pt["max_count"] = new_max
+                    prev_pt["avg_count"] = new_avg
+                    prev_pt["samples"] = new_samples
+                    prev_pt["_sum"] = new_sum
             else:
                 snapshots_24h.append(point)
             previous_ts = ts
 
-    chart_24h = _db._build_chart_24h(snapshots_24h, cutoff_ts, ref_snap_ts)
+        for pt in snapshots_24h:
+            pt.pop("_sum", None)
+
+    window_start = cutoff_ts if cutoff_ts is not None else (snapshots_24h[0]["timestamp"] if snapshots_24h else None)
+    chart_24h = _db._build_chart_24h(snapshots_24h, window_start, ref_snap_ts)
     if snap_rows:
         counts = [int(row["player_count"]) for row in snap_rows]
-        chart_24h.update(min_players=min(counts), max_players=max(counts), avg_players=round(sum(counts) / len(counts), 1))
+        raw_avg = round(sum(counts) / len(counts), 1)
+        chart_24h.update(min_players=min(counts), max_players=max(counts), avg_players=raw_avg)
+        if prev_avg is not None:
+            prev_delta = round(raw_avg - prev_avg, 1)
+            prev_pct = round(((raw_avg - prev_avg) / prev_avg) * 100.0, 1) if prev_avg > 0 else None
+            chart_24h["trend"]["prev_avg"] = prev_avg
+            chart_24h["trend"]["prev_delta"] = prev_delta
+            chart_24h["trend"]["prev_pct"] = prev_pct
+
+    chart_24h["range_key"] = norm_range
+    chart_24h["range_label"] = range_cfg["label"]
+    chart_24h["range_title"] = range_cfg["title"]
+    chart_24h["raw_count"] = len(snap_rows)
+    chart_24h["available_ranges"] = [
+        {"key": item["key"], "label": item["label"], "title": item["title"]}
+        for item in CHART_TIME_RANGES
+    ]
 
     raw_current_players = srv_row["current_players"]
     effective_current_players = raw_current_players
@@ -744,6 +997,8 @@ async def get_server_details(
         "snapshots_24h": snapshots_24h,
         "online_history": snapshots_24h,
         "chart_24h": chart_24h,
+        "chart": chart_24h,
+        "time_range": norm_range,
         "server": {
             "id": int(srv_row["id"]),
             "identifier": srv_row["identifier"],

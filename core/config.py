@@ -80,6 +80,7 @@ class AppConfig(BaseModel):
     )
     cycle_timeout_seconds: float = Field(default=300, gt=0, le=3600, allow_inf_nan=False)
     stale_server_seconds: int = Field(default=900, ge=1)
+    snapshot_retention_days: int = Field(default=90, ge=1, le=3650, description="Days to retain server online snapshots")
     min_free_disk_mb: int = Field(default=100, ge=0)
     db_path: str = Field(default="tracker.db", min_length=1, description="SQLite database path")
     hub_url: str = Field(

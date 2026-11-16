@@ -1410,6 +1410,90 @@ code,
   overflow-wrap: anywhere;
 }
 
+.chart-block-header {
+  flex-wrap: wrap;
+  gap: 10px 16px;
+}
+
+.chart-title-group {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.chart-trend-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
+  background: var(--bg-recessed);
+  color: var(--text-secondary);
+}
+
+.chart-trend-badge.is-up {
+  color: var(--status-online);
+  border-color: var(--status-online-border);
+  background: var(--status-online-bg);
+}
+
+.chart-trend-badge.is-down {
+  color: #f87171;
+  border-color: rgba(248, 113, 113, 0.35);
+  background: rgba(248, 113, 113, 0.08);
+}
+
+.chart-controls-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.chart-range-tabs {
+  display: inline-flex;
+  align-items: center;
+  background: var(--bg-recessed);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.chart-range-btn {
+  padding: 3px 9px;
+  font-size: 0.74rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  text-decoration: none;
+  border-right: 1px solid var(--border-subtle);
+  transition: background-color 0.12s ease, color 0.12s ease;
+}
+
+.chart-range-btn:last-child {
+  border-right: none;
+}
+
+.chart-range-btn:hover {
+  background: var(--bg-row-hover);
+  color: var(--text-primary);
+}
+
+.chart-range-btn.is-active {
+  background: var(--accent-red);
+  color: #ffffff;
+  font-weight: 600;
+}
+
+.chart-range-btn:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: -2px;
+}
+
 .chart-stats {
   display: flex;
   align-items: center;
@@ -1425,6 +1509,51 @@ code,
   padding: 12px 14px 10px;
 }
 
+.sparkline-layout {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.sparkline-y-axis {
+  position: relative;
+  width: 28px;
+  flex-shrink: 0;
+  height: 120px;
+  font-size: 0.7rem;
+  line-height: 1;
+  color: var(--text-muted);
+  text-align: right;
+  user-select: none;
+}
+
+.sparkline-y-tick {
+  position: absolute;
+  right: 0;
+  transform: translateY(-50%);
+}
+
+.sparkline-y-tick.tick-top {
+  top: 13.33%;
+}
+
+.sparkline-y-tick.tick-mid {
+  top: 50%;
+}
+
+.sparkline-y-tick.tick-bottom {
+  top: 86.67%;
+}
+
+.sparkline-stage {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  height: 120px;
+  cursor: crosshair;
+  touch-action: pan-y;
+}
+
 .sparkline-svg {
   width: 100%;
   height: 120px;
@@ -1435,6 +1564,21 @@ code,
   stroke: var(--border-subtle);
   stroke-width: 1;
   stroke-dasharray: 3 3;
+}
+
+.sparkline-trend-line {
+  stroke: var(--text-muted);
+  stroke-width: 1.5;
+  stroke-dasharray: 5 4;
+  opacity: 0.75;
+}
+
+.sparkline-trend-line.is-up {
+  stroke: #34d399;
+}
+
+.sparkline-trend-line.is-down {
+  stroke: #f87171;
 }
 
 .sparkline-area {
@@ -1452,6 +1596,62 @@ code,
   stroke: var(--status-online);
   stroke-width: 5px;
   stroke-linecap: round;
+}
+
+.sparkline-hover-line {
+  stroke: var(--text-secondary);
+  stroke-width: 1;
+  stroke-dasharray: 2 2;
+  opacity: 0.75;
+}
+
+.sparkline-hover-marker {
+  position: absolute;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--status-online);
+  border: 2px solid var(--bg-recessed);
+  box-shadow: 0 0 0 1px var(--status-online);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  z-index: 4;
+}
+
+.sparkline-hover-line[hidden],
+.sparkline-hover-marker[hidden],
+.sparkline-tooltip[hidden] {
+  display: none;
+}
+
+.sparkline-tooltip {
+  position: absolute;
+  top: 6px;
+  z-index: 6;
+  pointer-events: none;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 5px 8px;
+  font-size: 0.72rem;
+  line-height: 1.35;
+  color: var(--text-primary);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.55);
+  white-space: nowrap;
+}
+
+.sparkline-tooltip-val {
+  font-weight: 700;
+  color: var(--status-online);
+}
+
+.sparkline-tooltip-time {
+  color: var(--text-secondary);
+}
+
+.sparkline-tooltip-sub {
+  color: var(--text-muted);
+  font-size: 0.68rem;
 }
 
 .roster-filter-row {

@@ -61,7 +61,6 @@ async def dashboard_page(request: Request):
     Renders main tactical search console and monitored sector overview.
     """
     import web.app as _app
-    logger.debug(f"DEBUG: server_page received time_range={time_range}")
 
     servers = await _app.core_db.get_active_servers()
     overview = await _app.core_db.get_network_overview()
@@ -86,7 +85,6 @@ async def player_page(request: Request, ckey: str):
     Renders permalink page for a target ckey.
     """
     import web.app as _app
-    logger.debug(f"DEBUG: server_page received time_range={time_range}")
 
     norm_ckey = _app.normalize_ckey(ckey.strip()) if ckey else ""
     dossier = await _app.core_db.get_player_dossier(norm_ckey) if norm_ckey else None
@@ -128,7 +126,6 @@ async def player_sessions_partial(
     HTMX pagination partial for player recent sessions table rows.
     """
     import web.app as _app
-    logger.debug(f"DEBUG: server_page received time_range={time_range}")
 
     norm_ckey = _app.normalize_ckey(ckey.strip()) if ckey else ""
     dossier = (
@@ -153,13 +150,12 @@ async def player_sessions_partial(
 
 
 @router.get("/server/{server_id}")
-async def server_page(request: Request, server_id: int, time_range: str = Query(default='day')):
+async def server_page(request: Request, server_id: int, time_range: str = Query(default="day")):
     """
     Renders detailed server telemetry page (/server/{server_id}).
     Returns 404 HTML response if server_id does not exist in database.
     """
     import web.app as _app
-    logger.debug(f"DEBUG: server_page received time_range={time_range}")
 
     server_details = await _app.core_db.get_server_details(server_id, time_range=time_range)
     servers = await _app.core_db.get_active_servers()
@@ -174,7 +170,7 @@ async def server_page(request: Request, server_id: int, time_range: str = Query(
                 "request": request,
                 "server": None,
                 "server_id": server_id,
-                "time_range": time_range,
+                "time_range": "day",
                 "not_found": True,
                 "manifest_supported": False,
                 "servers": servers,
@@ -194,7 +190,7 @@ async def server_page(request: Request, server_id: int, time_range: str = Query(
             "request": request,
             "server": server_details,
             "server_id": server_id,
-            "time_range": time_range,
+            "time_range": server_details.get("time_range", "day"),
             "not_found": False,
             "manifest_supported": manifest_supported,
             "servers": servers,
@@ -212,7 +208,6 @@ async def fetch_server_manifest_htmx(request: Request, server_id: int):
     caches the structured crew manifest in SQLite, and renders the HTML partial.
     """
     import web.app as _app
-    logger.debug(f"DEBUG: server_page received time_range={time_range}")
 
     server_details = await _app.core_db.get_server_details(server_id)
     if server_details is None:

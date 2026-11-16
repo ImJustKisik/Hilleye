@@ -368,7 +368,7 @@ class Tracker:
         if self._clock_trusted and mono - self._clock_mono >= 86400 and (
             self._last_prune_time is None or mono - self._last_prune_time >= 86400
         ):
-            await prune_server_snapshots(max_age_days=7, now_ts=ts)
+            await prune_server_snapshots(max_age_days=self.config.snapshot_retention_days, now_ts=ts)
             self._last_prune_time = mono
         if not self._clock_trusted:
             self._degraded_reasons.append("System clock changed; retention paused")

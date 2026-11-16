@@ -45,15 +45,18 @@ async def get_servers() -> Dict[str, Any]:
 
 
 @router.get("/api/v1/server/{server_id}")
-async def get_server_api(server_id: int) -> Any:
+async def get_server_api(
+    server_id: int,
+    time_range: str = Query(default="day"),
+) -> Any:
     """
     Returns detailed JSON status, current round parameters, active roster,
-    top-20 players by playtime, and 24-hour online history for the specified server.
+    top-20 players by playtime, and online history for the specified server and time_range.
     Returns 404 if server_id does not exist.
     """
     import web.app as _app
 
-    details = await _app.core_db.get_server_details(server_id)
+    details = await _app.core_db.get_server_details(server_id, time_range=time_range)
     if details is None:
         return JSONResponse(
             status_code=404,
