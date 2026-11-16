@@ -3,14 +3,25 @@
 {% block extra_head %}
 <link rel="stylesheet" href="/static/css/logs.css">
 <script src="/static/js/logs.js" defer></script>
+{% if status_kind == 'forbidden' %}
+<link rel="stylesheet" href="/static/css/access-denied.css">
+<script src="/static/js/access-denied.js" defer></script>
+{% endif %}
 {% endblock %}
 
 {% block content %}
-<article class="panel logs-auth-card" aria-label="Авторизация в разделе логов">
+<article class="panel logs-auth-card{% if status_kind == 'forbidden' %} logs-access-denied{% endif %}" aria-label="Авторизация в разделе логов">
+  {% if status_kind == 'forbidden' %}
+  <header class="logs-denied-header">
+    <span class="logs-denied-brand">HILLEYE <span>// ACCESS CONTROL</span></span>
+    <span class="logs-denied-code">403</span>
+  </header>
+  {% else %}
   <div class="logs-auth-badge mono-val">
     <svg class="logs-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
     <span>HILLEYE // ACCESS CONTROL</span>
   </div>
+  {% endif %}
   {% if status_kind == 'unconfigured' %}
     <h1 class="logs-auth-title">Discord OAuth2 не настроен</h1>
     <p class="logs-auth-copy">
@@ -19,22 +30,40 @@
     <a href="/" class="logs-btn">На главную</a>
 
   {% elif status_kind == 'forbidden' %}
-    <h1 class="logs-auth-title">Нет доступа</h1>
-    <p class="logs-auth-copy">
-      Аккаунт не добавлен в список доступа к логам. Передайте свой Discord ID администратору:
-    </p>
-    {% if session_user %}
-    <div class="logs-id-box">
-      <span>{{ session_user.display_name or session_user.username }}</span>
-      <span>ID: <code id="my-discord-id">{{ session_user.uid }}</code></span>
-      <button type="button" class="logs-btn logs-btn-sm" data-copy-text="{{ session_user.uid }}">Скопировать ID</button>
+    <div class="logs-denied-content">
+      <div class="logs-denied-symbol" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="11" width="18" height="11" rx="2"/>
+          <path class="logs-denied-shackle" d="M7 11V7a5 5 0 0 1 10 0v4"/>
+        </svg>
+      </div>
+      <div class="logs-denied-heading">
+      <div class="logs-denied-label">ACCESS DENIED</div>
+      <h1 class="logs-auth-title">Нет доступа</h1>
+      </div>
+      <p class="logs-auth-copy">
+        Аккаунт не добавлен в список доступа к логам. Передайте свой Discord ID администратору:
+      </p>
+      {% if session_user %}
+      <div class="logs-id-box logs-denied-identity">
+        <span class="logs-denied-avatar" aria-hidden="true">{{ (session_user.display_name or session_user.username or '?')|first|upper }}</span>
+        <div class="logs-denied-user">
+          <span>{{ session_user.display_name or session_user.username }}</span>
+          <span class="logs-denied-id">ID: <code id="my-discord-id">{{ session_user.uid }}</code></span>
+        </div>
+        <button type="button" class="logs-btn logs-btn-sm" data-copy-text="{{ session_user.uid }}">Скопировать ID</button>
+      </div>
+      <form action="/auth/logout" method="post" class="logs-topbar-left">
+        <input type="hidden" name="csrf_token" value="{{ session_user.csrf }}">
+        <a href="/" class="logs-btn">На главную</a>
+        <button type="submit" class="logs-btn">Выйти</button>
+      </form>
+      {% endif %}
+      <audio id="logs-denied-audio" src="/static/audio/half-life-access-denied.wav" preload="auto" aria-hidden="true"></audio>
+      <button type="button" id="logs-denied-replay" class="logs-btn logs-btn-sm" hidden>Повторить со звуком</button>
+      <span id="logs-denied-audio-status" class="logs-denied-audio-status" role="status" aria-live="polite"></span>
     </div>
-    <form action="/auth/logout" method="post" class="logs-topbar-left">
-      <input type="hidden" name="csrf_token" value="{{ session_user.csrf }}">
-      <button type="submit" class="logs-btn">Выйти</button>
-      <a href="/" class="logs-btn">На главную</a>
-    </form>
-    {% endif %}
+    <footer class="logs-denied-footer"><span aria-hidden="true"></span>Доступ ограничен списком разрешённых пользователей</footer>
 
   {% elif status_kind == 'admin_required' %}
     <h1 class="logs-auth-title">Недостаточно прав</h1>
