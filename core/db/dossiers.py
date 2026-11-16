@@ -602,18 +602,18 @@ async def get_server_details(
         total_playtime_seconds = int(agg_row["total_playtime_seconds"] or 0) if agg_row else 0
         total_hours = round(total_playtime_seconds / 3600.0, 1)
 
-    # History points
-    # Dynamically set cutoff based on range
-    range_seconds = {
+        # History points
+        # Dynamically set cutoff based on range
+        range_seconds = {
         'day': 86400,
         'week': 86400 * 7,
         'all': 365 * 86400 # Just over a year for all time
-    }.get(time_range, 86400)
-    
-    ref_snap_ts = float(now_ts) if now_ts is not None else current_wall_ts
-    cutoff_ts = ref_snap_ts - range_seconds
-    
-    await cur.execute(
+        }.get(time_range, 86400)
+        
+        ref_snap_ts = float(now_ts) if now_ts is not None else current_wall_ts
+        cutoff_ts = ref_snap_ts - range_seconds
+        
+        await cur.execute(
         """
         SELECT id, timestamp, player_count, round_duration, map_name
         FROM server_snapshots
@@ -621,8 +621,8 @@ async def get_server_details(
         ORDER BY timestamp ASC;
         """,
         (int(server_id), cutoff_ts, ref_snap_ts),
-    )
-    snap_rows = await cur.fetchall()
+        )
+        snap_rows = await cur.fetchall()
 
         # Preserve gaps before reducing dense observations into minute maxima.
         snapshots_24h: List[Dict[str, Any]] = []
