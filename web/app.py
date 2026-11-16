@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.exception_handlers import http_exception_handler, request_validation_exception_handler
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -248,6 +249,9 @@ async def response_headers(request: Request, call_next):
     if request.url.path.startswith("/static/") and response.status_code in (200, 206, 304):
         response.headers["Cache-Control"] = "public, max-age=86400, stale-while-revalidate=3600"
     return response
+
+
+app.add_middleware(GZipMiddleware, minimum_size=500, compresslevel=6)
 
 
 @app.exception_handler(RequestValidationError)

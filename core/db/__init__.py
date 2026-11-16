@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 from contextvars import ContextVar
 import logging
-from typing import Optional
+from typing import List, Optional, Set
 
 import aiosqlite
 
@@ -63,6 +63,10 @@ _connection: Optional[aiosqlite.Connection] = None
 _db_lock = asyncio.Lock()
 _operation_lock = asyncio.Lock()
 _read_slots = asyncio.Semaphore(8)
+_read_pool: List[aiosqlite.Connection] = []
+_read_pool_lock = asyncio.Lock()
+_read_pool_generation: int = 0
+_active_read_conns: Set[aiosqlite.Connection] = set()
 _operation_connection: ContextVar[Optional[aiosqlite.Connection]] = ContextVar("db_operation", default=None)
 
 __all__ = [

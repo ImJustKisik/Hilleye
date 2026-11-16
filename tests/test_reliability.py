@@ -678,3 +678,118 @@ def test_selfbot_server_matching_by_id_and_partial_name():
     assert [s["id"] for s in match_servers_by_query(servers, "220")] == [4]
     assert match_servers_by_query(servers, "nonexistent") == []
 
+
+async def test_read_pool_reuses_connections_and_observes_fresh_wal_writes(tmp_path, monkeypatch):
+    db_file = tmp_path / "pool_test.db"
+    await db.init_db(str(db_file))
+    await db.upsert_server("byond://127.0.0.1:1111", "Pool Alpha", "127.0.0.1", 1111, now_ts=1000.0)
+
+    connect_calls = 0
+    original_connect = aiosqlite.connect
+
+    def counting_connect(*args, **kwargs):
+        nonlocal connect_calls
+        connect_calls += 1
+        return original_connect(*args, **kwargs)
+
+    monkeypatch.setattr(aiosqlite, "connect", counting_connect)
+
+    servers_first = await db.get_active_servers()
+    assert len(servers_first) == 1
+    assert connect_calls == 1
+    assert len(db._read_pool) == 1
+
+    # Subsequent reads reuse the pooled connection without opening new connections.
+    for _ in range(5):
+        servers = await db.get_active_servers()
+        assert len(servers) == 1
+    assert connect_calls == 1
+
+    # Writes committed on the main connection are visible on the next pooled read.
+    await db.upsert_server("byond://127.0.0.1:2222", "Pool Beta", "127.0.0.1", 2222, now_ts=1100.0)
+    servers_after = await db.get_active_servers()
+    assert {s["title"] for s in servers_after} == {"Pool Alpha", "Pool Beta"}
+    assert connect_calls == 1
+
+    await db.close_db()
+    assert db._read_pool == []
+    assert db._active_read_conns == set()
+    db_file.unlink()
+    assert not db_file.exists()
+
+
+async def test_read_pool_discards_connection_on_exception_and_cancellation(tmp_path):
+    db_file = tmp_path / "pool_err.db"
+    await db.init_db(str(db_file))
+    await db.upsert_server("byond://127.0.0.1:1111", "Pool Alpha", "127.0.0.1", 1111, now_ts=1000.0)
+    assert len(await db.get_active_servers()) == 1
+    first_conn = db._read_pool[0]
+
+    @db._read_snapshot
+    async def failing_read():
+        raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError, match="boom"):
+        await failing_read()
+    assert first_conn not in db._read_pool
+    assert first_conn not in db._active_read_conns
+
+    # Next healthy read still succeeds and populates the pool cleanly.
+    assert len(await db.get_active_servers()) == 1
+    second_conn = db._read_pool[0]
+    assert second_conn is not first_conn
+
+    entered = asyncio.Event()
+
+    @db._read_snapshot
+    async def cancelled_read():
+        entered.set()
+        await asyncio.Event().wait()
+
+    task = asyncio.create_task(cancelled_read())
+    await entered.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert second_conn not in db._read_pool
+    assert second_conn not in db._active_read_conns
+
+    await db.close_db()
+    db_file.unlink()
+
+
+async def test_db_and_logs_db_pragmas_configured(tmp_path):
+    from core import logs_db
+
+    tracker_file = tmp_path / "pragmas_tracker.db"
+    logs_file = tmp_path / "pragmas_logs.db"
+    await db.init_db(str(tracker_file))
+    await logs_db.init_logs_db(str(logs_file))
+    try:
+        main_conn = await db.get_connection()
+        cache_sz = (await (await main_conn.execute("PRAGMA cache_size")).fetchone())[0]
+        temp_st = (await (await main_conn.execute("PRAGMA temp_store")).fetchone())[0]
+        assert cache_sz == -65536
+        assert temp_st == 2  # MEMORY
+
+        @db._read_snapshot
+        async def inspect_read_pragmas():
+            rconn = await db.get_connection()
+            rcache = (await (await rconn.execute("PRAGMA cache_size")).fetchone())[0]
+            rtemp = (await (await rconn.execute("PRAGMA temp_store")).fetchone())[0]
+            rro = (await (await rconn.execute("PRAGMA query_only")).fetchone())[0]
+            return rcache, rtemp, rro
+
+        rcache, rtemp, rro = await inspect_read_pragmas()
+        assert (rcache, rtemp, rro) == (-16384, 2, 1)
+
+        lconn = await logs_db.get_logs_connection()
+        lcache = (await (await lconn.execute("PRAGMA cache_size")).fetchone())[0]
+        ltemp = (await (await lconn.execute("PRAGMA temp_store")).fetchone())[0]
+        assert lcache == -65536
+        assert ltemp == 2
+    finally:
+        await logs_db.close_logs_db()
+        await db.close_db()
+
+

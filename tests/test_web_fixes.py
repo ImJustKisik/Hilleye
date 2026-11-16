@@ -304,3 +304,18 @@ async def test_player_typeahead_suggest_and_fuzzy_not_found(async_client):
     assert "/player/captainkirk" in page_404.text
 
 
+async def test_gzip_compression_for_html_and_static_assets(async_client):
+    html_resp = await async_client.get("/", headers={"Accept-Encoding": "gzip"})
+    assert html_resp.status_code == 200
+    assert html_resp.headers.get("content-encoding") == "gzip"
+    assert "accept-encoding" in html_resp.headers.get("vary", "").lower()
+    assert "Hilleye" in html_resp.text
+
+    css_resp = await async_client.get("/static/css/style.css", headers={"Accept-Encoding": "gzip"})
+    assert css_resp.status_code == 200
+    assert css_resp.headers.get("content-encoding") == "gzip"
+    assert css_resp.headers["Cache-Control"] == "public, max-age=86400, stale-while-revalidate=3600"
+    assert len(css_resp.text) > 500
+
+
+
