@@ -150,14 +150,14 @@ async def player_sessions_partial(
 
 
 @router.get("/server/{server_id}")
-async def server_page(request: Request, server_id: int):
+async def server_page(request: Request, server_id: int, time_range: str = Query(default='day')):
     """
     Renders detailed server telemetry page (/server/{server_id}).
     Returns 404 HTML response if server_id does not exist in database.
     """
     import web.app as _app
 
-    server_details = await _app.core_db.get_server_details(server_id)
+    server_details = await _app.core_db.get_server_details(server_id, time_range=time_range)
     servers = await _app.core_db.get_active_servers()
     tracker = _app.get_tracker()
     tracker_stats = tracker.get_stats() if tracker else {}
@@ -170,6 +170,7 @@ async def server_page(request: Request, server_id: int):
                 "request": request,
                 "server": None,
                 "server_id": server_id,
+                "time_range": time_range,
                 "not_found": True,
                 "manifest_supported": False,
                 "servers": servers,
@@ -189,6 +190,7 @@ async def server_page(request: Request, server_id: int):
             "request": request,
             "server": server_details,
             "server_id": server_id,
+            "time_range": time_range,
             "not_found": False,
             "manifest_supported": manifest_supported,
             "servers": servers,

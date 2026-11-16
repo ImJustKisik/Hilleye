@@ -157,8 +157,14 @@
     <!-- 3. 24-Hour Online Activity Sparkline (Inline SVG) -->
     <section class="dossier-block" aria-label="24-Hour Online History">
       <div class="block-header">
-        <h2 class="block-title">Online Activity (Last 24 Hours)</h2>
+        <h2 class="block-title">Online Activity (Last {{ {'day': '24 Hours', 'week': '7 Days', 'all': 'All Time'}[time_range] }})</h2>
         <div class="chart-stats mono-val">
+          <select name="time_range" onchange="window.location.href='/server/{{ server.id }}?time_range=' + this.value">
+            <option value="day" {% if time_range == 'day' %}selected{% endif %}>Last Day</option>
+            <option value="week" {% if time_range == 'week' %}selected{% endif %}>Last Week</option>
+            <option value="all" {% if time_range == 'all' %}selected{% endif %}>All Time</option>
+          </select>
+          <span class="sep">&bull;</span>
           <span>Min: <strong>{{ server.chart_24h.min_players }}</strong></span>
           <span class="sep">&bull;</span>
           <span>Max: <strong>{{ server.chart_24h.max_players }}</strong></span>
