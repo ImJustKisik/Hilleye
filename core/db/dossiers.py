@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import difflib
 import json
+import logging
 import time
 from typing import Any, Dict, List, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 from core.db.connection import _read_snapshot
 from core.db.schema import format_duration, format_hms, format_timestamp, normalize_ckey

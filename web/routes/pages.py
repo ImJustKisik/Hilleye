@@ -23,7 +23,6 @@ async def search_player(request: Request, ckey: str = Form(default="")):
     Supports HX-Push-Url to update browser location bar dynamically.
     """
     import web.app as _app
-    logger.debug(f"DEBUG: server_page received time_range={time_range}")
 
     norm_ckey = _app.normalize_ckey(ckey.strip()) if ckey else ""
     target_url = f"/player/{norm_ckey}" if norm_ckey else "/"
