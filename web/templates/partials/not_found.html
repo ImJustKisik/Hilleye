@@ -1,11 +1,8 @@
 <div class="panel not-found-panel" role="status">
   <div class="not-found-body">
-    <div class="subject-meta-row">
-      <a href="/" class="raw-json-link dossier-back-btn">&larr; Back to servers</a>
-    </div>
-    <h2 class="not-found-heading">
+    <h1 class="not-found-heading">
       No record found for <code class="queried-key">{{ ckey or raw_query or 'empty query' }}</code>
-    </h2>
+    </h1>
     <p class="not-found-desc">
       No activity recorded for this ckey on tracked Space Station 13 servers.
     </p>
@@ -14,12 +11,7 @@
       <div class="not-found-suggestions-title">Did you mean one of these players?</div>
       <div class="quick-player-list">
         {% for s in suggestions %}
-        <a href="/player/{{ s.ckey }}"
-           hx-post="/search"
-           hx-vals='{"ckey": "{{ s.ckey }}"}'
-           hx-target="#dossier-container"
-           hx-swap="innerHTML"
-           class="quick-player-chip">
+        <a href="/player/{{ s.ckey }}" class="quick-player-chip">
           <span class="status-dot {{ 'online' if s.is_online else 'offline' }}" aria-hidden="true"></span>
           <span class="mono-val">{{ s.ckey }}</span>
           <span class="quick-player-state mono-val">

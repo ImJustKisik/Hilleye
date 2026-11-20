@@ -1,0 +1,27 @@
+<form class="query-form" action="/search" method="post" role="search" aria-label="Find a player">
+  <label for="ckey-input" class="sr-only">BYOND player ckey</label>
+  <div class="command-input-container">
+    <div class="command-input-wrap">
+      <input type="text"
+             id="ckey-input"
+             name="ckey"
+             required
+             pattern=".*\S.*"
+             class="command-input"
+             placeholder="Look up BYOND ckey..."
+             value="{{ search_value | default('') }}"
+             autocomplete="off"
+             spellcheck="false"
+             role="combobox"
+             aria-autocomplete="list"
+             aria-expanded="false"
+             aria-controls="ckey-suggest-list">
+    </div>
+    <ul id="ckey-suggest-list"
+        class="ckey-suggest-dropdown"
+        role="listbox"
+        aria-label="Player suggestions"
+        hidden></ul>
+  </div>
+  <button type="submit" class="command-submit">Find player</button>
+</form>

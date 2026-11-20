@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+
+{% block title %}{{ dossier.ckey ~ ' — Player' if dossier else ckey ~ ' — Not Found' }} — Hilleye{% endblock %}
+
+{% block head_meta %}
+  {% if dossier %}
+  <meta property="og:site_name" content="Hilleye">
+  <meta property="og:type" content="profile">
+  <meta property="og:title" content="{{ dossier.ckey }} — Hilleye Player Profile">
+  <meta property="og:description" content="Playtime: {{ dossier.total_hours }}h across {{ dossier.servers_count }} servers ({{ dossier.sessions_count }} sessions). {{ 'Online now on ' ~ dossier.current_server if dossier.is_online else 'Offline — Last seen ' ~ dossier.last_seen ~ ' UTC' }}.">
+  <meta property="og:url" content="{{ base_url }}/player/{{ dossier.ckey }}">
+  <meta property="og:image" content="{{ base_url }}/api/v1/player/{{ dossier.ckey }}/card.png">
+  <meta property="og:image:width" content="720">
+  <meta property="og:image:height" content="360">
+  <meta name="twitter:card" content="summary_large_image">
+  {% else %}
+  {{ super() }}
+  {% endif %}
+{% endblock %}
+
+{% block header_stats %}{% endblock %}
+
+{% block content %}
+<div class="player-layout">
+  <div class="player-navigation">
+    <a href="/" class="player-back"><span aria-hidden="true">&larr;</span> All servers</a>
+    {% set search_value = ckey if not dossier else '' %}
+    {% include "partials/player_search.html" %}
+  </div>
+  {% if dossier %}
+    {% include "partials/player_dossier.html" %}
+  {% else %}
+    {% include "partials/not_found.html" %}
+  {% endif %}
+</div>
+{% endblock %}

@@ -506,16 +506,8 @@ code,
 }
 
 /* ==========================================================================
-   Dossier Viewport & Suggestion Chips
+   Player Suggestion Chips
    ========================================================================== */
-
-.dossier-viewport {
-  min-width: 0;
-}
-
-.dossier-viewport:empty {
-  display: none;
-}
 
 .quick-player-list {
   display: flex;
@@ -680,15 +672,6 @@ code,
   color: var(--text-secondary);
 }
 
-.status-sep {
-  color: var(--text-muted);
-}
-
-.status-dur {
-  color: var(--text-primary);
-  font-weight: 600;
-}
-
 /* 4-Column Summary Strip */
 .telemetry-strip {
   display: grid;
@@ -771,62 +754,299 @@ code,
   color: var(--text-muted);
 }
 
-/* Server Playtime Distribution */
-.distribution-table {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
+/* Player Profile */
+.player-layout {
+  max-width: 1090px;
+  margin-inline: auto;
 }
 
-.dist-row {
+.player-navigation {
   display: flex;
-  flex-direction: column;
-  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 20px;
+  margin-bottom: 18px;
 }
 
-.dist-top {
+.player-back {
+  color: var(--text-secondary);
+  text-decoration: none;
+  font-size: 0.86rem;
+}
+
+.player-back:hover {
+  color: var(--text-primary);
+}
+
+.player-navigation .query-form {
+  flex: 0 1 385px;
+  flex-direction: row;
+}
+
+.player-navigation .command-submit {
+  min-height: 38px;
+  width: auto;
+  background: var(--bg-elevated);
+  border-color: var(--border-strong);
+}
+
+.player-navigation .command-submit:hover {
+  background: var(--bg-row-hover);
+  border-color: var(--border-input-focus);
+}
+
+.player-hero {
+  --player-inset: clamp(16px, 3vw, 32px);
+  padding: var(--player-inset) 0 0;
+  border-radius: 10px;
+  border-top: 2px solid var(--accent-red);
+  background: linear-gradient(115deg, #211a22, var(--bg-surface) 55%);
+}
+
+.player-hero-header {
   display: flex;
   justify-content: space-between;
-  align-items: baseline;
-  gap: 12px;
+  align-items: flex-start;
   flex-wrap: wrap;
+  gap: 18px 24px;
+  padding: 0 var(--player-inset) var(--player-inset);
 }
 
-.dist-server {
+.player-identity {
   min-width: 0;
+  overflow-wrap: anywhere;
 }
 
-.dist-title {
-  font-family: var(--font-sans);
-  font-weight: 500;
-  font-size: 0.92rem;
-  color: var(--text-primary);
-}
-
-.dist-metrics {
+.player-name-line,
+.player-presence,
+.player-actions {
   display: flex;
-  align-items: baseline;
-  gap: 12px;
+  align-items: center;
   flex-wrap: wrap;
-  font-family: var(--font-mono);
-  font-size: 0.82rem;
-  font-variant-numeric: tabular-nums;
+  gap: 8px;
 }
 
-.dist-hours {
+.player-name-line {
+  gap: 8px 14px;
+}
+
+.player-name-line .subject-ckey {
+  font-family: var(--font-sans);
+  font-size: clamp(2rem, 4.5vw, 3.3rem);
+  line-height: 1.08;
+  letter-spacing: -0.04em;
+}
+
+.player-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: 99px;
+  color: var(--text-secondary);
+  background: var(--bg-recessed);
+  font-size: 0.78rem;
   font-weight: 600;
+}
+
+.player-status.is-online {
+  color: var(--status-online);
+  border-color: var(--status-online-border);
+  background: var(--status-online-bg);
+}
+
+.player-presence {
+  margin-top: 10px;
+  color: var(--text-secondary);
+  font-size: 0.86rem;
+}
+
+.player-actions .raw-json-link {
+  padding: 6px 9px;
+  border-radius: 5px;
+  font-family: var(--font-sans);
+  font-size: 0.8rem;
+}
+
+.player-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border-top: 1px solid var(--border-strong);
+  background: rgba(8, 10, 14, 0.28);
+  border-radius: 0 0 9px 9px;
+}
+
+.player-metrics > div {
+  padding: 16px var(--player-inset) 18px;
+}
+
+.player-metrics > div + div {
+  border-left: 1px solid var(--border-subtle);
+}
+
+.player-metrics dt {
+  margin-bottom: 4px;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+.player-metrics dd {
+  font-family: var(--font-mono);
+  font-size: clamp(1.25rem, 2.9vw, 2rem);
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.player-metrics dd > span {
+  font-size: 0.62em;
+  color: var(--text-secondary);
+}
+
+.player-metrics .player-first-seen {
+  font-size: clamp(1.05rem, 2.5vw, 1.55rem);
+  line-height: 1.6;
+}
+
+.player-content {
+  display: grid;
+  grid-template-columns: minmax(245px, 1fr) minmax(0, 2.25fr);
+  align-items: start;
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.player-content > .panel {
+  min-width: 0;
+  border-radius: 8px;
+}
+
+.player-content .panel-header {
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  padding: 15px 18px;
+}
+
+.player-content .panel-title {
+  font-size: 1.07rem;
+  font-weight: 650;
+}
+
+.player-server-list {
+  list-style: none;
+  padding: 0 18px;
+}
+
+.player-server-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 7px 12px;
+  padding: 14px 0;
+}
+
+.player-server-list li + li {
+  border-top: 1px solid var(--border-subtle);
+}
+
+.player-server-list .server-link,
+.player-sessions .session-server {
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+}
+
+.player-server-metrics {
+  display: flex;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
+.player-server-metrics strong {
   color: var(--text-primary);
 }
 
-.dist-pct {
-  color: var(--text-secondary);
-  min-width: 44px;
-  text-align: right;
+.player-server-list .meter-progress {
+  grid-column: 1 / -1;
+  height: 4px;
 }
 
-.dist-last {
-  font-size: 0.76rem;
-  color: var(--text-muted);
+.player-sessions .telemetry-table th {
+  background: var(--bg-recessed);
+}
+
+.player-sessions .telemetry-table th:first-child,
+.player-sessions .session-server {
+  padding-left: 18px;
+}
+
+.player-sessions .col-num {
+  padding-right: 18px;
+}
+
+.player-sessions .telemetry-table td.col-time {
+  color: var(--text-secondary);
+}
+
+.player-sessions .session-state {
+  display: flex;
+  justify-content: flex-end;
+  font-family: var(--font-sans);
+}
+
+.player-sessions .telemetry-table tbody tr:last-child td:first-child {
+  border-radius: 0 0 7px 7px;
+}
+
+.player-sessions .load-more-btn {
+  min-height: 36px;
+}
+
+.player-sessions .load-more-btn:disabled {
+  cursor: wait;
+  opacity: 0.75;
+}
+
+.player-layout .queried-key {
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 760px) {
+  .player-content {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 520px) {
+  .player-navigation .query-form {
+    flex: 1 1 100%;
+  }
+
+  .player-navigation .command-submit {
+    padding-inline: 10px;
+  }
+
+  .player-metrics > div {
+    padding-inline: 12px;
+  }
+
+  .player-content .panel-header,
+  .player-server-list {
+    padding-inline: 12px;
+  }
+
+  .player-sessions .telemetry-table th:first-child,
+  .player-sessions .session-server {
+    padding-left: 12px;
+  }
+
+  .player-sessions .col-num {
+    padding-right: 12px;
+  }
 }
 
 .meter-progress {
@@ -949,11 +1169,6 @@ code,
 
 .session-state.active {
   color: var(--status-online);
-}
-
-.session-state.closed {
-  color: var(--text-muted);
-  font-weight: 500;
 }
 
 .table-empty-cell,

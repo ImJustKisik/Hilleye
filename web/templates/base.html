@@ -14,10 +14,10 @@
   {% endblock %}
   <title>{% block title %}Hilleye — SS13 Server &amp; Player Tracker{% endblock %}</title>
   <link rel="icon" type="image/svg+xml" href="/static/img/logo.svg">
-  <link rel="stylesheet" href="/static/css/style.css">
+  <link rel="stylesheet" href="/static/css/style.css?v=player-profile">
   {% block extra_head %}{% endblock %}
   <script src="/static/js/htmx.min.js" defer></script>
-  <script src="/static/js/app.js" defer></script>
+  <script src="/static/js/app.js?v=player-profile" defer></script>
 </head>
 <body>
   <div class="app-shell">
@@ -30,21 +30,22 @@
         </div>
       </a>
 
-      {% set srv_count = summary.total_servers if summary is defined and summary else (servers|length if servers is defined and servers else 0) %}
-      {% set online_count = summary.total_players_online if summary is defined and summary else 0 %}
-      {% set col_status = summary.collector_status if summary is defined and summary else ('ok' if srv_count > 0 else 'idle') %}
-
-      <nav class="header-nav" aria-label="Primary navigation and tracker status">
+      <nav class="header-nav" aria-label="Primary navigation">
         <div class="header-links">
           <a href="/" class="header-link{{ ' is-active' if active_nav is defined and active_nav == 'servers' else '' }}">Servers</a>
           <a href="/logs" class="header-link">Logs</a>
         </div>
+        {% block header_stats %}
+        {% set srv_count = summary.total_servers if summary is defined and summary else (servers|length if servers is defined and servers else 0) %}
+        {% set online_count = summary.total_players_online if summary is defined and summary else 0 %}
+        {% set col_status = summary.collector_status if summary is defined and summary else ('ok' if srv_count > 0 else 'idle') %}
         <div class="header-stats" title="Active servers and total connected players">
           <span class="status-dot {{ 'degraded' if col_status == 'degraded' else ('online' if col_status == 'ok' and srv_count > 0 else 'offline') }}" aria-hidden="true"></span>
           <span class="header-stat-item"><span class="header-stat-val mono-val">{{ srv_count|comma }}</span> <span class="header-stat-label">servers</span></span>
           <span class="sep" aria-hidden="true">&middot;</span>
           <span class="header-stat-item"><span class="header-stat-val mono-val">{{ online_count|comma }}</span> <span class="header-stat-label">online</span></span>
         </div>
+        {% endblock %}
       </nav>
     </header>
 

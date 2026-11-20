@@ -177,61 +177,10 @@
     });
   }
 
-  function initDossierNavigation() {
-    if (document.body.dataset.dossierNavBound) return;
-    document.body.dataset.dossierNavBound = "1";
-
-    document.addEventListener("click", function (event) {
-      var recentCard = event.target.closest(".recent-player-card");
-      if (recentCard) {
-        var input = document.getElementById("ckey-input");
-        var keyEl = recentCard.querySelector(".recent-player-ckey");
-        if (input && keyEl) {
-          input.value = keyEl.textContent.trim();
-        }
-        return;
-      }
-
-      var backBtn = event.target.closest(".dossier-back-btn");
-      if (backBtn) {
-        var viewport = document.getElementById("dossier-container");
-        var serversSection = document.querySelector(".servers-section");
-        if (viewport && serversSection) {
-          event.preventDefault();
-          viewport.innerHTML = "";
-          var ckeyInput = document.getElementById("ckey-input");
-          if (ckeyInput) ckeyInput.value = "";
-          if (window.location.pathname !== "/") {
-            window.history.pushState({}, "", "/");
-          }
-        }
-      }
-    });
-
-    document.addEventListener("htmx:afterSwap", function (event) {
-      var target = event.detail && event.detail.target;
-      if (target && target.id === "dossier-container") {
-        var rect = target.getBoundingClientRect();
-        if (rect.top < 0 || rect.top > window.innerHeight * 0.65) {
-          target.scrollIntoView({ behavior: "smooth", block: "nearest" });
-        }
-      }
-    });
-  }
-
   function initCopyButtons() {
     if (document.body.dataset.copyBound) return;
     document.body.dataset.copyBound = "1";
     document.addEventListener("click", function (event) {
-      var chip = event.target.closest(".not-found-suggestions .quick-player-chip");
-      if (chip) {
-        var input = document.getElementById("ckey-input");
-        var textSpan = chip.querySelector(".mono-val");
-        if (input && textSpan) {
-          input.value = textSpan.textContent.trim();
-        }
-      }
-
       var btn = event.target.closest(".copy-link-btn");
       if (!btn) return;
       var path = btn.getAttribute("data-copy-path") || window.location.pathname;
@@ -293,9 +242,7 @@
     function selectSuggestion(ckey) {
       input.value = ckey;
       closeDropdown();
-      if (window.htmx && typeof window.htmx.trigger === "function") {
-        window.htmx.trigger(form, "submit");
-      } else if (typeof form.requestSubmit === "function") {
+      if (typeof form.requestSubmit === "function") {
         form.requestSubmit();
       } else {
         form.submit();
@@ -585,7 +532,6 @@
   document.addEventListener("DOMContentLoaded", function () {
     initDirectoryControls();
     initRosterFilter();
-    initDossierNavigation();
     initCopyButtons();
     initPlayerTypeahead();
     initServerActivityChart();
@@ -598,7 +544,6 @@
   document.addEventListener("htmx:historyRestore", function () {
     initDirectoryControls();
     initRosterFilter();
-    initDossierNavigation();
     initCopyButtons();
     initPlayerTypeahead();
     initServerActivityChart();

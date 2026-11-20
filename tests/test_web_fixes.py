@@ -2,6 +2,7 @@
 
 from html.parser import HTMLParser
 import json
+import re
 import struct
 from urllib.parse import quote
 from unittest.mock import AsyncMock
@@ -170,7 +171,7 @@ async def test_csp_headers_and_external_js(async_client):
     assert "script-src 'self'" in csp
     assert "style-src 'self'" in csp
     assert "unsafe-inline" not in csp
-    assert '<script src="/static/js/app.js" defer></script>' in response.text
+    assert re.search(r'<script src="/static/js/app\.js(?:\?[^"<>]+)?" defer></script>', response.text)
     assert "onclick=" not in response.text
     assert "oninput=" not in response.text
     assert "<script>" not in response.text
@@ -343,14 +344,24 @@ async def test_player_dossier_og_links_and_sessions_pagination(async_client):
     assert "/api/v1/player/paginateduser/card.png" in html
     assert f'href="/server/{sid}"' in html
     assert "13 sessions" in html
-    assert 'class="meter-progress"' in html
+    assert 'class="meter-progress"' not in html
+    assert 'id="servers-table"' not in html
+    assert html.count('<td class="session-server">') == 10
     assert 'style="' not in html
     assert "Load more sessions (3 remaining)" in html
 
     more_resp = await async_client.get("/player/paginateduser/sessions?offset=10&limit=10")
     assert more_resp.status_code == 200
     assert "load-more-sessions-row" not in more_resp.text
-    assert ">13</td>" in more_resp.text
+    assert more_resp.text.count('<td class="session-server">') == 3
+
+    other_sid = await db.upsert_server("byond://127.0.0.1:4301", "Second Bay", "127.0.0.1", 4301)
+    await db.update_player_sessions(other_sid, {"paginated_user"}, now_ts=base_ts + 16000.0)
+    await db.update_player_sessions(other_sid, {"paginated_user"}, now_ts=base_ts + 16120.0)
+    search_resp = await async_client.post("/search", data={"ckey": "Paginated_User"}, follow_redirects=True)
+    assert search_resp.url.path == "/player/paginateduser"
+    assert search_resp.text.count('class="meter-progress"') == 2
+    assert 'id="servers-table"' not in search_resp.text
 
 
 async def test_player_typeahead_suggest_and_fuzzy_not_found(async_client):

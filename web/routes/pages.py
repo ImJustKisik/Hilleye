@@ -162,30 +162,14 @@ async def player_page(request: Request, ckey: str):
         if (dossier is None and norm_ckey)
         else []
     )
-    servers = await _app.core_db.get_active_servers()
-    overview = await _app.core_db.get_network_overview()
-    collector_state = await _app.core_db.get_collector_state()
-    sparklines = await _app.core_db.get_servers_sparklines_24h([s["id"] for s in servers])
-    tracker = _app.get_tracker()
-    tracker_stats = tracker.get_stats() if tracker else {}
-    summary = build_network_summary(servers, collector_state, tracker_stats)
-
     return _app.templates.TemplateResponse(
         request=request,
-        name="index.html",
+        name="player.html",
         context={
             "request": request,
             "dossier": dossier,
-            "target_ckey": ckey,
             "ckey": ckey,
-            "not_found": (dossier is None),
             "suggestions": suggestions,
-            "servers": servers,
-            "overview": overview,
-            "sparklines": sparklines,
-            "summary": summary,
-            "tracker_stats": tracker_stats,
-            "active_nav": "servers",
             "base_url": str(request.base_url).rstrip("/"),
         },
         status_code=404 if dossier is None else 200,

@@ -1,115 +1,99 @@
-<article class="panel dossier-panel" aria-label="Player Telemetry Dossier">
-  <!-- Dossier Header -->
-  <header class="dossier-header">
-    <div class="dossier-subject">
-      <div class="subject-meta-row">
-        <a href="/" class="raw-json-link dossier-back-btn">&larr; Servers</a>
-        <span class="subject-label">Player</span>
-        <a href="/api/v1/player/{{ dossier.ckey }}" target="_blank" rel="noopener" class="raw-json-link" title="View raw machine-readable JSON">Raw JSON</a>
-        <a href="/api/v1/player/{{ dossier.ckey }}/card.png" target="_blank" rel="noopener" class="raw-json-link" title="Open shareable PNG player card">Card PNG</a>
-        <button type="button" class="raw-json-link copy-link-btn" data-copy-path="/player/{{ dossier.ckey }}" title="Copy player permalink">Copy Link</button>
+<article class="player-profile" aria-labelledby="player-name">
+  <header class="panel player-hero">
+    <div class="player-hero-header">
+      <div class="player-identity">
+        <div class="player-name-line">
+          <h1 id="player-name" class="subject-ckey">{{ dossier.ckey }}</h1>
+          <span class="player-status{% if dossier.is_online %} is-online{% endif %}">
+            <span class="status-dot {{ 'online' if dossier.is_online else 'offline' }}" aria-hidden="true"></span>
+            {{ 'Online' if dossier.is_online else 'Offline' }}
+          </span>
+        </div>
+        {% if dossier.is_online %}
+        <div class="player-presence">
+          {% if dossier.current_server_id %}
+          <a href="/server/{{ dossier.current_server_id }}" class="server-link">{{ dossier.current_server }}</a>
+          {% else %}
+          <span>{{ dossier.current_server }}</span>
+          {% endif %}
+          <span aria-hidden="true">&middot;</span>
+          <span class="mono-val">{{ dossier.current_session_duration }}</span>
+        </div>
+        {% elif dossier.last_seen %}
+        <div class="player-presence">Last seen <time class="mono-val" datetime="{{ dossier.last_seen|replace(' ', 'T') }}Z">{{ dossier.last_seen }} UTC</time></div>
+        {% endif %}
       </div>
-      <h2 class="subject-ckey">{{ dossier.ckey }}</h2>
+
+      <div class="player-actions">
+        <button type="button" class="raw-json-link copy-link-btn" data-copy-path="/player/{{ dossier.ckey }}">Copy link</button>
+        <a href="/api/v1/player/{{ dossier.ckey }}/card.png" target="_blank" rel="noopener" class="raw-json-link">Card PNG</a>
+        <a href="/api/v1/player/{{ dossier.ckey }}" target="_blank" rel="noopener" class="raw-json-link">Raw JSON</a>
+      </div>
     </div>
 
-    <div class="dossier-status-box">
-      {% if dossier.is_online %}
-      <div class="telemetry-status online">
-        <div class="status-top-line">
-          <span class="status-dot online" aria-hidden="true"></span>
-          <span class="status-state">Online</span>
-        </div>
-        <div class="status-detail">
-          {% if dossier.current_server_id %}
-          <a href="/server/{{ dossier.current_server_id }}" class="status-server server-link">{{ dossier.current_server }}</a>
+    <dl class="player-metrics">
+      <div>
+        <dt>Total playtime</dt>
+        <dd>{{ dossier.total_hours|comma }}<span> h</span></dd>
+      </div>
+      <div>
+        <dt>Sessions</dt>
+        <dd>{{ dossier.sessions_count|comma }}</dd>
+      </div>
+      <div>
+        <dt>First seen</dt>
+        <dd class="player-first-seen">
+          {% if dossier.first_seen %}
+          <time datetime="{{ dossier.first_seen[:10] }}" title="{{ dossier.first_seen }} UTC">{{ dossier.first_seen[:10] }}</time>
           {% else %}
-          <span class="status-server">{{ dossier.current_server }}</span>
+          &mdash;
           {% endif %}
-          <span class="status-sep">&bull;</span>
-          <span class="status-dur mono-val">{{ dossier.current_session_duration }}</span>
-        </div>
+        </dd>
       </div>
-      {% else %}
-      <div class="telemetry-status offline">
-        <div class="status-top-line">
-          <span class="status-dot offline" aria-hidden="true"></span>
-          <span class="status-state">Offline</span>
-        </div>
-        <div class="status-detail">
-          <span>Last seen: <span class="mono-val">{{ dossier.last_seen }} UTC</span></span>
-        </div>
-      </div>
-      {% endif %}
-    </div>
+    </dl>
   </header>
 
-  <!-- 4-Cell Summary Strip -->
-  <div class="telemetry-strip">
-    <div class="telemetry-cell">
-      <div class="cell-label">Total Playtime</div>
-      <div class="cell-value">{{ dossier.total_hours|comma }}<span class="unit">h</span></div>
-      <div class="cell-sub mono-val">{{ dossier.sessions_count|comma }} {{ 'session' if dossier.sessions_count == 1 else 'sessions' }} &bull; {{ "{:,}".format(dossier.total_playtime_seconds) }}s</div>
-    </div>
-    <div class="telemetry-cell">
-      <div class="cell-label">Servers Visited</div>
-      <div class="cell-value">{{ dossier.servers_count|comma }}</div>
-    </div>
-    <div class="telemetry-cell">
-      <div class="cell-label">First Seen (UTC)</div>
-      <div class="cell-value timestamp">{{ dossier.first_seen }}</div>
-    </div>
-    <div class="telemetry-cell">
-      <div class="cell-label">Last Seen (UTC)</div>
-      <div class="cell-value timestamp">{{ dossier.last_seen }}</div>
-    </div>
-  </div>
-
-  <!-- Server Playtime Distribution -->
-  <section class="dossier-block">
-    <div class="block-header">
-      <h3 class="block-title">Playtime by Server</h3>
-      <span class="block-meta mono-val">{{ dossier.servers_count }} {{ 'server' if dossier.servers_count == 1 else 'servers' }}</span>
-    </div>
-
-    {% if dossier.server_breakdown %}
-    <div class="distribution-table">
-      {% for srv in dossier.server_breakdown %}
-      <div class="dist-row">
-        <div class="dist-top">
-          <div class="dist-server">
-            <a href="/server/{{ srv.server_id }}" class="dist-title server-link">{{ srv.title }}</a>
+  <div class="player-content">
+    <section class="panel player-servers" aria-labelledby="player-servers-title">
+      <header class="panel-header">
+        <h2 class="panel-title" id="player-servers-title">Playtime by server</h2>
+        {% if dossier.servers_count > 1 %}
+        <span class="block-meta mono-val">{{ dossier.servers_count }} servers</span>
+        {% endif %}
+      </header>
+      {% if dossier.server_breakdown %}
+      <ul class="player-server-list">
+        {% for srv in dossier.server_breakdown %}
+        <li>
+          <a href="/server/{{ srv.server_id }}" class="server-link">{{ srv.title }}</a>
+          <div class="player-server-metrics mono-val">
+            <strong>{{ srv.hours }} h</strong>
+            {% if dossier.servers_count > 1 %}
+            <span>{{ srv.percentage }}%</span>
+            {% endif %}
           </div>
-          <div class="dist-metrics">
-            <span class="dist-hours">{{ srv.hours }}h</span>
-            <span class="dist-pct">{{ srv.percentage }}%</span>
-            <span class="dist-last">Last seen: {{ srv.last_visit }} UTC</span>
-          </div>
-        </div>
-        <progress class="meter-progress" value="{{ srv.percentage }}" max="100" aria-label="{{ srv.title }} playtime share">{{ srv.percentage }}%</progress>
-      </div>
-      {% endfor %}
-    </div>
-    {% else %}
-    <div class="block-empty">No server playtime breakdown recorded yet.</div>
-    {% endif %}
-  </section>
+          {% if dossier.servers_count > 1 %}
+          <progress class="meter-progress" value="{{ srv.percentage }}" max="100" aria-label="{{ srv.title }} playtime share">{{ srv.percentage }}%</progress>
+          {% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p class="block-empty">No server playtime recorded yet.</p>
+      {% endif %}
+    </section>
 
-  <!-- Recent Sessions Log -->
-  <section class="dossier-block">
-    <div class="block-header">
-      <h3 class="block-title">Recent Sessions</h3>
-      <span class="block-meta mono-val">{{ dossier.sessions_count }} {{ 'session' if dossier.sessions_count == 1 else 'sessions' }} total</span>
-    </div>
-
-    <div class="data-table-wrapper">
+    <section class="panel player-sessions" aria-labelledby="player-sessions-title">
+      <header class="panel-header">
+        <h2 class="panel-title" id="player-sessions-title">Recent sessions</h2>
+        <span class="block-meta mono-val">{{ dossier.sessions_count|comma }} {{ 'session' if dossier.sessions_count == 1 else 'sessions' }} total</span>
+      </header>
       <table class="telemetry-table">
         <thead>
           <tr>
-            <th scope="col" class="col-idx">#</th>
             <th scope="col">Server</th>
-            <th scope="col">Session Start (UTC)</th>
+            <th scope="col">Started (UTC)</th>
             <th scope="col" class="col-num">Duration</th>
-            <th scope="col" class="col-state">Status</th>
           </tr>
         </thead>
         <tbody>
@@ -119,11 +103,11 @@
             {% include "partials/player_sessions_rows.html" %}
           {% else %}
           <tr>
-            <td colspan="5" class="table-empty-cell">No session history available.</td>
+            <td colspan="3" class="table-empty-cell">No session history available.</td>
           </tr>
           {% endif %}
         </tbody>
       </table>
-    </div>
-  </section>
+    </section>
+  </div>
 </article>

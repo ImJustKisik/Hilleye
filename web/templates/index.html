@@ -1,28 +1,5 @@
 {% extends "base.html" %}
 
-{% block title %}
-  {% if dossier %}{{ dossier.ckey }} — Player — Hilleye{% elif not_found and ckey %}{{ ckey }} — Not Found — Hilleye{% else %}Hilleye — SS13 Server &amp; Player Tracker{% endif %}
-{% endblock %}
-
-{% block head_meta %}
-  <meta property="og:site_name" content="Hilleye">
-  {% if dossier %}
-  <meta property="og:type" content="profile">
-  <meta property="og:title" content="{{ dossier.ckey }} — Hilleye Player Profile">
-  <meta property="og:description" content="Playtime: {{ dossier.total_hours }}h across {{ dossier.servers_count }} servers ({{ dossier.sessions_count }} sessions). {{ 'Online now on ' ~ dossier.current_server if dossier.is_online else 'Offline — Last seen ' ~ dossier.last_seen ~ ' UTC' }}.">
-  <meta property="og:url" content="{{ base_url }}/player/{{ dossier.ckey }}">
-  <meta property="og:image" content="{{ base_url }}/api/v1/player/{{ dossier.ckey }}/card.png">
-  <meta property="og:image:width" content="720">
-  <meta property="og:image:height" content="360">
-  <meta name="twitter:card" content="summary_large_image">
-  {% else %}
-  <meta property="og:type" content="website">
-  <meta property="og:title" content="Hilleye — SS13 Server &amp; Player Tracker">
-  <meta property="og:description" content="Space Station 13 server browser, live round status, and player playtime tracker.">
-  <meta name="twitter:card" content="summary">
-  {% endif %}
-{% endblock %}
-
 {% block content %}
 {% set sum_status = summary.collector_status if summary is defined and summary else 'idle' %}
 {% set sum_age = summary.poll_age_str if summary is defined and summary else None %}
@@ -30,47 +7,7 @@
 <div class="home-layout">
   <!-- Top Command Strip: Player Lookup & Network Summary -->
   <section class="command-bar" aria-label="Player lookup and network summary">
-    <form class="query-form"
-          hx-post="/search"
-          hx-target="#dossier-container"
-          hx-swap="innerHTML"
-          hx-indicator="#search-indicator"
-          action="/search"
-          method="post">
-      <label for="ckey-input" class="sr-only">BYOND player ckey</label>
-      <div class="command-input-container">
-        <div class="command-input-wrap">
-          <input type="text"
-                 id="ckey-input"
-                 name="ckey"
-                 required
-                 pattern=".*\S.*"
-                 class="command-input"
-                 placeholder="Look up BYOND ckey..."
-                 value="{{ target_ckey or (dossier.ckey if dossier else '') }}"
-                 autocomplete="off"
-                 spellcheck="false"
-                 role="combobox"
-                 aria-autocomplete="list"
-                 aria-expanded="false"
-                 aria-controls="ckey-suggest-list">
-        </div>
-        <ul id="ckey-suggest-list"
-            class="ckey-suggest-dropdown"
-            role="listbox"
-            aria-label="Player suggestions"
-            hidden></ul>
-      </div>
-      <button type="submit" class="command-submit">
-        <span class="htmx-indicator" id="search-indicator" aria-hidden="true">
-          <svg class="spinner-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-            <circle cx="12" cy="12" r="9" stroke-opacity="0.25"></circle>
-            <path d="M12 3a9 9 0 0 1 9 9" stroke-linecap="square"></path>
-          </svg>
-        </span>
-        <span>Find player</span>
-      </button>
-    </form>
+    {% include "partials/player_search.html" %}
 
     <div class="network-summary" aria-label="Network summary">
       <div class="summary-freshness">
@@ -84,15 +21,6 @@
       </div>
     </div>
   </section>
-
-  <!-- Player Search Result Viewport (collapses when empty) -->
-  <div id="dossier-container" class="dossier-viewport" aria-live="polite">
-    {%- if dossier -%}
-      {% include "partials/player_dossier.html" %}
-    {%- elif not_found -%}
-      {% include "partials/not_found.html" %}
-    {%- endif -%}
-  </div>
 
   <!-- Primary Content: Full-Width Live Server Directory -->
   <section class="panel servers-section" aria-label="Servers">
@@ -267,10 +195,6 @@
     <div class="recent-players-grid">
       {% for p in overview.recent_players %}
       <a href="/player/{{ p.ckey }}"
-         hx-post="/search"
-         hx-vals='{"ckey": "{{ p.ckey }}"}'
-         hx-target="#dossier-container"
-         hx-swap="innerHTML"
          class="recent-player-card">
         <div class="recent-player-top">
           <span class="status-dot {{ 'online' if p.is_online else 'offline' }}" aria-hidden="true"></span>
