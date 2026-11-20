@@ -64,16 +64,28 @@ class DashboardParser(HTMLParser):
         super().__init__()
         self.stack = []
         self.search = None
+        self.server_rows = 0
         self.server_links = 0
+        self.join_links = 0
+        self.saw_table = False
 
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
+        classes = attrs.get("class", "").split()
         if attrs.get("id") == "ckey-input":
             self.search = attrs
-        if "sector-row" in attrs.get("class", "").split():
-            assert tag == "a" and "role" not in attrs
-            assert self.stack[-1] == "li" and self.stack[-2] == "ul"
+        if attrs.get("id") == "servers-table" and tag == "table":
+            self.saw_table = True
+        if "server-row" in classes:
+            assert tag == "tr"
+            assert self.stack[-1] == "tbody" and self.stack[-2] == "table"
+            self.server_rows += 1
+        if "server-name-link" in classes:
+            assert tag == "a" and attrs.get("href", "").startswith("/server/")
             self.server_links += 1
+        if "join-btn" in classes:
+            assert tag == "a" and attrs.get("href", "").startswith("byond://")
+            self.join_links += 1
         if tag not in {"input", "img", "link", "meta", "br", "hr"}:
             self.stack.append(tag)
 
@@ -87,8 +99,12 @@ async def test_search_constraints_and_semantic_server_list(async_client):
     response = await async_client.get("/")
     parser = DashboardParser()
     parser.feed(response.text)
+    assert parser.saw_table
+    assert parser.server_rows == 1
     assert parser.server_links == 1
+    assert parser.join_links == 1
     assert "required" in parser.search
+    assert "autofocus" not in parser.search
     assert parser.search["pattern"] == r".*\S.*"
 
 
@@ -170,7 +186,8 @@ async def test_http_404_content_negotiation_and_header_count(async_client):
     assert html_resp.headers["content-type"].startswith("text/html")
     assert "404" in html_resp.text
     assert "Page not found" in html_resp.text
-    assert "Monitored servers:" in html_resp.text
+    assert "header-stats" in html_resp.text
+    assert '<span class="header-stat-label">servers</span>' in html_resp.text
     assert ">Active<" not in html_resp.text
 
     json_resp = await async_client.get("/nonexistent-route-xyz", headers={"Accept": "application/json"})
@@ -181,17 +198,90 @@ async def test_http_404_content_negotiation_and_header_count(async_client):
 async def test_dashboard_overview_and_empty_directory_state(async_client):
     empty_resp = await async_client.get("/")
     assert empty_resp.status_code == 200
-    assert "Network Overview" in empty_resp.text
-    assert "No active servers monitored right now" in empty_resp.text
+    assert 'aria-label="Network summary"' in empty_resp.text
+    assert "No active servers recorded yet" in empty_resp.text
 
     sid = await db.upsert_server("byond://127.0.0.1:4100", "Overview Station", "127.0.0.1", 4100, current_players=4)
     await db.update_player_sessions(sid, {"alice_pilot"}, now_ts=1000.0)
+    await db.update_player_sessions(sid, {"alice_pilot"}, now_ts=1200.0)
+    await db.update_player_sessions(sid, {"alice_pilot"}, now_ts=1400.0)
     await db.update_player_sessions(sid, {"alice_pilot"}, now_ts=1600.0)
 
     populated_resp = await async_client.get("/")
     assert populated_resp.status_code == 200
-    assert "Recently Observed Players" in populated_resp.text
+    assert "Recently Active Players" in populated_resp.text
     assert "/player/alicepilot" in populated_resp.text
+    assert "Overview Station" in populated_resp.text
+    assert "0.2h" in populated_resp.text
+
+
+async def test_dashboard_true_headcount_freshness_sparklines_and_english_copy(async_client):
+    import time
+
+    now = time.time()
+    fresh_sid = await db.upsert_server(
+        "byond://127.0.0.1:4501",
+        "Fresh Station",
+        "127.0.0.1",
+        4501,
+        current_players=42,
+        map_name="BoxStation",
+        gamemode="extended",
+        round_duration=3720,
+        admins_count=2,
+        enter_allowed=False,
+        now_ts=now,
+    )
+    stale_sid = await db.upsert_server(
+        "byond://127.0.0.1:4502",
+        "Stale Station",
+        "127.0.0.1",
+        4502,
+        current_players=18,
+        map_name="MetaStation",
+        gamemode="secret",
+        round_duration=1800,
+        now_ts=now,
+    )
+    # Mark fresh_sid telemetry fresh and stale_sid telemetry >600s old
+    conn = await db.get_connection()
+    await conn.execute(
+        "UPDATE servers SET telemetry_observed_at = ? WHERE id = ?;",
+        (now - 30.0, fresh_sid),
+    )
+    await conn.execute(
+        "UPDATE servers SET telemetry_observed_at = ? WHERE id = ?;",
+        (now - 900.0, stale_sid),
+    )
+    await conn.commit()
+
+    await db.record_collector_cycle(now - 25.0, healthy=True)
+    await db.record_server_snapshot(fresh_sid, player_count=20, round_duration=1200, map_name="BoxStation", ts=now - 3600)
+    await db.record_server_snapshot(fresh_sid, player_count=42, round_duration=3720, map_name="BoxStation", ts=now - 60)
+
+    resp = await async_client.get("/")
+    assert resp.status_code == 200
+    html = resp.text
+
+    # True sum of current_players (42 + 18 = 60) across 2 servers
+    assert '<span class="header-stat-val mono-val">60</span>' in html
+    assert '<strong class="mono-val">60</strong> online across' in html
+
+    # Real telemetry, sparkline, Closed & Stale cues, zero inline styles
+    assert '<svg class="mini-spark"' in html
+    assert "<title>24h: 20&ndash;42 players</title>" in html
+    assert "srv-pill-closed" in html
+    assert "Closed" in html
+    assert "srv-pill-stale" in html
+    assert "is-stale-cell" in html
+    assert "byond://127.0.0.1:4501" in html
+    assert "127.0.0.1:4501" in html
+    assert "1/2 Topic" in html
+    assert 'style="' not in html
+
+    # 100% English & zero leftover AI/surveillance jargon
+    for banned in ("Логи", "Monitored sectors", "honkmaster", "Live BYOND Telemetry", "Click any key", "Player Dossier Lookup"):
+        assert banned not in html
 
 
 async def test_server_page_fixes_null_duration_pager_admins_and_single_point(async_client):

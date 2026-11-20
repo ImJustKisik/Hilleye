@@ -4,15 +4,15 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="htmx-config" content='{"includeIndicatorStyles": false, "allowEval": false}'>
-  <meta name="description" content="Hilleye — Space Station 13 Player Dossier &amp; Server Monitoring Registry">
+  <meta name="description" content="Hilleye — Space Station 13 server browser, live round status, and player playtime tracker.">
   {% block head_meta %}
   <meta property="og:site_name" content="Hilleye">
   <meta property="og:type" content="website">
-  <meta property="og:title" content="Hilleye — SS13 Player Dossier &amp; Server Monitor">
-  <meta property="og:description" content="Space Station 13 player playtime dossiers, live server telemetry, and crew manifests.">
+  <meta property="og:title" content="Hilleye — SS13 Server &amp; Player Tracker">
+  <meta property="og:description" content="Space Station 13 server browser, live round status, and player playtime tracker.">
   <meta name="twitter:card" content="summary">
   {% endblock %}
-  <title>{% block title %}Hilleye — SS13 Player Dossier &amp; Server Monitor{% endblock %}</title>
+  <title>{% block title %}Hilleye — SS13 Server &amp; Player Tracker{% endblock %}</title>
   <link rel="icon" type="image/svg+xml" href="/static/img/logo.svg">
   <link rel="stylesheet" href="/static/css/style.css">
   {% block extra_head %}{% endblock %}
@@ -23,27 +23,28 @@
   <div class="app-shell">
     <header class="app-header">
       <a href="/" class="brand-lockup">
-        <img src="/static/img/logo.svg" alt="Hilleye logo" class="brand-mark" width="32" height="32">
+        <img src="/static/img/logo.svg" alt="Hilleye" class="brand-mark" width="28" height="28">
         <div class="brand-meta">
           <span class="brand-name">HILLEYE</span>
-          <span class="brand-sub">Space Station 13 Player Registry &amp; Server Monitor</span>
+          <span class="brand-sub">SS13 Server &amp; Player Tracker</span>
         </div>
       </a>
 
-      <nav class="header-nav" aria-label="System status and links">
-        <div class="status-pill" title="Active monitored BYOND servers">
-          <span class="status-dot {{ 'online' if servers else 'offline' }}" aria-hidden="true"></span>
-          <span class="status-pill-label">Monitored servers:</span>
-          <span class="status-pill-value">{{ servers|length if servers is defined else 0 }}</span>
+      {% set srv_count = summary.total_servers if summary is defined and summary else (servers|length if servers is defined and servers else 0) %}
+      {% set online_count = summary.total_players_online if summary is defined and summary else 0 %}
+      {% set col_status = summary.collector_status if summary is defined and summary else ('ok' if srv_count > 0 else 'idle') %}
+
+      <nav class="header-nav" aria-label="Primary navigation and tracker status">
+        <div class="header-links">
+          <a href="/" class="header-link{{ ' is-active' if active_nav is defined and active_nav == 'servers' else '' }}">Servers</a>
+          <a href="/logs" class="header-link">Logs</a>
         </div>
-        {% if tracker_stats is defined and tracker_stats and tracker_stats.tracked_players is not none %}
-        <div class="status-pill hide-mobile" title="Players currently online across monitored servers">
-          <span class="status-pill-label">Players online:</span>
-          <span class="status-pill-value">{{ tracker_stats.tracked_players }}</span>
+        <div class="header-stats" title="Active servers and total connected players">
+          <span class="status-dot {{ 'degraded' if col_status == 'degraded' else ('online' if col_status == 'ok' and srv_count > 0 else 'offline') }}" aria-hidden="true"></span>
+          <span class="header-stat-item"><span class="header-stat-val mono-val">{{ srv_count|comma }}</span> <span class="header-stat-label">servers</span></span>
+          <span class="sep" aria-hidden="true">&middot;</span>
+          <span class="header-stat-item"><span class="header-stat-val mono-val">{{ online_count|comma }}</span> <span class="header-stat-label">online</span></span>
         </div>
-        {% endif %}
-        <a href="/logs" class="header-link">Логи</a>
-        <a href="/api/v1/servers" class="header-link">JSON API</a>
       </nav>
     </header>
 
@@ -54,12 +55,16 @@
     <footer class="app-footer">
       <div class="footer-col">
         <span class="footer-brand">Hilleye</span>
-        <span class="sep">&bull;</span>
-        <span>Space Station 13 Monitor &amp; Log Archive</span>
+        <span class="sep" aria-hidden="true">&middot;</span>
+        <span>Space Station 13 Tracker</span>
+        <span class="sep" aria-hidden="true">&middot;</span>
+        <span>All times UTC</span>
       </div>
       <div class="footer-col footer-right">
+        <a href="/api/v1/servers">JSON API</a>
+        <span class="sep" aria-hidden="true">&middot;</span>
         <a href="/docs">API Docs</a>
-        <span class="sep">&bull;</span>
+        <span class="sep" aria-hidden="true">&middot;</span>
         <a href="/health">Health</a>
       </div>
     </footer>

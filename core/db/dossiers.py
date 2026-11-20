@@ -633,32 +633,154 @@ async def get_network_overview(recent_players_limit: int = 8) -> Dict[str, Any]:
             SELECT
                 p.ckey,
                 p.last_seen,
-                EXISTS(
-                    SELECT 1 FROM sessions s
-                    WHERE s.ckey = p.ckey AND s.ended_at IS NULL
-                ) AS is_online
+                COALESCE((SELECT SUM(t.total_seconds) FROM server_player_totals t WHERE t.ckey = p.ckey), 0) AS total_seconds,
+                act.server_id AS current_server_id,
+                act.server_title AS current_server
             FROM players p
-            ORDER BY is_online DESC, p.last_seen DESC, p.ckey ASC
+            LEFT JOIN (
+                SELECT s.ckey, s.server_id, COALESCE(srv.title, 'Server #' || s.server_id) AS server_title
+                FROM sessions s
+                LEFT JOIN servers srv ON srv.id = s.server_id
+                WHERE s.ended_at IS NULL
+                GROUP BY s.ckey
+            ) act ON act.ckey = p.ckey
+            ORDER BY (act.server_id IS NOT NULL) DESC, p.last_seen DESC, p.ckey ASC
             LIMIT ?;
             """,
             (limit,),
         )
         recent_rows = await cur.fetchall()
 
+    recent_players: List[Dict[str, Any]] = []
+    for r in recent_rows:
+        last_seen_str = format_timestamp(r["last_seen"])
+        tot_sec = int(r["total_seconds"] or 0)
+        recent_players.append(
+            {
+                "ckey": r["ckey"],
+                "last_seen": last_seen_str,
+                "last_seen_date": last_seen_str[:10] if last_seen_str else "",
+                "is_online": r["current_server_id"] is not None,
+                "current_server_id": int(r["current_server_id"]) if r["current_server_id"] is not None else None,
+                "current_server": r["current_server"],
+                "total_hours": round(tot_sec / 3600.0, 1),
+            }
+        )
+
     return {
         "total_players": total_players,
         "total_sessions": total_sessions,
         "active_sessions": active_sessions,
         "total_hours": round(total_seconds / 3600.0, 1),
-        "recent_players": [
-            {
-                "ckey": r["ckey"],
-                "last_seen": format_timestamp(r["last_seen"]),
-                "is_online": bool(r["is_online"]),
-            }
-            for r in recent_rows
-        ],
+        "recent_players": recent_players,
     }
+
+
+@_read_snapshot
+async def get_servers_sparklines_24h(
+    server_ids: List[int],
+    now_ts: Optional[float] = None,
+    width: int = 72,
+    height: int = 20,
+) -> Dict[int, Dict[str, Any]]:
+    """Returns compact 24h inline SVG polyline sparkline points for a batch of server IDs."""
+    import core.db as _db
+
+    clean_ids = sorted({int(sid) for sid in server_ids if sid is not None})
+    if not clean_ids:
+        return {}
+
+    ref_ts = time.time() if now_ts is None else float(now_ts)
+    cutoff = ref_ts - 86400.0
+    buckets = 24
+    bucket_sec = 86400.0 / buckets
+
+    raw_by_server: Dict[int, List[Tuple[float, int]]] = {}
+    conn = await _db.get_connection()
+    async with conn.cursor() as cur:
+        chunk_size = 400
+        for i in range(0, len(clean_ids), chunk_size):
+            chunk = clean_ids[i : i + chunk_size]
+            placeholders = ",".join("?" for _ in chunk)
+            await cur.execute(
+                f"""
+                SELECT server_id, timestamp, player_count
+                FROM server_snapshots
+                WHERE server_id IN ({placeholders}) AND timestamp >= ?
+                ORDER BY server_id ASC, timestamp ASC;
+                """,
+                (*chunk, cutoff),
+            )
+            for row in await cur.fetchall():
+                sid = int(row["server_id"])
+                raw_by_server.setdefault(sid, []).append(
+                    (float(row["timestamp"]), max(0, int(row["player_count"] or 0)))
+                )
+
+    x_left = 2.0
+    x_right = float(max(width - 2, 4))
+    y_top = 2.0
+    y_bottom = float(max(height - 2, 4))
+    x_span = x_right - x_left
+    y_span = y_bottom - y_top
+
+    sparklines: Dict[int, Dict[str, Any]] = {}
+    for sid, samples in raw_by_server.items():
+        if len(samples) < 2:
+            continue
+
+        min_p = min(c for _, c in samples)
+        peak_p = max(c for _, c in samples)
+
+        bucket_map: Dict[int, Tuple[float, int]] = {}
+        for ts, count in samples:
+            idx = int((ts - cutoff) / bucket_sec)
+            if idx < 0:
+                idx = 0
+            elif idx >= buckets:
+                idx = buckets - 1
+            prev = bucket_map.get(idx)
+            if prev is None or count > prev[1]:
+                bucket_map[idx] = (ts, count)
+
+        series: List[Tuple[float, int]] = (
+            [bucket_map[k] for k in sorted(bucket_map.keys())]
+            if len(bucket_map) >= 2
+            else samples
+        )
+
+        y_max = max(peak_p, 1)
+        first_ts = series[0][0]
+        last_ts = series[-1][0]
+        span_ts = last_ts - first_ts
+
+        coords: List[str] = []
+        n = len(series)
+        for idx, (ts, count) in enumerate(series):
+            if span_ts <= 0.0:
+                ratio_x = idx / float(max(n - 1, 1))
+            else:
+                ratio_x = (ts - first_ts) / span_ts
+                if ratio_x < 0.0:
+                    ratio_x = 0.0
+                elif ratio_x > 1.0:
+                    ratio_x = 1.0
+            px = x_left + ratio_x * x_span
+            if peak_p <= 0:
+                py = y_bottom
+            else:
+                ratio_y = count / float(y_max)
+                py = y_bottom - ratio_y * y_span
+            coords.append(f"{px:.1f},{py:.1f}")
+
+        sparklines[sid] = {
+            "points": " ".join(coords),
+            "min": min_p,
+            "peak": peak_p,
+            "samples": len(samples),
+        }
+
+    return sparklines
 
 
 @_read_snapshot

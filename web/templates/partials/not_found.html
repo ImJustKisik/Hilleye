@@ -1,10 +1,13 @@
 <div class="panel not-found-panel" role="status">
   <div class="not-found-body">
+    <div class="subject-meta-row">
+      <a href="/" class="raw-json-link dossier-back-btn">&larr; Back to servers</a>
+    </div>
     <h2 class="not-found-heading">
       No record found for <code class="queried-key">{{ ckey or raw_query or 'empty query' }}</code>
     </h2>
     <p class="not-found-desc">
-      Player not detected on any monitored Space Station 13 server.
+      No activity recorded for this ckey on tracked Space Station 13 servers.
     </p>
     {% if suggestions %}
     <div class="not-found-suggestions" aria-label="Similar tracked players">
@@ -19,7 +22,7 @@
            class="quick-player-chip">
           <span class="status-dot {{ 'online' if s.is_online else 'offline' }}" aria-hidden="true"></span>
           <span class="mono-val">{{ s.ckey }}</span>
-          <span class="quick-player-state">
+          <span class="quick-player-state mono-val">
             {% if s.is_online %}Online{% elif s.total_hours > 0 %}{{ s.total_hours }}h{% else %}{{ s.last_seen }}{% endif %}
           </span>
         </a>

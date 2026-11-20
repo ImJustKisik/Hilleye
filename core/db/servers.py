@@ -828,6 +828,7 @@ async def get_active_servers() -> List[Dict[str, Any]]:
     """Returns list of active monitored servers."""
     import core.db as _db
 
+    now_ts = time.time()
     conn = await _db.get_connection()
     async with conn.cursor() as cur:
         await cur.execute(
@@ -835,36 +836,63 @@ async def get_active_servers() -> List[Dict[str, Any]]:
             SELECT
                 id, identifier, title, ip, port, last_seen, is_active,
                 current_players, map_name, round_duration, gamemode, admins_count, version,
-                active_players, station_time, enter_allowed, respawn_allowed
+                active_players, station_time, enter_allowed, respawn_allowed,
+                telemetry_observed_at, roster_observed_at
             FROM servers
             WHERE is_active = 1
             ORDER BY current_players DESC, title ASC;
             """
         )
         rows = await cur.fetchall()
-        return [
-            {
-                "id": r["id"],
-                "identifier": r["identifier"],
-                "title": r["title"],
-                "ip": r["ip"],
-                "port": r["port"],
-                "last_seen": r["last_seen"],
-                "is_active": bool(r["is_active"]),
-                "current_players": r["current_players"],
-                "map_name": r["map_name"],
-                "round_duration": r["round_duration"],
-                "round_duration_str": format_hms(r["round_duration"]) if r["round_duration"] is not None else "Unknown",
-                "gamemode": r["gamemode"],
-                "admins_count": r["admins_count"],
-                "version": r["version"],
-                "active_players": int(r["active_players"]) if r["active_players"] is not None else None,
-                "station_time": r["station_time"],
-                "enter_allowed": bool(r["enter_allowed"]) if r["enter_allowed"] is not None else None,
-                "respawn_allowed": bool(r["respawn_allowed"]) if r["respawn_allowed"] is not None else None,
-            }
-            for r in rows
-        ]
+        result: List[Dict[str, Any]] = []
+        for r in rows:
+            port_int = int(r["port"] or 0)
+            ip_str = r["ip"] or ""
+            ident_str = r["identifier"] or ""
+            if port_int > 0 and ip_str:
+                connect_uri = f"byond://[{ip_str}]:{port_int}" if ":" in ip_str else f"byond://{ip_str}:{port_int}"
+                endpoint_display = f"[{ip_str}]:{port_int}" if ":" in ip_str else f"{ip_str}:{port_int}"
+            else:
+                connect_uri = ident_str
+                endpoint_display = "BYOND Pager"
+
+            telem_obs = r["telemetry_observed_at"]
+            roster_obs = r["roster_observed_at"]
+            telem_fresh = bool(telem_obs is not None and (now_ts - float(telem_obs)) <= 300.0)
+            roster_fresh = bool(roster_obs is not None and (now_ts - float(roster_obs)) <= 300.0)
+            source_kind = "topic" if telem_fresh else ("stale" if telem_obs is not None else "hub")
+
+            result.append(
+                {
+                    "id": r["id"],
+                    "identifier": ident_str,
+                    "title": r["title"],
+                    "ip": ip_str,
+                    "port": r["port"],
+                    "last_seen": r["last_seen"],
+                    "is_active": bool(r["is_active"]),
+                    "current_players": r["current_players"],
+                    "map_name": r["map_name"],
+                    "round_duration": r["round_duration"],
+                    "round_duration_str": format_hms(r["round_duration"]) if r["round_duration"] is not None else "Unknown",
+                    "gamemode": r["gamemode"],
+                    "admins_count": r["admins_count"],
+                    "version": r["version"],
+                    "active_players": int(r["active_players"]) if r["active_players"] is not None else None,
+                    "station_time": r["station_time"],
+                    "enter_allowed": bool(r["enter_allowed"]) if r["enter_allowed"] is not None else None,
+                    "respawn_allowed": bool(r["respawn_allowed"]) if r["respawn_allowed"] is not None else None,
+                    "connect_uri": connect_uri,
+                    "endpoint_display": endpoint_display,
+                    "topic_available": bool(port_int > 0),
+                    "telemetry_observed_at": telem_obs,
+                    "roster_observed_at": roster_obs,
+                    "telemetry_fresh": telem_fresh,
+                    "roster_fresh": roster_fresh,
+                    "source_kind": source_kind,
+                }
+            )
+        return result
 
 
 @_read_snapshot

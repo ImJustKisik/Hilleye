@@ -40,6 +40,7 @@ from core.telemetry import telemetry, monitor_loop
 from web.logs_routes import create_logs_router
 from web.routes import (
     api_router,
+    build_network_summary,
     dashboard_page,
     fetch_server_manifest_htmx,
     get_player_api,
@@ -168,6 +169,26 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 
+def _format_comma(value: Any) -> str:
+    """Formats numeric template values with thousands separators."""
+    if value is None:
+        return "0"
+    if isinstance(value, bool):
+        return str(int(value))
+    if isinstance(value, int):
+        return f"{value:,}"
+    if isinstance(value, float):
+        return f"{value:,.1f}"
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    return f"{int(num):,}" if num.is_integer() else f"{num:,.1f}"
+
+
+templates.env.filters["comma"] = _format_comma
+
+
 _CSP_HEADER = (
     "default-src 'self'; "
     "script-src 'self'; "
@@ -188,9 +209,11 @@ async def _get_shell_context() -> Dict[str, Any]:
     """Safely fetches header/footer status context for SSR templates, including error pages."""
     servers: List[Dict[str, Any]] = []
     tracker_stats: Dict[str, Any] = {}
+    collector_state: Optional[Dict[str, Any]] = None
     try:
         if core_db._connection is not None:
             servers = await core_db.get_active_servers()
+            collector_state = await core_db.get_collector_state()
     except Exception:
         logger.debug("Failed to load active servers for shell context", exc_info=True)
     try:
@@ -199,7 +222,8 @@ async def _get_shell_context() -> Dict[str, Any]:
             tracker_stats = tracker.get_stats()
     except Exception:
         logger.debug("Failed to load tracker stats for shell context", exc_info=True)
-    return {"servers": servers, "tracker_stats": tracker_stats}
+    summary = build_network_summary(servers, collector_state, tracker_stats)
+    return {"servers": servers, "tracker_stats": tracker_stats, "summary": summary}
 
 
 @app.middleware("http")

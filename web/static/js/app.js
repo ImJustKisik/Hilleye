@@ -6,72 +6,87 @@
     var list = document.getElementById("servers-grid-container");
     var filterInput = document.getElementById("server-filter-input");
     var clearBtn = document.getElementById("server-filter-clear");
+    var resetBtn = document.getElementById("server-filter-reset");
     var populatedOnly = document.getElementById("server-populated-only");
+    var topicOnly = document.getElementById("server-topic-only");
     var sortSelect = document.getElementById("server-sort-select");
+    var sortButtons = Array.prototype.slice.call(
+      document.querySelectorAll("#servers-table .th-sort-btn[data-sort]")
+    );
     var counter = document.getElementById("server-visible-count");
     var emptyState = document.getElementById("server-filter-empty");
-    var toggleBtn = document.getElementById("servers-toggle-btn");
-    var dirBody = document.getElementById("servers-directory-body");
-    var toggleLabel = document.getElementById("servers-toggle-label");
-
-    if (toggleBtn && dirBody && !toggleBtn.dataset.bound) {
-      toggleBtn.dataset.bound = "1";
-      toggleBtn.addEventListener("click", function () {
-        var isOpen = dirBody.classList.toggle("is-open");
-        toggleBtn.setAttribute("aria-expanded", isOpen ? "true" : "false");
-        if (toggleLabel) {
-          toggleLabel.textContent = isOpen ? "Hide servers" : "Show servers";
-        }
-      });
-    }
+    var tableWrap = document.querySelector(".servers-table-wrap");
 
     if (!list || list.dataset.bound) return;
     list.dataset.bound = "1";
 
-    var items = Array.prototype.slice.call(list.children);
-    var totalServers = items.length;
+    var rows = Array.prototype.slice.call(list.querySelectorAll("tr.server-row"));
+    var totalServers = rows.length;
+    var currentSort = sortSelect ? sortSelect.value : "players";
+    var sortDir = currentSort === "name" ? "asc" : "desc";
+
+    function syncSortHeaders() {
+      sortButtons.forEach(function (btn) {
+        var active = btn.dataset.sort === currentSort;
+        btn.classList.toggle("is-active", active);
+        btn.classList.toggle("is-asc", active && sortDir === "asc");
+        btn.setAttribute(
+          "aria-sort",
+          active ? (sortDir === "asc" ? "ascending" : "descending") : "none"
+        );
+      });
+      if (sortSelect && sortSelect.value !== currentSort) {
+        sortSelect.value = currentSort;
+      }
+    }
 
     function applyFilterAndSort() {
       var rawQuery = filterInput ? filterInput.value : "";
       var query = rawQuery.trim().toLowerCase();
       var onlyPopulated = populatedOnly ? populatedOnly.checked : false;
-      var sortBy = sortSelect ? sortSelect.value : "players";
+      var onlyTopic = topicOnly ? topicOnly.checked : false;
 
-      var sorted = items.slice().sort(function (a, b) {
-        var linkA = a.querySelector(".sector-row");
-        var linkB = b.querySelector(".sector-row");
-        if (!linkA || !linkB) return 0;
+      syncSortHeaders();
 
-        if (sortBy === "name") {
-          var tA = (linkA.dataset.title || "").toLowerCase();
-          var tB = (linkB.dataset.title || "").toLowerCase();
-          return tA.localeCompare(tB);
+      var sorted = rows.slice().sort(function (a, b) {
+        if (currentSort === "name") {
+          var tA = (a.dataset.title || "").toLowerCase();
+          var tB = (b.dataset.title || "").toLowerCase();
+          var cmp = tA.localeCompare(tB);
+          if (cmp !== 0) return sortDir === "asc" ? cmp : -cmp;
+        } else if (currentSort === "duration") {
+          var dA = parseInt(a.dataset.duration || "-1", 10);
+          var dB = parseInt(b.dataset.duration || "-1", 10);
+          if (dA < 0 && dB >= 0) return 1;
+          if (dB < 0 && dA >= 0) return -1;
+          if (dB !== dA) return sortDir === "asc" ? dA - dB : dB - dA;
+        } else {
+          var pA = parseInt(a.dataset.players || "-1", 10);
+          var pB = parseInt(b.dataset.players || "-1", 10);
+          if (pA < 0 && pB >= 0) return 1;
+          if (pB < 0 && pA >= 0) return -1;
+          if (pB !== pA) return sortDir === "asc" ? pA - pB : pB - pA;
         }
-        if (sortBy === "duration") {
-          var dA = parseInt(linkA.dataset.duration || "-1", 10);
-          var dB = parseInt(linkB.dataset.duration || "-1", 10);
-          if (dB !== dA) return dB - dA;
-        }
-        var pA = parseInt(linkA.dataset.players || "-1", 10);
-        var pB = parseInt(linkB.dataset.players || "-1", 10);
-        if (pB !== pA) return pB - pA;
-        var idxA = parseInt(linkA.dataset.index || "0", 10);
-        var idxB = parseInt(linkB.dataset.index || "0", 10);
+
+        var fallA = parseInt(a.dataset.players || "-1", 10);
+        var fallB = parseInt(b.dataset.players || "-1", 10);
+        if (fallB !== fallA) return fallB - fallA;
+        var idxA = parseInt(a.dataset.index || "0", 10);
+        var idxB = parseInt(b.dataset.index || "0", 10);
         return idxA - idxB;
       });
 
       var visible = 0;
-      sorted.forEach(function (li) {
-        var row = li.querySelector(".sector-row");
-        if (!row) return;
+      sorted.forEach(function (row) {
         var hay = (row.getAttribute("data-search") || row.textContent || "").toLowerCase();
         var players = parseInt(row.dataset.players || "0", 10);
         var matchesQuery = !query || hay.indexOf(query) !== -1;
         var matchesPopulated = !onlyPopulated || players > 0;
-        var show = matchesQuery && matchesPopulated;
-        li.hidden = !show;
+        var matchesTopic = !onlyTopic || row.dataset.topic === "1";
+        var show = matchesQuery && matchesPopulated && matchesTopic;
+        row.hidden = !show;
         if (show) visible += 1;
-        list.appendChild(li);
+        list.appendChild(row);
       });
 
       if (counter) {
@@ -79,6 +94,9 @@
       }
       if (clearBtn) {
         clearBtn.hidden = !rawQuery.length;
+      }
+      if (tableWrap) {
+        tableWrap.hidden = visible === 0;
       }
       if (emptyState) {
         emptyState.hidden = visible > 0;
@@ -91,14 +109,43 @@
     if (populatedOnly) {
       populatedOnly.addEventListener("change", applyFilterAndSort);
     }
-    if (sortSelect) {
-      sortSelect.addEventListener("change", applyFilterAndSort);
+    if (topicOnly) {
+      topicOnly.addEventListener("change", applyFilterAndSort);
     }
+    if (sortSelect) {
+      sortSelect.addEventListener("change", function () {
+        currentSort = sortSelect.value;
+        sortDir = currentSort === "name" ? "asc" : "desc";
+        applyFilterAndSort();
+      });
+    }
+    sortButtons.forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var targetSort = btn.dataset.sort;
+        if (!targetSort) return;
+        if (currentSort === targetSort) {
+          sortDir = sortDir === "desc" ? "asc" : "desc";
+        } else {
+          currentSort = targetSort;
+          sortDir = currentSort === "name" ? "asc" : "desc";
+        }
+        applyFilterAndSort();
+      });
+    });
     if (clearBtn && filterInput) {
       clearBtn.addEventListener("click", function () {
         filterInput.value = "";
         applyFilterAndSort();
         filterInput.focus();
+      });
+    }
+    if (resetBtn) {
+      resetBtn.addEventListener("click", function () {
+        if (filterInput) filterInput.value = "";
+        if (populatedOnly) populatedOnly.checked = false;
+        if (topicOnly) topicOnly.checked = false;
+        applyFilterAndSort();
+        if (filterInput) filterInput.focus();
       });
     }
   }
@@ -130,7 +177,51 @@
     });
   }
 
+  function initDossierNavigation() {
+    if (document.body.dataset.dossierNavBound) return;
+    document.body.dataset.dossierNavBound = "1";
+
+    document.addEventListener("click", function (event) {
+      var recentCard = event.target.closest(".recent-player-card");
+      if (recentCard) {
+        var input = document.getElementById("ckey-input");
+        var keyEl = recentCard.querySelector(".recent-player-ckey");
+        if (input && keyEl) {
+          input.value = keyEl.textContent.trim();
+        }
+        return;
+      }
+
+      var backBtn = event.target.closest(".dossier-back-btn");
+      if (backBtn) {
+        var viewport = document.getElementById("dossier-container");
+        var serversSection = document.querySelector(".servers-section");
+        if (viewport && serversSection) {
+          event.preventDefault();
+          viewport.innerHTML = "";
+          var ckeyInput = document.getElementById("ckey-input");
+          if (ckeyInput) ckeyInput.value = "";
+          if (window.location.pathname !== "/") {
+            window.history.pushState({}, "", "/");
+          }
+        }
+      }
+    });
+
+    document.addEventListener("htmx:afterSwap", function (event) {
+      var target = event.detail && event.detail.target;
+      if (target && target.id === "dossier-container") {
+        var rect = target.getBoundingClientRect();
+        if (rect.top < 0 || rect.top > window.innerHeight * 0.65) {
+          target.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        }
+      }
+    });
+  }
+
   function initCopyButtons() {
+    if (document.body.dataset.copyBound) return;
+    document.body.dataset.copyBound = "1";
     document.addEventListener("click", function (event) {
       var chip = event.target.closest(".not-found-suggestions .quick-player-chip");
       if (chip) {
@@ -494,6 +585,7 @@
   document.addEventListener("DOMContentLoaded", function () {
     initDirectoryControls();
     initRosterFilter();
+    initDossierNavigation();
     initCopyButtons();
     initPlayerTypeahead();
     initServerActivityChart();
@@ -506,6 +598,8 @@
   document.addEventListener("htmx:historyRestore", function () {
     initDirectoryControls();
     initRosterFilter();
+    initDossierNavigation();
+    initCopyButtons();
     initPlayerTypeahead();
     initServerActivityChart();
   });

@@ -151,7 +151,7 @@ async def test_full_simulated_e2e_lifecycle(temp_db_path, mock_topic_server):
 
         unknown_search = await client.post("/search", headers={"HX-Request": "true"}, data={"ckey": "nonexistent_agent_999"})
         assert unknown_search.status_code == 200
-        assert "NO RECORD FOUND" in unknown_search.text or "NOT DETECTED" in unknown_search.text.upper()
+        assert "no record found" in unknown_search.text.lower()
 
     # Step 11: Clean DB shutdown
     await core_db.close_db()

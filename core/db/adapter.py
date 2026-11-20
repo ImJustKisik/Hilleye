@@ -131,6 +131,22 @@ class Database:
 
         return await _db.get_network_overview(recent_players_limit=recent_players_limit)
 
+    async def get_servers_sparklines_24h(
+        self,
+        server_ids: List[int],
+        now_ts: Optional[float] = None,
+        width: int = 72,
+        height: int = 20,
+    ) -> Dict[int, Dict[str, Any]]:
+        import core.db as _db
+
+        return await _db.get_servers_sparklines_24h(
+            server_ids=server_ids,
+            now_ts=now_ts,
+            width=width,
+            height=height,
+        )
+
     async def search_players(
         self, query: str, limit: int = 8, include_fuzzy: bool = True
     ) -> List[Dict[str, Any]]:

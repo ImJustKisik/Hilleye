@@ -1,14 +1,14 @@
 {% extends "base.html" %}
 
 {% block title %}
-  {% if dossier %}{{ dossier.ckey }} — Player Dossier — Hilleye{% elif not_found and ckey %}{{ ckey }} — Not Found — Hilleye{% else %}Hilleye — SS13 Player Dossier &amp; Server Monitor{% endif %}
+  {% if dossier %}{{ dossier.ckey }} — Player — Hilleye{% elif not_found and ckey %}{{ ckey }} — Not Found — Hilleye{% else %}Hilleye — SS13 Server &amp; Player Tracker{% endif %}
 {% endblock %}
 
 {% block head_meta %}
   <meta property="og:site_name" content="Hilleye">
   {% if dossier %}
   <meta property="og:type" content="profile">
-  <meta property="og:title" content="{{ dossier.ckey }} — Hilleye Player Dossier">
+  <meta property="og:title" content="{{ dossier.ckey }} — Hilleye Player Profile">
   <meta property="og:description" content="Playtime: {{ dossier.total_hours }}h across {{ dossier.servers_count }} servers ({{ dossier.sessions_count }} sessions). {{ 'Online now on ' ~ dossier.current_server if dossier.is_online else 'Offline — Last seen ' ~ dossier.last_seen ~ ' UTC' }}.">
   <meta property="og:url" content="{{ base_url }}/player/{{ dossier.ckey }}">
   <meta property="og:image" content="{{ base_url }}/api/v1/player/{{ dossier.ckey }}/card.png">
@@ -17,239 +17,297 @@
   <meta name="twitter:card" content="summary_large_image">
   {% else %}
   <meta property="og:type" content="website">
-  <meta property="og:title" content="Hilleye — SS13 Player Dossier &amp; Server Monitor">
-  <meta property="og:description" content="Space Station 13 player playtime dossiers, live server telemetry, and crew manifests.">
+  <meta property="og:title" content="Hilleye — SS13 Server &amp; Player Tracker">
+  <meta property="og:description" content="Space Station 13 server browser, live round status, and player playtime tracker.">
   <meta name="twitter:card" content="summary">
   {% endif %}
 {% endblock %}
 
 {% block content %}
-<div class="workbench-grid">
-  <!-- Primary Workspace: Player Search & Dossier Result -->
-  <section class="primary-pane" aria-label="Player Dossier Lookup">
-    <div class="panel search-panel">
-      <div class="search-panel-header">
-        <h1 class="search-heading">Player Dossier Lookup</h1>
-        <span class="search-hint">Normalized key format: <code>[a-z0-9]</code></span>
-      </div>
+{% set sum_online = summary.total_players_online if summary is defined and summary else 0 %}
+{% set sum_pop = summary.populated_servers if summary is defined and summary else 0 %}
+{% set sum_total = summary.total_servers if summary is defined and summary else (servers|length) %}
+{% set sum_topic = summary.topic_fresh_count if summary is defined and summary else 0 %}
+{% set sum_status = summary.collector_status if summary is defined and summary else 'idle' %}
+{% set sum_age = summary.poll_age_str if summary is defined and summary else None %}
 
-      <form class="query-form"
-            hx-post="/search"
-            hx-target="#dossier-container"
-            hx-swap="innerHTML"
-            hx-indicator="#search-indicator"
-            action="/search"
-            method="post">
-        <label for="ckey-input" class="sr-only">BYOND Player CKey</label>
-        <div class="command-input-container">
-          <div class="command-input-wrap">
-            <span class="command-prefix" aria-hidden="true">ckey</span>
-            <input type="text"
-                   id="ckey-input"
-                   name="ckey"
-                   required
-                   pattern=".*\S.*"
-                   class="command-input"
-                   placeholder="Enter BYOND ckey (e.g. honkmaster)..."
-                   value="{{ target_ckey or (dossier.ckey if dossier else '') }}"
-                   autocomplete="off"
-                   spellcheck="false"
-                   role="combobox"
-                   aria-autocomplete="list"
-                   aria-expanded="false"
-                   aria-controls="ckey-suggest-list"
-                   autofocus>
-          </div>
-          <ul id="ckey-suggest-list"
-              class="ckey-suggest-dropdown"
-              role="listbox"
-              aria-label="Player suggestions"
-              hidden></ul>
+<div class="home-layout">
+  <!-- Top Command Strip: Player Lookup & Network Summary -->
+  <section class="command-bar" aria-label="Player lookup and network summary">
+    <form class="query-form"
+          hx-post="/search"
+          hx-target="#dossier-container"
+          hx-swap="innerHTML"
+          hx-indicator="#search-indicator"
+          action="/search"
+          method="post">
+      <label for="ckey-input" class="sr-only">BYOND player ckey</label>
+      <div class="command-input-container">
+        <div class="command-input-wrap">
+          <input type="text"
+                 id="ckey-input"
+                 name="ckey"
+                 required
+                 pattern=".*\S.*"
+                 class="command-input"
+                 placeholder="Look up BYOND ckey..."
+                 value="{{ target_ckey or (dossier.ckey if dossier else '') }}"
+                 autocomplete="off"
+                 spellcheck="false"
+                 role="combobox"
+                 aria-autocomplete="list"
+                 aria-expanded="false"
+                 aria-controls="ckey-suggest-list">
         </div>
-        <button type="submit" class="command-submit">
-          <span class="htmx-indicator" id="search-indicator" aria-hidden="true">
-            <svg class="spinner-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-              <circle cx="12" cy="12" r="9" stroke-opacity="0.25"></circle>
-              <path d="M12 3a9 9 0 0 1 9 9" stroke-linecap="square"></path>
-            </svg>
-          </span>
-          <span>Search Player</span>
-        </button>
-      </form>
-    </div>
+        <ul id="ckey-suggest-list"
+            class="ckey-suggest-dropdown"
+            role="listbox"
+            aria-label="Player suggestions"
+            hidden></ul>
+      </div>
+      <button type="submit" class="command-submit">
+        <span class="htmx-indicator" id="search-indicator" aria-hidden="true">
+          <svg class="spinner-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <circle cx="12" cy="12" r="9" stroke-opacity="0.25"></circle>
+            <path d="M12 3a9 9 0 0 1 9 9" stroke-linecap="square"></path>
+          </svg>
+        </span>
+        <span>Find player</span>
+      </button>
+    </form>
 
-    <!-- Dossier Output Viewport -->
-    <div id="dossier-container" class="dossier-viewport" aria-live="polite">
-      {% if dossier %}
-        {% include "partials/player_dossier.html" %}
-      {% elif not_found %}
-        {% include "partials/not_found.html" %}
-      {% else %}
-        <section class="panel overview-panel" aria-label="Network Overview">
-          <div class="panel-header">
-            <h2 class="panel-title">Network Overview</h2>
-            <span class="block-meta mono-val">Live BYOND Telemetry</span>
-          </div>
-
-          <div class="telemetry-strip">
-            <div class="telemetry-cell">
-              <div class="cell-label">Active Servers</div>
-              <div class="cell-value">{{ servers|length }}</div>
-              <div class="cell-sub">Monitored sectors</div>
-            </div>
-            <div class="telemetry-cell">
-              <div class="cell-label">Tracked Players</div>
-              <div class="cell-value">{{ overview.total_players if overview else 0 }}</div>
-              <div class="cell-sub">Unique ckeys</div>
-            </div>
-            <div class="telemetry-cell">
-              <div class="cell-label">Active Sessions</div>
-              <div class="cell-value">{{ overview.active_sessions if overview else 0 }}</div>
-              <div class="cell-sub">Currently in-game</div>
-            </div>
-            <div class="telemetry-cell">
-              <div class="cell-label">Recorded Playtime</div>
-              <div class="cell-value">{{ overview.total_hours if overview else 0.0 }}<span class="unit">h</span></div>
-              <div class="cell-sub mono-val">{{ overview.total_sessions if overview else 0 }} sessions</div>
-            </div>
-          </div>
-
-          <div class="overview-body">
-            {% if overview and overview.recent_players %}
-            <div class="overview-section">
-              <div class="overview-section-header">
-                <h3 class="block-title">Recently Observed Players</h3>
-                <span class="block-meta">Click any key to open dossier</span>
-              </div>
-              <div class="quick-player-list">
-                {% for p in overview.recent_players %}
-                <a href="/player/{{ p.ckey }}" class="quick-player-chip">
-                  <span class="status-dot {{ 'online' if p.is_online else 'offline' }}" aria-hidden="true"></span>
-                  <span class="mono-val">{{ p.ckey }}</span>
-                  <span class="quick-player-state">{{ 'Online' if p.is_online else p.last_seen }}</span>
-                </a>
-                {% endfor %}
-              </div>
-            </div>
-            {% else %}
-            <div class="overview-section">
-              <h3 class="block-title">Getting Started</h3>
-              <p class="overview-copy">
-                Enter any BYOND key above to inspect cross-server playtime, session history, and online status.
-                Keys are automatically normalized to lowercase alphanumeric characters (<code>[a-z0-9]</code>), so
-                <code>Honk_Master</code> and <code>honkmaster</code> resolve to the same dossier.
-              </p>
-            </div>
-            {% endif %}
-          </div>
-        </section>
-      {% endif %}
+    <div class="network-summary" aria-label="Network summary">
+      <div class="summary-metrics">
+        <span class="summary-item">
+          <strong class="mono-val">{{ sum_online|comma }}</strong> online across
+          <strong class="mono-val">{{ sum_pop|comma }}/{{ sum_total|comma }}</strong> servers
+        </span>
+        {% if overview %}
+        <span class="sep" aria-hidden="true">&middot;</span>
+        <span class="summary-item">
+          <strong class="mono-val">{{ overview.total_players|comma }}</strong> ckeys
+        </span>
+        <span class="sep" aria-hidden="true">&middot;</span>
+        <span class="summary-item">
+          <strong class="mono-val">{{ overview.total_hours|comma }}h</strong> logged
+        </span>
+        {% endif %}
+      </div>
+      <div class="summary-freshness">
+        {% if sum_status == 'degraded' %}
+        <span class="freshness-pill is-degraded mono-val">Degraded{% if sum_age %} &middot; {{ sum_age }}{% endif %}</span>
+        {% elif sum_age %}
+        <span class="freshness-pill mono-val">Updated {{ sum_age }} &middot; {{ sum_topic }}/{{ sum_total }} Topic</span>
+        {% else %}
+        <span class="freshness-pill mono-val">Awaiting poll</span>
+        {% endif %}
+      </div>
     </div>
   </section>
 
-  <!-- Secondary Sidebar: Monitored Servers Directory -->
-  <aside class="secondary-pane" aria-label="Monitored Servers Directory">
-    <div class="panel directory-panel">
-      <div class="panel-header directory-header">
-        <div class="directory-title-wrap">
-          <h2 class="panel-title">Monitored Servers</h2>
-          <span class="directory-status {{ 'is-empty' if not servers else '' }}">
-            <span class="status-dot {{ 'online' if servers else 'offline' }}" aria-hidden="true"></span>
-            <span class="mono-val">{{ servers|length }} online</span>
-          </span>
-        </div>
-        {% if servers %}
-        <button type="button"
-                class="mobile-directory-toggle"
-                id="servers-toggle-btn"
-                aria-expanded="true"
-                aria-controls="servers-directory-body">
-          <span id="servers-toggle-label">Hide servers</span>
-        </button>
-        {% endif %}
+  <!-- Player Search Result Viewport (collapses when empty) -->
+  <div id="dossier-container" class="dossier-viewport" aria-live="polite">
+    {%- if dossier -%}
+      {% include "partials/player_dossier.html" %}
+    {%- elif not_found -%}
+      {% include "partials/not_found.html" %}
+    {%- endif -%}
+  </div>
+
+  <!-- Primary Content: Full-Width Live Server Directory -->
+  <section class="panel servers-section" aria-label="Servers">
+    <div class="servers-toolbar">
+      <div class="servers-toolbar-left">
+        <h1 class="servers-heading">Servers</h1>
+        <span class="filter-counter mono-val" id="server-visible-count" aria-live="polite">{{ servers|length }} / {{ servers|length }}</span>
       </div>
 
       {% if servers %}
-      <div class="directory-body is-open" id="servers-directory-body">
-        <div class="directory-filter-bar">
-          <label for="server-filter-input" class="sr-only">Filter monitored servers by name or address</label>
+      <div class="servers-controls">
+        <div class="servers-filter-wrap">
+          <label for="server-filter-input" class="sr-only">Filter servers by name, map, mode, or address</label>
           <input type="text"
                  id="server-filter-input"
                  class="directory-filter-input"
-                 placeholder="Filter by server, map, or address..."
+                 placeholder="Filter by name, map, mode, address..."
                  autocomplete="off"
                  spellcheck="false">
-          <div class="filter-meta">
-            <button type="button"
-                    id="server-filter-clear"
-                    class="filter-clear-btn"
-                    aria-label="Clear server filter"
-                    hidden>Clear</button>
-            <span class="filter-counter" id="server-visible-count" aria-live="polite">{{ servers|length }} / {{ servers|length }}</span>
-          </div>
+          <button type="button"
+                  id="server-filter-clear"
+                  class="filter-clear-btn"
+                  aria-label="Clear server filter"
+                  hidden>Clear</button>
         </div>
 
-        <div class="directory-controls-row">
-          <label class="directory-check-label">
-            <input type="checkbox" id="server-populated-only">
-            <span>Populated only</span>
-          </label>
-          <div class="directory-sort-wrap">
-            <label for="server-sort-select" class="sr-only">Sort servers</label>
-            <select id="server-sort-select" class="directory-sort-select">
-              <option value="players">Players (High&ndash;Low)</option>
-              <option value="name">Name (A&ndash;Z)</option>
-              <option value="duration">Round Time</option>
-            </select>
-          </div>
-        </div>
+        <label class="directory-check-label">
+          <input type="checkbox" id="server-populated-only">
+          <span>Populated</span>
+        </label>
 
-        <div class="directory-legend">
-          <span>Click a server for live round telemetry</span>
-          <span class="mono-val">Badge: Total <span class="sector-living-sub">(In-round)</span></span>
-        </div>
+        <label class="directory-check-label" title="Show only servers with fresh direct Topic telemetry">
+          <input type="checkbox" id="server-topic-only">
+          <span>Topic only</span>
+        </label>
 
-        <ul class="sector-list" id="servers-grid-container" role="list" tabindex="0" aria-label="Active Space Station 13 servers">
-          {% for s in servers %}
-          <li><a href="/server/{{ s.id }}"
-                 class="sector-row"
-                 data-index="{{ loop.index0 }}"
-                 data-players="{{ s.current_players if s.current_players is not none else -1 }}"
-                 data-duration="{{ s.round_duration if s.round_duration is not none else -1 }}"
-                 data-title="{{ s.title or s.identifier }}"
-                 data-search="{{ (s.title or '')|lower }} {{ (s.identifier or '')|lower }} {{ (s.map_name or '')|lower }} {{ (s.gamemode or '')|lower }}">
-            <span class="status-dot online" aria-hidden="true" title="Server active"></span>
-            <div class="sector-info">
-              <div class="sector-top-row">
-                <div class="sector-title">{{ s.title or s.identifier }}</div>
-                <span class="sector-players-badge mono-val" title="Players online{% if s.active_players is not none %} ({{ s.active_players }} in round){% endif %}">
-                  {{ s.current_players if s.current_players is not none else 'Unknown' }}{% if s.active_players is not none %} <span class="sector-living-sub">({{ s.active_players }})</span>{% endif %}
-                </span>
-              </div>
-              <div class="sector-meta-row">
-                <span class="sector-endpoint">{{ s.identifier }}</span>
-                {% if s.map_name %}
-                <span class="sector-tag">{{ s.map_name }}</span>
-                {% endif %}
-                {% if s.round_duration and s.round_duration > 0 %}
-                <span class="sector-tag mono-val">{{ s.round_duration_str }}</span>
-                {% endif %}
-              </div>
-            </div>
-          </a></li>
-          {% endfor %}
-        </ul>
-
-        <div id="server-filter-empty" class="directory-empty" hidden>
-          No monitored servers match that filter.
+        <div class="directory-sort-wrap">
+          <label for="server-sort-select" class="sr-only">Sort servers</label>
+          <select id="server-sort-select" class="directory-sort-select">
+            <option value="players">Sort: Players</option>
+            <option value="name">Sort: Name</option>
+            <option value="duration">Sort: Round time</option>
+          </select>
         </div>
-      </div>
-      {% else %}
-      <div class="directory-empty">
-        No active servers monitored right now. The tracker will populate this list after the next poll cycle.
       </div>
       {% endif %}
     </div>
-  </aside>
+
+    {% if servers %}
+    <div class="servers-table-wrap">
+      <table class="servers-table" id="servers-table">
+        <thead>
+          <tr>
+            <th scope="col" class="col-srv-name">
+              <button type="button" class="th-sort-btn" data-sort="name">Server</button>
+            </th>
+            <th scope="col" class="col-srv-players">
+              <button type="button" class="th-sort-btn is-active" data-sort="players" aria-sort="descending">Players</button>
+            </th>
+            <th scope="col" class="col-srv-spark">24h</th>
+            <th scope="col" class="col-srv-map">Map / Mode</th>
+            <th scope="col" class="col-srv-round">
+              <button type="button" class="th-sort-btn" data-sort="duration">Round</button>
+            </th>
+            <th scope="col" class="col-srv-action"><span class="sr-only">Connect</span></th>
+          </tr>
+        </thead>
+        <tbody id="servers-grid-container">
+          {% for s in servers %}
+          {% set sp = sparklines.get(s.id) if sparklines else None %}
+          <tr class="server-row"
+              data-index="{{ loop.index0 }}"
+              data-players="{{ s.current_players if s.current_players is not none else -1 }}"
+              data-duration="{{ s.round_duration if s.round_duration is not none else -1 }}"
+              data-title="{{ s.title or s.identifier }}"
+              data-topic="{{ '1' if s.telemetry_fresh else '0' }}"
+              data-search="{{ (s.title or '')|lower }} {{ (s.identifier or '')|lower }} {{ (s.endpoint_display or '')|lower }} {{ (s.map_name or '')|lower }} {{ (s.gamemode or '')|lower }}">
+            <td class="col-srv-name">
+              <a href="/server/{{ s.id }}" class="server-name-link">{{ s.title or s.identifier }}</a>
+              <div class="server-sub-line">
+                <span class="server-addr mono-val">{{ s.endpoint_display or s.identifier }}</span>
+                {% if s.source_kind == 'hub' %}
+                <span class="srv-pill srv-pill-hub" title="BYOND Hub count only (direct Topic telemetry unavailable)">Hub</span>
+                {% elif s.source_kind == 'stale' %}
+                <span class="srv-pill srv-pill-stale" title="Last direct Topic response is older than 5 minutes">Stale</span>
+                {% endif %}
+                {% if s.telemetry_fresh and s.enter_allowed is false %}
+                <span class="srv-pill srv-pill-closed" title="Late-join is currently closed">Closed</span>
+                {% endif %}
+                {% if s.telemetry_fresh and s.admins_count is not none %}
+                <span class="srv-sep" aria-hidden="true">&middot;</span>
+                <span class="srv-meta-inline mono-val">{{ s.admins_count }} staff</span>
+                {% endif %}
+                {% set has_mobile_round = (s.round_duration and s.round_duration > 0) or (s.station_time and s.telemetry_fresh) %}
+                {% if s.map_name or has_mobile_round %}
+                <span class="srv-mobile-meta">
+                  {% if s.map_name %}<span class="{{ 'is-stale-cell' if not s.telemetry_fresh else '' }}">{{ s.map_name }}</span>{% endif %}
+                  {% if s.map_name and has_mobile_round %}<span class="srv-sep" aria-hidden="true">&middot;</span>{% endif %}
+                  {% if s.round_duration and s.round_duration > 0 %}
+                  <span class="mono-val{{ ' is-stale-cell' if not s.telemetry_fresh else '' }}">{{ s.round_duration_str }}</span>
+                  {% elif s.station_time and s.telemetry_fresh %}
+                  <span class="mono-val">{{ s.station_time }}</span>
+                  {% endif %}
+                </span>
+                {% endif %}
+              </div>
+            </td>
+            <td class="col-srv-players">
+              <span class="srv-player-count mono-val{{ ' is-zero' if (s.current_players is none or s.current_players == 0) else '' }}">
+                {{- s.current_players|comma if s.current_players is not none else '—' -}}
+              </span>
+              {%- if s.active_players is not none and s.telemetry_fresh -%}
+              <span class="srv-inround mono-val" title="{{ s.current_players }} connected, {{ s.active_players }} in round">({{ s.active_players }})</span>
+              {%- endif -%}
+            </td>
+            <td class="col-srv-spark">
+              {% if sp %}
+              <svg class="mini-spark" width="72" height="20" viewBox="0 0 72 20" role="img" aria-label="24h players {{ sp.min }} to {{ sp.peak }}">
+                <title>24h: {{ sp.min }}&ndash;{{ sp.peak }} players</title>
+                <polyline class="mini-spark-line" fill="none" points="{{ sp.points }}"/>
+              </svg>
+              {% else %}
+              <span class="cell-dash" aria-hidden="true">&mdash;</span>
+              {% endif %}
+            </td>
+            <td class="col-srv-map">
+              {% if s.map_name or s.gamemode %}
+              <div class="srv-map-wrap{{ ' is-stale-cell' if not s.telemetry_fresh else '' }}"{% if not s.telemetry_fresh %} title="Cached from an earlier Topic response"{% endif %}>
+                {% if s.map_name %}<span class="srv-map-name">{{ s.map_name }}</span>{% endif %}
+                {% if s.gamemode %}<span class="srv-mode-name">{{ s.gamemode }}</span>{% endif %}
+              </div>
+              {% else %}
+              <span class="cell-dash" aria-hidden="true">&mdash;</span>
+              {% endif %}
+            </td>
+            <td class="col-srv-round">
+              {% if s.round_duration and s.round_duration > 0 %}
+              <span class="srv-round-time mono-val{{ ' is-stale-cell' if not s.telemetry_fresh else '' }}"{% if not s.telemetry_fresh %} title="Cached from an earlier Topic response"{% endif %}>{{ s.round_duration_str }}</span>
+              {% elif s.station_time and s.telemetry_fresh %}
+              <span class="srv-round-time mono-val" title="Station clock">{{ s.station_time }}</span>
+              {% else %}
+              <span class="cell-dash" aria-hidden="true">&mdash;</span>
+              {% endif %}
+            </td>
+            <td class="col-srv-action">
+              <a href="{{ s.connect_uri or s.identifier }}" class="join-btn" title="Connect via BYOND ({{ s.connect_uri or s.identifier }})">Join</a>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div id="server-filter-empty" class="directory-empty" hidden>
+      <span>No servers match the current filter.</span>
+      <button type="button" id="server-filter-reset" class="filter-reset-btn">Reset filters</button>
+    </div>
+    {% else %}
+    <div class="directory-empty">
+      No active servers recorded yet. This list populates after the next poll cycle.
+    </div>
+    {% endif %}
+  </section>
+
+  <!-- Secondary Band: Recently Active Players -->
+  {% if overview and overview.recent_players %}
+  <section class="panel recent-players-section" aria-label="Recently active players">
+    <div class="recent-players-header">
+      <h2 class="section-sub-heading">Recently Active Players</h2>
+      <span class="recent-players-meta">Latest activity across rostered servers</span>
+    </div>
+    <div class="recent-players-grid">
+      {% for p in overview.recent_players %}
+      <a href="/player/{{ p.ckey }}"
+         hx-post="/search"
+         hx-vals='{"ckey": "{{ p.ckey }}"}'
+         hx-target="#dossier-container"
+         hx-swap="innerHTML"
+         class="recent-player-card">
+        <div class="recent-player-top">
+          <span class="status-dot {{ 'online' if p.is_online else 'offline' }}" aria-hidden="true"></span>
+          <span class="recent-player-ckey mono-val">{{ p.ckey }}</span>
+          <span class="recent-player-hours mono-val">{{ p.total_hours|comma }}h</span>
+        </div>
+        <div class="recent-player-sub">
+          {% if p.is_online %}
+          <span class="recent-player-meta">{{ p.current_server or 'Online' }}</span>
+          {% else %}
+          <span class="recent-player-meta mono-val">{{ p.last_seen_date or p.last_seen[:10] }}</span>
+          {% endif %}
+        </div>
+      </a>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
 </div>
 {% endblock %}

@@ -115,8 +115,7 @@ class TestHtmxSearchEndpoint:
         assert response.status_code == 200  # HTMX partial renders 200, never 500
         html = response.text
 
-        # Must display tactical not-found message
-        assert "NO RECORD FOUND" in html or "NOT DETECTED" in html.upper()
+        assert "no record found" in html.lower()
 
     @pytest.mark.asyncio
     async def test_search_empty_or_special_chars_does_not_crash(self, async_client):
@@ -125,7 +124,7 @@ class TestHtmxSearchEndpoint:
             # Must return 200 (not-found fragment) or 400, never 500
             assert response.status_code in (200, 400)
             if response.status_code == 200:
-                assert "NO RECORD FOUND" in response.text or "NOT DETECTED" in response.text.upper()
+                assert "no record found" in response.text.lower()
 
 
 class TestPlayerPageAndDashboardRoutes:
@@ -137,8 +136,8 @@ class TestPlayerPageAndDashboardRoutes:
         assert response.status_code == 200
         html = response.text
 
-        # Must include tactical title and search bar
-        assert "CYBERSYN" in html.upper() or "INTEL" in html.upper() or "DOSSIER" in html.upper()
+        assert "Hilleye" in html
+        assert "servers-section" in html
         assert "<form" in html or "hx-post" in html or "search" in html.lower()
 
     @pytest.mark.asyncio
@@ -158,4 +157,4 @@ class TestPlayerPageAndDashboardRoutes:
         assert response.status_code == 404
         html = response.text
 
-        assert "NO RECORD FOUND" in html or "NOT DETECTED" in html.upper()
+        assert "no record found" in html.lower()

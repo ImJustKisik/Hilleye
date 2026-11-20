@@ -5,7 +5,7 @@ Hilleye // Web SSR & HTMX Page Routes
 import asyncio
 import logging
 import time
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Form, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -13,6 +13,69 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _format_poll_age(age_seconds: Optional[int]) -> Optional[str]:
+    if age_seconds is None:
+        return None
+    if age_seconds < 10:
+        return "just now"
+    if age_seconds < 90:
+        return f"{age_seconds}s ago"
+    if age_seconds < 5400:
+        return f"{age_seconds // 60}m ago"
+    return f"{age_seconds // 3600}h ago"
+
+
+def build_network_summary(
+    servers: List[Dict[str, Any]],
+    collector_state: Optional[Dict[str, Any]],
+    tracker_stats: Optional[Dict[str, Any]],
+    now_ts: Optional[float] = None,
+) -> Dict[str, Any]:
+    """Builds accurate network headcount and collector freshness context."""
+    ref_ts = time.time() if now_ts is None else float(now_ts)
+    total_servers = len(servers)
+    populated_servers = sum(
+        1 for s in servers if s.get("current_players") is not None and int(s["current_players"]) > 0
+    )
+    total_players_online = sum(
+        int(s["current_players"]) for s in servers if s.get("current_players") is not None
+    )
+    topic_fresh_count = sum(1 for s in servers if s.get("telemetry_fresh"))
+
+    if collector_state is not None:
+        completed_at = collector_state.get("completed_at")
+        state_healthy = bool(collector_state.get("healthy"))
+        if tracker_stats and tracker_stats.get("leader"):
+            is_degraded = not (state_healthy and tracker_stats.get("status") == "ok")
+        else:
+            is_degraded = not state_healthy
+    else:
+        completed_at = (tracker_stats or {}).get("last_poll_time")
+        is_degraded = bool(
+            tracker_stats and tracker_stats.get("running") and tracker_stats.get("status") == "degraded"
+        )
+
+    poll_age_seconds = max(0, int(ref_ts - float(completed_at))) if completed_at else None
+    if is_degraded:
+        collector_status = "degraded"
+    elif completed_at is not None or total_servers > 0:
+        collector_status = "ok"
+    else:
+        collector_status = "idle"
+
+    return {
+        "total_servers": total_servers,
+        "populated_servers": populated_servers,
+        "total_players_online": total_players_online,
+        "topic_fresh_count": topic_fresh_count,
+        "completed_at": completed_at,
+        "poll_age_seconds": poll_age_seconds,
+        "poll_age_str": _format_poll_age(poll_age_seconds),
+        "is_degraded": is_degraded,
+        "collector_status": collector_status,
+    }
 
 
 @router.post("/search")
@@ -58,14 +121,17 @@ async def search_player(request: Request, ckey: str = Form(default="")):
 @router.get("/")
 async def dashboard_page(request: Request):
     """
-    Renders main tactical search console and monitored sector overview.
+    Renders the server browser, network summary, and player lookup page.
     """
     import web.app as _app
 
     servers = await _app.core_db.get_active_servers()
     overview = await _app.core_db.get_network_overview()
+    collector_state = await _app.core_db.get_collector_state()
+    sparklines = await _app.core_db.get_servers_sparklines_24h([s["id"] for s in servers])
     tracker = _app.get_tracker()
     tracker_stats = tracker.get_stats() if tracker else {}
+    summary = build_network_summary(servers, collector_state, tracker_stats)
     return _app.templates.TemplateResponse(
         request=request,
         name="index.html",
@@ -73,7 +139,10 @@ async def dashboard_page(request: Request):
             "request": request,
             "servers": servers,
             "overview": overview,
+            "sparklines": sparklines,
+            "summary": summary,
             "tracker_stats": tracker_stats,
+            "active_nav": "servers",
             "base_url": str(request.base_url).rstrip("/"),
         },
     )
@@ -94,8 +163,12 @@ async def player_page(request: Request, ckey: str):
         else []
     )
     servers = await _app.core_db.get_active_servers()
+    overview = await _app.core_db.get_network_overview()
+    collector_state = await _app.core_db.get_collector_state()
+    sparklines = await _app.core_db.get_servers_sparklines_24h([s["id"] for s in servers])
     tracker = _app.get_tracker()
     tracker_stats = tracker.get_stats() if tracker else {}
+    summary = build_network_summary(servers, collector_state, tracker_stats)
 
     return _app.templates.TemplateResponse(
         request=request,
@@ -108,7 +181,11 @@ async def player_page(request: Request, ckey: str):
             "not_found": (dossier is None),
             "suggestions": suggestions,
             "servers": servers,
+            "overview": overview,
+            "sparklines": sparklines,
+            "summary": summary,
             "tracker_stats": tracker_stats,
+            "active_nav": "servers",
             "base_url": str(request.base_url).rstrip("/"),
         },
         status_code=404 if dossier is None else 200,
@@ -163,8 +240,10 @@ async def server_page(request: Request, server_id: int, time_range: str = Query(
         suffix = f"?time_range={norm_range}" if norm_range and norm_range != "day" else ""
         return RedirectResponse(url=f"/server/{server_details['id']}{suffix}", status_code=302)
     servers = await _app.core_db.get_active_servers()
+    collector_state = await _app.core_db.get_collector_state()
     tracker = _app.get_tracker()
     tracker_stats = tracker.get_stats() if tracker else {}
+    summary = build_network_summary(servers, collector_state, tracker_stats)
 
     if server_details is None:
         return _app.templates.TemplateResponse(
@@ -178,7 +257,9 @@ async def server_page(request: Request, server_id: int, time_range: str = Query(
                 "not_found": True,
                 "manifest_supported": False,
                 "servers": servers,
+                "summary": summary,
                 "tracker_stats": tracker_stats,
+                "active_nav": "servers",
                 "base_url": str(request.base_url).rstrip("/"),
             },
             status_code=404,
@@ -198,7 +279,9 @@ async def server_page(request: Request, server_id: int, time_range: str = Query(
             "not_found": False,
             "manifest_supported": manifest_supported,
             "servers": servers,
+            "summary": summary,
             "tracker_stats": tracker_stats,
+            "active_nav": "servers",
             "base_url": str(request.base_url).rstrip("/"),
         },
         status_code=200,

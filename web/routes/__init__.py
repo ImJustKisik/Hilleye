@@ -16,6 +16,7 @@ from web.routes.health import (
     router as health_router,
 )
 from web.routes.pages import (
+    build_network_summary,
     dashboard_page,
     fetch_server_manifest_htmx,
     player_page,
@@ -29,6 +30,7 @@ __all__ = [
     "api_router",
     "health_router",
     "pages_router",
+    "build_network_summary",
     "health_check",
     "liveness",
     "get_servers",
