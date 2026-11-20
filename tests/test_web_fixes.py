@@ -265,7 +265,6 @@ async def test_dashboard_true_headcount_freshness_sparklines_and_english_copy(as
 
     # True sum of current_players (42 + 18 = 60) across 2 servers
     assert '<span class="header-stat-val mono-val">60</span>' in html
-    assert '<strong class="mono-val">60</strong> online across' in html
 
     # Real telemetry, sparkline, Closed & Stale cues, zero inline styles
     assert '<svg class="mini-spark"' in html
@@ -276,7 +275,7 @@ async def test_dashboard_true_headcount_freshness_sparklines_and_english_copy(as
     assert "is-stale-cell" in html
     assert "byond://127.0.0.1:4501" in html
     assert "127.0.0.1:4501" in html
-    assert "1/2 Topic" in html
+    assert "Updated " in html
     assert 'style="' not in html
 
     # 100% English & zero leftover AI/surveillance jargon

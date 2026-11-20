@@ -24,10 +24,6 @@
 {% endblock %}
 
 {% block content %}
-{% set sum_online = summary.total_players_online if summary is defined and summary else 0 %}
-{% set sum_pop = summary.populated_servers if summary is defined and summary else 0 %}
-{% set sum_total = summary.total_servers if summary is defined and summary else (servers|length) %}
-{% set sum_topic = summary.topic_fresh_count if summary is defined and summary else 0 %}
 {% set sum_status = summary.collector_status if summary is defined and summary else 'idle' %}
 {% set sum_age = summary.poll_age_str if summary is defined and summary else None %}
 
@@ -77,27 +73,11 @@
     </form>
 
     <div class="network-summary" aria-label="Network summary">
-      <div class="summary-metrics">
-        <span class="summary-item">
-          <strong class="mono-val">{{ sum_online|comma }}</strong> online across
-          <strong class="mono-val">{{ sum_pop|comma }}/{{ sum_total|comma }}</strong> servers
-        </span>
-        {% if overview %}
-        <span class="sep" aria-hidden="true">&middot;</span>
-        <span class="summary-item">
-          <strong class="mono-val">{{ overview.total_players|comma }}</strong> ckeys
-        </span>
-        <span class="sep" aria-hidden="true">&middot;</span>
-        <span class="summary-item">
-          <strong class="mono-val">{{ overview.total_hours|comma }}h</strong> logged
-        </span>
-        {% endif %}
-      </div>
       <div class="summary-freshness">
         {% if sum_status == 'degraded' %}
         <span class="freshness-pill is-degraded mono-val">Degraded{% if sum_age %} &middot; {{ sum_age }}{% endif %}</span>
         {% elif sum_age %}
-        <span class="freshness-pill mono-val">Updated {{ sum_age }} &middot; {{ sum_topic }}/{{ sum_total }} Topic</span>
+        <span class="freshness-pill mono-val">Updated {{ sum_age }}</span>
         {% else %}
         <span class="freshness-pill mono-val">Awaiting poll</span>
         {% endif %}
