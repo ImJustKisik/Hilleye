@@ -1,6 +1,24 @@
 {% extends "base.html" %}
 {% block title %}{{ status_code }} — {{ heading or 'Invalid Request' }} — Hilleye{% endblock %}
+{% block extra_head %}
+{% if status_code == 404 %}<link rel="stylesheet" href="/static/css/lost-sector.css">{% endif %}
+{% endblock %}
 {% block content %}
+{% if status_code == 404 %}
+<section class="lost-sector" aria-labelledby="lost-title">
+  <div class="sector-scope" aria-hidden="true"><i></i></div>
+  <div class="sector-report">
+    <p class="sector-code">ERR / 404</p>
+    <h1 id="lost-title">Page not found</h1>
+    <p>This sector is off the station charts. Something nearby is still transmitting.</p>
+    <details>
+      <summary>Identify signal</summary>
+      <p>One toolbox drifting through space. Engineering would like it back.</p>
+    </details>
+    <a class="server-link" href="/">← Return to server directory</a>
+  </div>
+</section>
+{% else %}
 <div class="panel not-found-panel" role="status">
   <div class="not-found-body">
     <h1 class="not-found-heading">{{ status_code }} — {{ heading or 'Invalid request' }}</h1>
@@ -8,4 +26,5 @@
     <p class="not-found-meta">Return to the <a href="/" class="server-link">main directory</a>.</p>
   </div>
 </div>
+{% endif %}
 {% endblock %}

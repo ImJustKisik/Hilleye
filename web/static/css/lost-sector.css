@@ -1,0 +1,57 @@
+.lost-sector {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(2rem, 7vw, 7rem);
+  padding: clamp(2rem, 8vw, 7rem) 1.5rem;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-recessed);
+}
+
+.sector-scope {
+  position: relative;
+  flex: none;
+  width: min(28vw, 18rem);
+  aspect-ratio: 1;
+  overflow: hidden;
+  border: 1px solid #47605b;
+  border-radius: 50%;
+  background:
+    linear-gradient(90deg, transparent 49.8%, #314941 50%, transparent 50.2%),
+    linear-gradient(transparent 49.8%, #314941 50%, transparent 50.2%),
+    repeating-radial-gradient(circle, transparent 0 16%, #294238 16.3% 16.7%, transparent 17%),
+    #0c1816;
+}
+
+.sector-scope::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: conic-gradient(from 20deg, transparent 285deg, #64dca03d 359deg, transparent);
+  animation: sector-sweep 8s linear infinite;
+}
+
+.sector-scope i {
+  position: absolute;
+  top: 30%;
+  left: 68%;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #aff4c8;
+  box-shadow: 0 0 0 5px #85e6a71a, 0 0 14px #85e6a7;
+}
+
+.sector-report { max-width: 29rem; color: var(--text-secondary); }
+.sector-code { color: var(--link-accent-hover); font: bold 1rem var(--font-mono); letter-spacing: .12em; }
+.sector-report h1 { color: var(--text-primary); font-size: clamp(2rem, 4vw, 3.5rem); margin: .4rem 0; line-height: 1.12; }
+.sector-report details { margin: 1.4rem 0; padding: .75rem 0; border-block: 1px solid var(--border-subtle); }
+.sector-report summary { cursor: pointer; color: #aff4c8; font-family: var(--font-mono); }
+.sector-report details p { margin-top: .6rem; }
+
+@keyframes sector-sweep { to { transform: rotate(1turn); } }
+@media (prefers-reduced-motion: reduce) { .sector-scope::before { animation: none; } }
+@media (max-width: 640px) {
+  .lost-sector { flex-direction: column; align-items: start; }
+  .sector-scope { width: min(100%, 10rem); }
+}
