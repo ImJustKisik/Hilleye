@@ -1,21 +1,27 @@
 {% extends "base.html" %}
 {% block title %}{{ status_code }} — {{ heading or 'Invalid Request' }} — Hilleye{% endblock %}
 {% block extra_head %}
-{% if status_code == 404 %}<link rel="stylesheet" href="/static/css/lost-sector.css">{% endif %}
+{% if status_code == 404 %}<link rel="stylesheet" href="/static/css/lost-sector.css?v=radar">{% endif %}
 {% endblock %}
 {% block content %}
 {% if status_code == 404 %}
 <section class="lost-sector" aria-labelledby="lost-title">
-  <div class="sector-scope" aria-hidden="true"><i></i></div>
   <div class="sector-report">
-    <p class="sector-code">ERR / 404</p>
-    <h1 id="lost-title">Page not found</h1>
-    <p>This sector is off the station charts. Something nearby is still transmitting.</p>
-    <details>
+    <h1 id="lost-title"><span class="sector-code">404</span> Page not found</h1>
+    <p>This sector is off the station charts. Check the address or head back to the server directory.</p>
+    <div class="sector-actions">
+      <a class="sector-link sector-link-primary" href="/">Browse servers</a>
+      <a class="sector-link" href="/logs">View logs</a>
+    </div>
+  </div>
+  <div class="sector-console">
+    <div class="sector-scope" aria-hidden="true">
+      <div class="sector-screen"><span class="sector-blip"></span></div>
+    </div>
+    <details class="sector-signal">
       <summary>Identify signal</summary>
       <p>One toolbox drifting through space. Engineering would like it back.</p>
     </details>
-    <a class="server-link" href="/">← Return to server directory</a>
   </div>
 </section>
 {% else %}
