@@ -11,10 +11,11 @@ class Telemetry:
     def __init__(self):
         self.routes = defaultdict(lambda: deque(maxlen=512))
         self.loop_lag_seconds = 0.0
+        self.log_audit_write_failures = 0
 
-    def record(self, route, elapsed):
+    def record(self, route, elapsed, status=None):
         self.routes[route].append(elapsed)
-        logger.info("http_duration route=%s elapsed=%.4f", route, elapsed)
+        logger.info("http_duration route=%s status=%s elapsed=%.4f", route, status, elapsed)
 
     def snapshot(self):
         def summary(values):
@@ -22,6 +23,7 @@ class Telemetry:
             return {"samples": len(data), "p50_seconds": round(data[(len(data)-1)//2], 4),
                     "p95_seconds": round(data[min(len(data)-1, int(len(data)*.95))], 4)}
         return {"loop_lag_seconds": round(self.loop_lag_seconds, 4),
+                "log_audit_write_failures": self.log_audit_write_failures,
                 "http": {route: summary(values) for route, values in self.routes.items() if values}}
 
 

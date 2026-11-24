@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+from errno import ENOSPC
 import io
 import logging
 import math
@@ -10,12 +11,17 @@ import time
 from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.parse import quote, urlencode
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, Form, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse, Response, JSONResponse
+from starlette.datastructures import UploadFile
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.formparsers import MultiPartException
 
 from core import celadon_logs, discord_auth, logs_db, map_renderer
 from core.log_operations import heavy_slot, finish_thread, staging_directory
 from core.log_jobs import map_job_status
+from core.logs_db.queries import get_index_debug_policy
+from core.logs_db.uploads import UploadPendingError, UploadQuotaError
 import asyncio
 from web.logs_routes.deps import LogsRouteContext
 from web.logs_routes.viewmodels import (
@@ -41,7 +47,17 @@ async def _ingest_log(request, config, user, filename, source, *, label, celadon
             max_extracted_bytes=config.logs_max_extracted_mb * 1024 * 1024,
             max_archive_files=config.logs_max_archive_files,
             include_debug=config.logs_index_include_debug,
+            origin_path=celadon_path,
+            quota_bytes=config.logs_upload_quota_mb * 1024 * 1024,
         )
+    except UploadPendingError as exc:
+        raise HTTPException(503, str(exc), headers={"Retry-After": "60"}) from exc
+    except UploadQuotaError as exc:
+        raise HTTPException(507, str(exc)) from exc
+    except OSError as exc:
+        if exc.errno == ENOSPC:
+            raise HTTPException(507, "На диске хранилища закончился свободный объём.") from exc
+        raise
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 
@@ -80,15 +96,20 @@ async def _index_job(request, config, user, kind, payload, background):
             job_id = await runner.submit(kind, user.discord_id, payload)
         except OverflowError as exc:
             raise HTTPException(429, str(exc), headers={"Retry-After": "2"}) from exc
+        if not background:
+            try:
+                return await asyncio.wait_for(runner.wait(job_id), timeout=25)
+            except asyncio.TimeoutError:
+                background = True
         if background:
             await logs_db.record_audit_event(kind, discord_id=user.discord_id, target=job_id, details="background=1")
             return JSONResponse({"ok": True, "job_id": job_id}, status_code=202)
-        return await runner.wait(job_id)
-    if background:
+    if background and config.resolved_logs_db_path() != ":memory:":
         raise HTTPException(503, "Фоновый обработчик ещё не готов.")
     return await logs_db.sync_and_index_rounds(config.resolved_logs_root_dir(), config.resolved_logs_uploads_dir(),
                                               include_debug=payload.get("include_debug", config.logs_index_include_debug),
-                                              force_reindex=kind == "reindex")
+                                              force_reindex=kind == "reindex", use_saved_debug=True,
+                                              persist_debug=kind == "reindex" and "include_debug" in payload)
 
 
 def _csv_safe_cell(val: Any) -> str:
@@ -304,7 +325,7 @@ def register_admin_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
         for ur in uploaded_rounds:
             ur["uploaded_at_str"] = _fmt_ts_utc(ur.get("uploaded_at"))
             ur["uploaded_at_rel"] = _fmt_relative_ru(ur.get("uploaded_at"), now=now_ts)
-            ur["size_label"] = _fmt_bytes(int(ur.get("game_log_size") or 0) + int(ur.get("qdel_log_size") or 0))
+            ur["size_label"] = _fmt_bytes(sum(ur[key] for key in ("game_log_size", "qdel_log_size", "initialize_log_size")))
             ub_id = str(ur.get("uploaded_by") or "")
             ur["uploaded_by_name"] = wl_name_by_id.get(ub_id, ub_id or "—")
 
@@ -313,6 +334,7 @@ def register_admin_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
         stats["last_indexed_str"] = _fmt_ts_utc(stats.get("last_indexed_at"))
         stats["last_indexed_rel"] = _fmt_relative_ru(stats.get("last_indexed_at"), now=now_ts)
         index_errors = await logs_db.get_index_error_rounds(limit=50)
+        index_include_debug = await get_index_debug_policy(config.logs_index_include_debug)
         map_manifest = map_renderer.get_map_manifest(config.resolved_maps_cache_dir())
         map_build_status = await asyncio.to_thread(map_job_status, config.resolved_logs_db_path()) or map_renderer.get_map_build_status()
 
@@ -334,7 +356,7 @@ def register_admin_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
                 "uploaded_rounds": uploaded_rounds,
                 "stats": stats,
                 "index_errors": index_errors,
-                "index_include_debug": config.logs_index_include_debug,
+                "index_include_debug": index_include_debug,
                 "map_manifest": map_manifest,
                 "map_build_status": map_build_status,
                 "maps_repo_dir": str(config.resolved_maps_repo_dir() or ""),
@@ -417,10 +439,9 @@ def register_admin_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
             details=f"discovered={summary['discovered']}, indexed={summary['indexed_rounds']}",
         )
         if _prefers_json(request):
-            return {"ok": True, **summary}
-        msg = quote(
-            f"Список обновлён: {summary['discovered']} раундов, проиндексировано {summary['indexed_rounds']} ({summary['elapsed_seconds']} с)"
-        )
+            return {"ok": not summary["errors"], **summary}
+        msg = quote(f"Найдено {summary['discovered']} раундов, проиндексировано {summary['indexed_rounds']}, "
+                    f"ошибок {summary['errors']} ({summary['elapsed_seconds']} с)")
         target_path = "/logs/admin" if (next_url or "").strip() == "/logs/admin" and user.is_admin else "/logs"
         return RedirectResponse(f"{target_path}?notice={msg}", status_code=303)
 
@@ -446,10 +467,9 @@ def register_admin_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
             details=f"include_debug={inc_dbg}, indexed_rounds={summary['indexed_rounds']}, lines={summary['indexed_lines']}",
         )
         if _prefers_json(request):
-            return {"ok": True, **summary}
-        msg = quote(
-            f"Переиндексация завершена: {summary['indexed_rounds']} раундов, {summary['indexed_lines']} строк ({summary['elapsed_seconds']}с)"
-        )
+            return {"ok": not summary["errors"], **summary}
+        msg = quote(f"Переиндексировано {summary['indexed_rounds']} раундов, {summary['indexed_lines']} строк, "
+                    f"ошибок {summary['errors']} ({summary['elapsed_seconds']} с)")
         return RedirectResponse(f"/logs/admin?notice={msg}", status_code=303)
 
     @router.post("/logs/admin/maps/rebuild")
@@ -475,7 +495,12 @@ def register_admin_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
                 if _prefers_json(request):
                     return {"ok": True, "started": True, "job_id": job_id}
                 return RedirectResponse(f"/logs/admin?notice={quote('Сборка карты запущена')}", status_code=303)
-            manifest = await runner.wait(job_id)
+            try:
+                manifest = await asyncio.wait_for(runner.wait(job_id), timeout=25)
+            except asyncio.TimeoutError:
+                if _prefers_json(request):
+                    return JSONResponse({"ok": True, "started": True, "job_id": job_id}, status_code=202)
+                return RedirectResponse(f"/logs/admin?notice={quote('Сборка карты продолжается')}", status_code=303)
             if _prefers_json(request):
                 return {"ok": True, **manifest}
             return RedirectResponse(f"/logs/admin?notice={quote('Карта пересобрана')}", status_code=303)
@@ -566,30 +591,59 @@ def register_admin_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
         params = urlencode(dict(source="celadon", date=date, round_folder=folder, import_error=str(error.detail)[:1000]))
         return RedirectResponse(f"/logs?{params}#logs-rounds-title", status_code=303)
 
-    @router.post("/logs/upload")
-    async def upload_logs(
-        request: Request,
-        file: UploadFile = File(...),
-        label: str = Form(default=""),
-        csrf_token: str = Form(default=""),
-    ):
+    @router.post("/logs/upload", openapi_extra={"requestBody": {"required": True, "content": {
+        "multipart/form-data": {"schema": {"type": "object", "required": ["file"], "properties": {
+            "file": {"type": "string", "format": "binary"},
+            "label": {"type": "string"},
+            "csrf_token": {"type": "string"},
+        }}},
+    }}})
+    async def upload_logs(request: Request):
         user = await ctx.require_api_user(request)
-        discord_auth.verify_csrf(user, csrf_token or request.headers.get("x-csrf-token"))
         config = ctx.get_config_fn()
-
         max_upload_bytes = config.logs_max_upload_mb * 1024 * 1024
-        if file.size is not None and file.size > max_upload_bytes:
-            raise HTTPException(413, f"Файл превышает максимальный размер ({config.logs_max_upload_mb} МБ).")
-        async with heavy_slot(config), staging_directory(prefix="hilleye-upload-") as staging:
-            source = staging / "input"
-            total_read = 0
-            with source.open("wb") as stream:
-                while chunk := await file.read(1024 * 1024):
-                    total_read += len(chunk)
-                    if total_read > max_upload_bytes:
-                        raise HTTPException(413, f"Файл превышает максимальный размер ({config.logs_max_upload_mb} МБ).")
-                    await finish_thread(stream.write, chunk)
-            return await _ingest_log(request, config, user, file.filename or "uploaded.log", source, label=label)
+        max_body_bytes = max_upload_bytes + 128 * 1024
+        length = request.headers.get("content-length", "")
+        too_large = f"Файл превышает максимальный размер ({config.logs_max_upload_mb} МБ)."
+        if length.isascii() and length.isdecimal() and (len(length) > 20 or int(length) > max_body_bytes):
+            raise HTTPException(413, too_large)
+        received = 0
+        failure = None
+        deadline = time.monotonic() + 60
+
+        async def receive():
+            nonlocal received, failure
+            try:
+                message = await asyncio.wait_for(request.receive(), max(0, deadline - time.monotonic()))
+            except asyncio.TimeoutError as exc:
+                failure = (408, "Истекло время загрузки файла.")
+                raise MultiPartException(failure[1]) from exc
+            received += len(message.get("body", b""))
+            if received > max_body_bytes:
+                failure = (413, too_large)
+                raise MultiPartException(too_large)
+            return message
+
+        bounded_request = Request(request.scope, receive=receive)
+        async with heavy_slot(config):
+            try:
+                async with bounded_request.form(max_files=1, max_fields=2, max_part_size=4096) as form:
+                    file, label, csrf_token = form.get("file"), form.get("label", ""), form.get("csrf_token", "")
+                    if not isinstance(file, UploadFile) or not isinstance(label, str) or not isinstance(csrf_token, str):
+                        raise HTTPException(422, "Укажите один файл лога и текстовые поля формы.")
+                    discord_auth.verify_csrf(user, csrf_token or request.headers.get("x-csrf-token"))
+                    if file.size is not None and file.size > max_upload_bytes:
+                        raise HTTPException(413, too_large)
+                    async with staging_directory(prefix="hilleye-upload-") as staging:
+                        source = staging / "input"
+                        with source.open("wb") as stream:
+                            while chunk := await file.read(1024 * 1024):
+                                await finish_thread(stream.write, chunk)
+                        return await _ingest_log(request, config, user, file.filename or "uploaded.log", source, label=label)
+            except StarletteHTTPException as exc:
+                if failure:
+                    raise HTTPException(*failure) from exc
+                raise
 
     @router.post("/logs/rounds/{round_uid}/delete")
     async def delete_upload_route(

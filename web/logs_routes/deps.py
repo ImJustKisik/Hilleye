@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
 
@@ -11,7 +12,49 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
 from core import discord_auth, logs_db
+from core.byond_topic import normalize_ckey
 from core.config import AppConfig
+from core.log_parser import mask_sensitive_text
+from core.logs_db.reader import indexed_entry_matches
+
+
+def validate_log_search(ckey: str, date_from: str, date_to: str) -> tuple[str, str, str]:
+    normalized_ckey = normalize_ckey(ckey.strip())
+    if ckey.strip() and not normalized_ckey:
+        raise HTTPException(400, "Укажите корректный ckey.")
+
+    def parse_day(value: str) -> str:
+        value = value.strip()
+        if not value:
+            return ""
+        try:
+            day = date.fromisoformat(value).isoformat()
+        except ValueError:
+            raise HTTPException(400, "Укажите дату в формате ГГГГ-ММ-ДД.") from None
+        if day != value:
+            raise HTTPException(400, "Укажите дату в формате ГГГГ-ММ-ДД.")
+        return day
+
+    start, end = parse_day(date_from), parse_day(date_to)
+    if start and end and start > end:
+        raise HTTPException(400, "Дата начала должна быть не позже даты окончания.")
+    return normalized_ckey, start, end
+
+
+async def require_indexed_entry(round_uid, file_name, file_path, line_no, entry_id):
+    if entry_id is not None and (
+        file_name != "game.log" or line_no is None
+        or not await indexed_entry_matches(round_uid, file_path, line_no, entry_id)
+    ):
+        raise HTTPException(409, "Исходный лог изменился после поиска. Повторите поиск и откройте актуальную строку.")
+
+
+async def record_log_access(request, user, action, target, *, details):
+    await logs_db.record_audit_event(
+        action, discord_id=user.discord_id, discord_username=user.username,
+        target=mask_sensitive_text(target), ip_address=discord_auth.get_client_ip(request),
+        details=details,
+    )
 
 
 @dataclass

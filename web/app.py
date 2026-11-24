@@ -129,18 +129,20 @@ async def lifespan(app: FastAPI):
 
     logger.info("Starting Hilleye background telemetry tracker...")
     tracker = get_tracker(config=config)
-    jobs = JobRunner(config)
+    jobs = JobRunner(config) if config.resolved_logs_db_path() != ":memory:" else None
     app.state.log_jobs = jobs
     lag_task = None
 
     try:
         await tracker.start()
-        await jobs.start()
+        if jobs is not None:
+            await jobs.start()
         lag_task = asyncio.create_task(monitor_loop())
         yield
     finally:
         try:
-            await jobs.stop()
+            if jobs is not None:
+                await jobs.stop()
             app.state.log_jobs = None
             if lag_task is not None:
                 lag_task.cancel()
@@ -231,13 +233,14 @@ async def response_headers(request: Request, call_next):
     started = time.monotonic()
     response = await call_next(request)
     route = request.scope.get("route")
-    telemetry.record(getattr(route, "path", "unmatched"), time.monotonic() - started)
+    telemetry.record(getattr(route, "path", "unmatched"), time.monotonic() - started, response.status_code)
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "SAMEORIGIN"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     if not request.url.path.startswith(("/docs", "/redoc", "/openapi.json")):
         response.headers["Content-Security-Policy"] = _CSP_HEADER
-    if request.url.path.startswith("/logs/round/"):
+    path = request.url.path
+    if path == "/logs" or path.startswith(("/logs/", "/api/v1/logs/", "/auth/", "/api/auth/")):
         response.headers["Cache-Control"] = "private, no-store"
     if request.url.path.startswith("/static/") and response.status_code in (200, 206, 304):
         response.headers["Cache-Control"] = "public, max-age=86400, stale-while-revalidate=3600"

@@ -2,7 +2,7 @@
 {% block title %}Глобальный поиск по логам SierraBay12 — Hilleye{% endblock %}
 {% block extra_head %}
 <link rel="stylesheet" href="/static/css/logs.css">
-<script src="/static/js/logs.js" defer></script>
+<script src="/static/js/logs.js?v=logs-modules" defer></script>
 <script src="/static/js/log-jobs.js" defer></script>
 {% endblock %}
 
@@ -12,10 +12,11 @@
   {% include "partials/logs_topbar.html" %}
 
   {% set has_adv_search = date_from or date_to or round_uid or z_level or only_coords or scan_debug or mask_ips or selected_cats %}
+  {% set mask_query = '&mask_ips=1' if mask_ips else '' %}
   <section class="panel" aria-label="Параметры поиска по раундам">
     <div class="panel-header">
       <h1 class="panel-title">Поиск по всем раундам</h1>
-      <span class="mono-val cell-sub">FTS5 индекс + опциональный скан DEBUG</span>
+      <span class="mono-val cell-sub">Поиск по game.log</span>
     </div>
     <div class="logs-panel-body">
       <form action="/logs/search" method="get" class="logs-search-form">
@@ -110,6 +111,9 @@
       <span class="mono-val cell-sub">раундов на стр.: {{ grouped_hits|length }} &middot; стр. {{ page }} / {{ total_pages }}</span>
     </div>
 
+    {% if truncated %}
+    <div class="logs-alert logs-alert-warn" role="status">Проверена только часть архива. Сузьте поиск по дате или раунду.</div>
+    {% endif %}
     {% if grouped_hits %}
     <div class="logs-search-groups">
       {% for grp in grouped_hits %}
@@ -121,14 +125,15 @@
             <span class="logs-badge-count mono-val">{{ grp.hits|length }}</span>
           </div>
           <div class="logs-search-group-links">
-            <a href="/logs/round/{{ grp.round_uid }}?file=game.log" class="log-mini-btn">Открыть раунд</a>
+            <a href="/logs/round/{{ grp.round_uid }}?file=game.log{{ mask_query }}" class="log-mini-btn">Открыть раунд</a>
           </div>
         </summary>
 
         <div class="log-stream">
           {% for h in grp.hits %}
+          {% set entry_query = '&entry_id=' ~ h.entry_id if h.entry_id is defined else '' %}
           <div class="log-row is-search-hit {{ h.cat_css }}">
-            <a href="/logs/round/{{ h.round_uid }}?file=game.log&preset=all&focus={{ h.line_no }}#L{{ h.line_no }}" class="log-ln" title="Открыть строку в раунде">#L{{ h.line_no }}</a>
+            <a href="/logs/round/{{ h.round_uid }}?file=game.log&preset=all&focus={{ h.line_no }}{{ mask_query }}{{ entry_query }}#L{{ h.line_no }}" class="log-ln" title="Открыть строку в раунде">#L{{ h.line_no }}</a>
             <span class="log-ts" title="{{ h.timestamp }}">
               {{ h.timestamp[11:] if h.timestamp|length > 11 else h.timestamp }}
             </span>
@@ -140,7 +145,7 @@
               {% if h.coords or h.ckeys %}
               <div class="log-meta-badges">
                 {% if h.coords %}
-                <a href="/logs/round/{{ h.round_uid }}?file=game.log&preset=all&view=map&z={{ h.coords.z }}&tx={{ h.coords.x }}&ty={{ h.coords.y }}&focus={{ h.line_no }}"
+                <a href="/logs/round/{{ h.round_uid }}?file=game.log&preset=all&view=map&z={{ h.coords.z }}&tx={{ h.coords.x }}&ty={{ h.coords.y }}&focus={{ h.line_no }}{{ mask_query }}{{ entry_query }}"
                    class="log-coord-badge"
                    title="Показать точку ({{ h.coords.x }}, {{ h.coords.y }}, Z{{ h.coords.z }}) на карте">
                   {{ h.coords.x }}, {{ h.coords.y }}, Z{{ h.coords.z }}{% if h.coords.area %} &middot; {{ h.coords.area }}{% endif %}
@@ -148,7 +153,7 @@
                 {% endif %}
                 {% for ck in h.ckeys %}
                 <span class="log-ckey-inline">
-                  <a href="/logs/search?ckey={{ ck|urlencode }}&preset={{ active_preset|urlencode }}" class="log-ckey-btn" title="Искать по ckey">{{ ck }}</a>
+                  <a href="/logs/search?ckey={{ ck|urlencode }}&preset={{ active_preset|urlencode }}{{ mask_query }}" class="log-ckey-btn" title="Искать по ckey">{{ ck }}</a>
                   <a href="/player/{{ ck }}" class="log-ckey-dossier" target="_blank" rel="noopener" title="Досье игрока">&nearr;</a>
                 </span>
                 {% endfor %}
@@ -158,12 +163,12 @@
             <div class="log-row-actions">
               <button type="button"
                       class="log-mini-btn"
-                      data-context-url="/logs/round/{{ h.round_uid }}/context?file=game.log&line={{ h.line_no }}&mask_ips={{ 1 if mask_ips else 0 }}&inline=1"
+                      data-context-url="/logs/round/{{ h.round_uid }}/context?file=game.log&line={{ h.line_no }}&mask_ips={{ 1 if mask_ips else 0 }}&inline=1{{ entry_query }}"
                       data-line-no="{{ h.line_no }}"
                       title="Показать соседние ±20 строк (включая DEBUG)">&plusmn;20</button>
-              <a href="/logs/round/{{ h.round_uid }}?file=game.log&preset=all&focus={{ h.line_no }}#L{{ h.line_no }}" class="log-mini-btn">Открыть</a>
+              <a href="/logs/round/{{ h.round_uid }}?file=game.log&preset=all&focus={{ h.line_no }}{{ mask_query }}{{ entry_query }}#L{{ h.line_no }}" class="log-mini-btn">Открыть</a>
               {% if h.coords %}
-              <a href="/logs/round/{{ h.round_uid }}?file=game.log&preset=all&view=map&z={{ h.coords.z }}&tx={{ h.coords.x }}&ty={{ h.coords.y }}&focus={{ h.line_no }}" class="log-mini-btn">На карте</a>
+              <a href="/logs/round/{{ h.round_uid }}?file=game.log&preset=all&view=map&z={{ h.coords.z }}&tx={{ h.coords.x }}&ty={{ h.coords.y }}&focus={{ h.line_no }}{{ mask_query }}{{ entry_query }}" class="log-mini-btn">На карте</a>
               {% endif %}
             </div>
           </div>

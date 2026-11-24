@@ -177,7 +177,7 @@ def _enrich_audit_event(
     return ev
 
 
-def _coord_vm(coords: Optional[Tuple[int, int, int]], cache_dir: Path) -> Optional[Dict[str, Any]]:
+def _coord_vm(coords: Optional[Tuple[int, int, int]], cache_dir: Optional[Path]) -> Optional[Dict[str, Any]]:
     if not coords:
         return None
     x, y, z = int(coords[0]), int(coords[1]), int(coords[2])
@@ -188,13 +188,13 @@ def _coord_vm(coords: Optional[Tuple[int, int, int]], cache_dir: Path) -> Option
         "y": y,
         "z": z,
         "z_label": map_renderer.deck_short_label(z),
-        "area": map_renderer.lookup_area_name(cache_dir, z, x, y),
+        "area": map_renderer.lookup_area_name(cache_dir, z, x, y) if cache_dir is not None else "",
     }
 
 
 def _entry_to_vm(
     entry: Any,
-    cache_dir: Path,
+    cache_dir: Optional[Path],
     *,
     focus: Optional[int] = None,
     target_line: Optional[int] = None,

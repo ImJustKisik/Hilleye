@@ -6,12 +6,14 @@ import asyncio
 import io
 from pathlib import Path
 import queue
+import re
 import subprocess
 import tarfile
 from typing import Any, Dict, Optional
 
 import httpx
 
+from core.log_operations import finish_awaitable
 from core.map_renderer.specs import (
     GITHUB_ARCHIVE_TIMEOUT_SECONDS,
     MAX_EXTRACTED_REPO_BYTES,
@@ -36,8 +38,14 @@ def _detect_local_git_commit(repo_dir: Path) -> str:
     if not (repo_dir / ".git").exists():
         return ""
     try:
+        status = subprocess.run(
+            ["git", "-C", str(repo_dir), "status", "--porcelain", "--untracked-files=normal"],
+            capture_output=True, text=True, timeout=5, check=False,
+        )
+        if status.returncode != 0 or status.stdout.strip():
+            return ""
         res = subprocess.run(
-            ["git", "-C", str(repo_dir), "rev-parse", "--short", "HEAD"],
+            ["git", "-C", str(repo_dir), "rev-parse", "HEAD"],
             capture_output=True,
             text=True,
             timeout=5,
@@ -79,7 +87,7 @@ class _ChunkQueueReader(io.RawIOBase):
         return out
 
 
-def _extract_tar_stream_sync(reader: _ChunkQueueReader, dest_dir: Path) -> None:
+def _extract_tar_stream_sync(reader: _ChunkQueueReader, dest_dir: Path) -> str:
     dest_resolved = dest_dir.resolve()
     total_extracted = 0
     with tarfile.open(fileobj=reader, mode="r|gz") as tf:
@@ -111,13 +119,15 @@ def _extract_tar_stream_sync(reader: _ChunkQueueReader, dest_dir: Path) -> None:
                     if not chunk:
                         break
                     dst.write(chunk)
+        comment = tf.pax_headers.get("comment", "").strip().lower()
+        return comment if re.fullmatch(r"[0-9a-f]{40}", comment) else ""
 
 
 async def _download_github_repo_subset(
     github_repo: str,
     github_branch: str,
     dest_dir: Path,
-) -> None:
+) -> str:
     """Stream and selectively extract map/icon files from GitHub tarball with zero archive disk buffer."""
     import core.map_renderer as _mr
 
@@ -128,7 +138,9 @@ async def _download_github_repo_subset(
     if not _GITHUB_BRANCH_RE.match(branch_clean) or ".." in branch_clean:
         raise ValueError("Некорректное имя ветки GitHub.")
 
-    url = f"https://github.com/{repo_clean}/archive/refs/heads/{branch_clean}.tar.gz"
+    is_commit = re.fullmatch(r"[0-9a-fA-F]{40}", branch_clean) is not None
+    archive_ref = branch_clean if is_commit else f"refs/heads/{branch_clean}"
+    url = f"https://github.com/{repo_clean}/archive/{archive_ref}.tar.gz"
     transport = _mr._github_transport_factory() if _mr._github_transport_factory else None
     client_kwargs: Dict[str, Any] = {
         "timeout": httpx.Timeout(
@@ -196,7 +208,11 @@ async def _download_github_repo_subset(
                     )
         if extract_task is not None:
             eof_sent = await put_chunk(None)
-            await extract_task
+            recorded = await asyncio.shield(extract_task)
+            if is_commit and recorded and recorded != branch_clean.lower():
+                raise ValueError("GitHub archive does not match the requested revision")
+            return branch_clean.lower() if is_commit else recorded
+        return ""
     finally:
         if extract_task is not None:
             if not eof_sent:
@@ -211,6 +227,6 @@ async def _download_github_repo_subset(
                             break
             if not extract_task.done():
                 try:
-                    await extract_task
+                    await finish_awaitable(extract_task)
                 except Exception:
                     pass

@@ -166,15 +166,18 @@ MIT License.
 `logs.periodic_scan` defaults to true, `logs.scan_interval_seconds` to 60, and
 `logs.regex_timeout_seconds` to 5. `logs.auto_scan_on_startup` only controls the immediate
 first scan. Missing or partially readable sources preserve the last index; confirmed missing
-rounds are removed only after two complete scans at least a minute apart. Growing disk logs
-are append-only between rotations; use reindex after manually editing an earlier line.
+rounds are removed only after two complete scans at least a minute apart. A changed disk
+file is checked against the digest of its indexed prefix. Use reindex for edits that
+preserve file metadata.
 
 Regex work runs in a terminable process. Two OS-shared slots bound heavy user operations;
 capacity errors return 429 with `Retry-After`, regex deadlines return 408. Ordinary indexed
 pages use byte offsets; complex filters preserve their streaming behavior.
 
 The UI submits refresh/reindex in the background. `POST /logs/refresh` and `/logs/reindex`
-accept `background=1` and return 202 with `job_id`; the default still waits for completion.
+accept `background=1` and return 202 with `job_id`. The default waits up to 25 seconds
+before returning the job ID. Index scans with individual source or round errors report
+`partial`. The selected DEBUG indexing policy persists across later refreshes.
 The existing background map rebuild response also contains `job_id`. Authenticated users can
 read `/api/v1/logs/jobs/{job_id}` for their jobs and `/api/v1/logs/status`; admins can inspect all jobs.
 Index and map jobs have independent OS-elected owners. Job state, heartbeat and results survive

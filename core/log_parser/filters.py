@@ -28,7 +28,7 @@ from core.log_parser.models import (
 )
 from core.log_parser.sanitizer import (
     decode_log_bytes,
-    mask_sensitive_text,
+    prepare_log_message,
     sanitize_byond_html,
 )
 
@@ -362,15 +362,11 @@ def _build_entry(
     pre_display_raw: Optional[str] = None,
     pre_sanitized: Optional[Tuple[str, str]] = None,
 ) -> ParsedLogLine:
-    display_raw = (
-        pre_display_raw
-        if pre_display_raw is not None
-        else (mask_sensitive_text(raw_msg) if mask_ips else raw_msg)
-    )
-    if pre_sanitized is not None:
+    if pre_display_raw is not None and pre_sanitized is not None:
+        display_raw = pre_display_raw
         safe_html, plain_text = pre_sanitized
     else:
-        safe_html, plain_text = sanitize_byond_html(display_raw)
+        display_raw, (safe_html, plain_text) = prepare_log_message(raw_msg, mask_ips=mask_ips)
     if not render_html:
         safe_html = html_escape(display_raw)
     ckeys = extract_ckeys_from_text(plain_text)
@@ -408,8 +404,7 @@ def _evaluate_line_filter(
     if not filt.ckey_norm and not filt.q_lower and filt.pattern is None:
         return True, None, None, anchor_hint
 
-    display_raw = mask_sensitive_text(raw_msg) if mask_ips else raw_msg
-    sanitized = sanitize_byond_html(display_raw)
+    display_raw, sanitized = prepare_log_message(raw_msg, mask_ips=mask_ips)
     plain_text = sanitized[1]
 
     if filt.ckey_norm:
@@ -664,11 +659,9 @@ def iter_export_filtered_game_log(
         if not matched:
             continue
 
-        display_msg = (
-            pre_display_raw
-            if pre_display_raw is not None
-            else (mask_sensitive_text(raw_msg) if mask_ips else raw_msg)
-        )
+        display_msg = pre_display_raw if pre_display_raw is not None else raw_msg
+        if pre_display_raw is None and mask_ips:
+            display_msg, _ = prepare_log_message(raw_msg, mask_ips=True)
         if is_cont:
             yield display_msg + "\n"
         elif cat == "SYSTEM":
@@ -691,7 +684,8 @@ def export_filtered_game_log_to_file(file_path: Path, output_path: Path, **kwarg
 def mask_log_to_file(file_path: Path, output_path: Path) -> str:
     with file_path.open("rb") as source, Path(output_path).open("w", encoding="utf-8", newline="") as target:
         for line in source:
-            target.write(mask_sensitive_text(_decode_log_line(line)))
+            masked, _ = prepare_log_message(_decode_log_line(line), mask_ips=True)
+            target.write(masked)
     return str(output_path)
 
 

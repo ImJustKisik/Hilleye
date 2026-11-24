@@ -7,6 +7,8 @@ import logging
 import time
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from core.telemetry import telemetry
+
 logger = logging.getLogger(__name__)
 
 
@@ -126,6 +128,7 @@ async def record_audit_event(
     import core.logs_db as _ldb
 
     if _ldb._connection is None:
+        telemetry.log_audit_write_failures += 1
         return
     try:
         await _ldb._connection.execute(
@@ -145,7 +148,8 @@ async def record_audit_event(
         )
         await _ldb._connection.commit()
     except Exception:
-        logger.debug("Failed to write log audit event", exc_info=True)
+        telemetry.log_audit_write_failures += 1
+        logger.warning("Failed to write log audit event (action=%s)", action, exc_info=True)
 
 
 def _escape_like(val: str) -> str:

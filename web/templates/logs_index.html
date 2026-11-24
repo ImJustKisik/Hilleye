@@ -4,7 +4,8 @@
 {% block extra_head %}
 <link rel="stylesheet" href="/static/css/logs.css">
 <link rel="stylesheet" href="/static/css/logs-index.css?v=celadon-rounds">
-<script src="/static/js/logs.js?v=celadon-rounds" defer></script>
+<script src="/static/js/log-catalog.js" defer></script>
+<script src="/static/js/logs.js?v=logs-modules" defer></script>
 <script src="/static/js/log-jobs.js" defer></script>
 {% endblock %}
 
@@ -25,7 +26,7 @@
 
   {% if not root_dir_exists and logs_root_dir %}
   <div class="logs-alert logs-alert-warn" role="status">
-    Папка серверных логов на диске не найдена (<code>{{ logs_root_dir }}</code>). Можно импортировать файл с Celadon или загрузить его вручную.
+    Папка серверных логов на диске не найдена{% if user.is_admin %} (<code>{{ logs_root_dir }}</code>){% endif %}. Можно импортировать файл с Celadon или загрузить его вручную.
   </div>
   {% elif not root_dir_exists and not rounds %}
   <div class="logs-alert" role="status">

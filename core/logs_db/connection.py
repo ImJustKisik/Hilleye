@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
+from contextlib import closing
 from pathlib import Path
 import re
+import sqlite3
 from typing import Set
 
 import aiosqlite
@@ -11,6 +14,7 @@ import aiosqlite
 ALLOWED_LOG_FILES: Set[str] = {"game.log", "qdel.log", "initialize.log"}
 _SAFE_SLUG_RE = re.compile(r"[^a-zA-Z0-9_-]+")
 _DATE_PATH_RE = re.compile(r"(20\d{2})[/\\](0[1-9]|1[0-2])[/\\](0[1-9]|[12]\d|3[01])")
+_SCHEMA_VERSION = 2
 
 LOGS_SCHEMA_SQL = """
 PRAGMA journal_mode = WAL;
@@ -153,11 +157,32 @@ CREATE TABLE IF NOT EXISTS log_maintenance_state (
     name TEXT PRIMARY KEY,
     value_json TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS log_upload_batches (
+    id TEXT PRIMARY KEY,
+    created_at REAL NOT NULL,
+    entries_json TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS log_upload_receipts (
+    fingerprint TEXT PRIMARY KEY,
+    round_uid TEXT NOT NULL REFERENCES log_rounds(round_uid) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_log_upload_receipts_round ON log_upload_receipts(round_uid);
+CREATE TABLE IF NOT EXISTS log_upload_deletions (
+    round_uid TEXT PRIMARY KEY,
+    relative_path TEXT NOT NULL,
+    deleted_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS log_job_rounds (
+    job_id TEXT NOT NULL REFERENCES log_jobs(id) ON DELETE CASCADE,
+    round_uid TEXT NOT NULL,
+    generation INTEGER NOT NULL,
+    indexed_lines INTEGER NOT NULL,
+    PRIMARY KEY(job_id,round_uid)
+);
 """
 
 
-def _initialize_schema(conn, schema):
-    import sqlite3
+def _configure_connection(conn):
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
     conn.execute("PRAGMA foreign_keys=ON")
@@ -165,8 +190,14 @@ def _initialize_schema(conn, schema):
     conn.execute("PRAGMA cache_size=-65536")
     conn.execute("PRAGMA temp_store=MEMORY")
     conn.execute("PRAGMA mmap_size=268435456")
+
+
+def _initialize_schema(conn, schema):
+    _configure_connection(conn)
     conn.execute("BEGIN IMMEDIATE")
     try:
+        if conn.execute("PRAGMA user_version").fetchone()[0] > _SCHEMA_VERSION:
+            raise RuntimeError("Logs database schema was created by a newer Hilleye version")
         tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         migrated_coords = False
         if "log_entries" in tables:
@@ -186,7 +217,9 @@ def _initialize_schema(conn, schema):
                 conn.execute(statement)
                 statement = ""
         for table, additions in (
-            ("log_rounds", {"active_generation": "INTEGER NOT NULL DEFAULT 0", "missing_since": "REAL"}),
+            ("log_rounds", {"active_generation": "INTEGER NOT NULL DEFAULT 0", "missing_since": "REAL",
+                            "import_batch": "TEXT", "initialize_log_size": "INTEGER NOT NULL DEFAULT 0",
+                            "map_revision": "TEXT NOT NULL DEFAULT ''"}),
             ("log_entries", {"generation": "INTEGER NOT NULL DEFAULT 0", "byte_offset": "INTEGER", "byte_length": "INTEGER", "is_continuation": "INTEGER NOT NULL DEFAULT 0"}),
         ):
             columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
@@ -194,6 +227,8 @@ def _initialize_schema(conn, schema):
                 if name not in columns:
                     conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {declaration}")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_log_generation_line ON log_entries(round_uid,generation,line_no)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_log_rounds_import_batch ON log_rounds(import_batch) WHERE import_batch IS NOT NULL")
+        conn.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
         conn.commit()
     except BaseException:
         conn.rollback()
@@ -202,7 +237,6 @@ def _initialize_schema(conn, schema):
 
 async def init_logs_db(db_path: str = "logs.db") -> None:
     """Initialize or additively migrate the log schema in one transaction."""
-    import asyncio
     import core.logs_db as _ldb
     loop = asyncio.get_running_loop()
     for name in ("_db_lock", "_sync_lock"):
@@ -242,3 +276,23 @@ async def get_logs_connection() -> aiosqlite.Connection:
     if _ldb._connection is None:
         raise RuntimeError("Logs database is not initialized")
     return _ldb._connection
+
+
+async def run_logs_transaction(operation, *args, **kwargs):
+    """Run a synchronous storage operation without releasing its caller's locks on cancellation."""
+    import core.logs_db as _ldb
+    from core.log_operations import finish_awaitable, finish_thread
+
+    path = _ldb._current_logs_db_path
+    if path == ":memory:":
+        conn = await get_logs_connection()
+        return await finish_awaitable(conn._execute(operation, conn._conn, *args, **kwargs))
+
+    def invoke():
+        with closing(sqlite3.connect(path, timeout=15)) as conn:
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA foreign_keys=ON")
+            conn.execute("PRAGMA busy_timeout=5000")
+            return operation(conn, *args, **kwargs)
+
+    return await finish_thread(invoke)

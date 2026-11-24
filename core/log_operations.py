@@ -18,6 +18,15 @@ from core.file_lock import FileLock, lock_path
 logger = logging.getLogger(__name__)
 
 
+def sync_directory(path):
+    if os.name == "posix":
+        descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+
+
 @asynccontextmanager
 async def heavy_slot(config):
     slots = [FileLock(lock_path(config.resolved_logs_db_path(), f"heavy-{i}")) for i in range(2)]
@@ -32,12 +41,23 @@ async def heavy_slot(config):
 
 async def finish_thread(fn, *args, **kwargs):
     """Do not release a lock or remove staging while a cancelled thread still writes."""
-    task = asyncio.create_task(asyncio.to_thread(fn, *args, **kwargs))
-    try:
-        return await asyncio.shield(task)
-    except asyncio.CancelledError:
-        await task
-        raise
+    return await finish_awaitable(asyncio.to_thread(fn, *args, **kwargs))
+
+
+async def finish_awaitable(operation):
+    task = asyncio.ensure_future(operation)
+    cancelled = False
+    while True:
+        try:
+            result = await asyncio.shield(task)
+        except asyncio.CancelledError:
+            if task.cancelled():
+                raise
+            cancelled = True
+            continue
+        if cancelled:
+            raise asyncio.CancelledError
+        return result
 
 
 @asynccontextmanager

@@ -6,6 +6,7 @@ import base64
 from dataclasses import dataclass
 import hashlib
 import hmac
+from ipaddress import ip_address
 import json
 import logging
 import secrets
@@ -270,13 +271,10 @@ def verify_csrf(user: AuthUser, provided_token: Optional[str]) -> None:
 
 
 def get_client_ip(request: Request) -> str:
-    """Extract client IP address from proxy headers or socket peer."""
-    xff = request.headers.get("x-forwarded-for", "").strip()
-    if xff:
-        return xff.split(",")[0].strip()[:64]
-    xri = request.headers.get("x-real-ip", "").strip()
-    if xri:
-        return xri[:64]
-    if request.client and request.client.host:
-        return str(request.client.host)[:64]
-    return ""
+    """Use the ASGI peer, normalized by the server's trusted proxy middleware."""
+    if not request.client:
+        return ""
+    try:
+        return str(ip_address(request.client.host))
+    except ValueError:
+        return ""

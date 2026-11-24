@@ -30,8 +30,11 @@ from core.map_renderer.renderer import (
     get_map_areas_path,
     get_map_image_path,
     get_map_manifest,
+    get_map_version_dir,
     invalidate_area_cache,
     lookup_area_name,
+    public_map_manifest,
+    select_round_map,
     start_map_rebuild_background,
 )
 from core.map_renderer.repo_loader import (
@@ -126,6 +129,9 @@ __all__ = [
     "_download_github_repo_subset",
     "_render_maps_from_repo_sync",
     "get_map_manifest",
+    "get_map_version_dir",
+    "public_map_manifest",
+    "select_round_map",
     "get_map_image_path",
     "get_map_areas_path",
     "invalidate_area_cache",

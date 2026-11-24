@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
-import asyncio
 from datetime import datetime, timedelta, timezone
+from functools import partial
+from html import escape
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
-from core import celadon_logs, discord_auth, logs_db, map_renderer
+from core import celadon_logs, logs_db, map_renderer
 from core.log_operations import run_log_operation
 from core.logs_db.reader import read_log_context, read_log_page
 from core.byond_topic import normalize_ckey
@@ -17,13 +18,11 @@ from core.log_parser import (
     CATEGORY_META,
     LOG_PRESETS,
     category_info,
-    filter_game_log_file,
     mask_sensitive_text,
     parse_qdel_log_file,
-    sanitize_byond_html,
-    scan_raw_files_for_query,
 )
-from web.logs_routes.deps import LogsRouteContext
+from core.log_parser.map_events import search_raw_log_files
+from web.logs_routes.deps import LogsRouteContext, record_log_access, require_indexed_entry, validate_log_search
 from web.logs_routes.viewmodels import (
     _coord_vm,
     _entry_to_vm,
@@ -46,7 +45,7 @@ def register_viewer_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
         date: str = "",
         source: str = "",
         q: str = "",
-        page: int = Query(default=1, ge=1),
+        page: int = Query(default=1, ge=1, le=1_000_000),
         notice: str = "",
         round_folder: str = Query(default="", max_length=1000),
         import_error: str = Query(default="", max_length=1000),
@@ -91,13 +90,10 @@ def register_viewer_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
                 offset=offset,
             )
             for r in rounds:
-                r["size_label"] = _fmt_bytes(int(r.get("game_log_size") or 0) + int(r.get("qdel_log_size") or 0))
+                r["size_label"] = _fmt_bytes(sum(r[key] for key in ("game_log_size", "qdel_log_size", "initialize_log_size")))
                 r["uploaded_at_str"] = _fmt_ts_utc(r.get("uploaded_at"))
                 r["duration_str"] = _round_time_vm(r).get("duration", "")
 
-        stats = await logs_db.get_logs_stats()
-        stats["total_size_label"] = _fmt_bytes(stats["total_bytes"])
-        stats["last_indexed_str"] = _fmt_ts_utc(stats.get("last_indexed_at"))
         root_dir = config.resolved_logs_root_dir()
         root_dir_exists = bool(root_dir and root_dir.is_dir())
         total_pages = max(1, (total_rounds + per_page - 1) // per_page)
@@ -106,6 +102,11 @@ def register_viewer_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
         yesterday_utc = (now_utc - timedelta(days=1)).strftime("%Y-%m-%d")
 
         is_rounds_fragment = request.headers.get("HX-Request") == "true"
+        stats = {}
+        if not is_rounds_fragment:
+            stats = await logs_db.get_logs_stats()
+            stats["total_size_label"] = _fmt_bytes(stats["total_bytes"])
+            stats["last_indexed_str"] = _fmt_ts_utc(stats.get("last_indexed_at"))
         template_name = (
             "partials/logs_rounds_table.html"
             if is_rounds_fragment
@@ -152,9 +153,10 @@ def register_viewer_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
         regex: str = "0",
         time_from: str = "",
         time_to: str = "",
-        page: int = Query(default=1, ge=1),
+        page: int = Query(default=1, ge=1, le=1_000_000),
         per_page: int = Query(default=200, ge=25, le=500),
         focus: Optional[int] = Query(default=None, ge=1),
+        entry_id: Optional[int] = Query(default=None, ge=1, le=2**63 - 1),
         mask_ips: str = "0",
         html: str = "1",
         view: str = "stream",
@@ -192,27 +194,28 @@ def register_viewer_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
         )
         if file_path is None:
             raise HTTPException(status_code=404, detail=f"Файл {selected_file} не найден на диске.")
+        await require_indexed_entry(round_uid, selected_file, file_path, focus, entry_id)
 
-        if page == 1 and not q and not ckey and focus is None and request.headers.get("HX-Request") != "true":
-            await logs_db.record_audit_event(
-                "view_round",
-                discord_id=user.discord_id,
-                discord_username=user.username,
-                target=f"{round_uid}:{selected_file}",
-                ip_address=discord_auth.get_client_ip(request),
-            )
+        await record_log_access(request, user, "view_round", f"{round_uid}:{selected_file}",
+                                details=f"surface=html, page={page}")
 
         round_time = _round_time_vm(rnd)
 
         if selected_file == "qdel.log":
-            qdel_report = await asyncio.to_thread(
-                parse_qdel_log_file,
+            qdel_mask = _parse_bool_flag(mask_ips, default=False)
+            qdel_report = await run_log_operation(
+                request, config, parse_qdel_log_file,
                 file_path,
                 q=q,
                 sort_by=sort_by,
                 sort_dir=sort_dir,
                 include_raw=(qdel_view == "raw"),
+                page=page,
+                per_page=per_page,
+                mask_ips=qdel_mask,
             )
+            qdel_query = urlencode(dict(file=selected_file, q=q, sort_by=sort_by, sort_dir=sort_dir,
+                                        qdel_view=qdel_view, per_page=per_page, mask_ips=int(qdel_mask)))
             return ctx.templates.TemplateResponse(
                 request=request,
                 name="logs_round.html",
@@ -226,6 +229,8 @@ def register_viewer_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
                     "is_qdel": True,
                     "qdel_report": qdel_report,
                     "qdel_view": qdel_view,
+                    "qdel_query": qdel_query,
+                    "mask_ips": qdel_mask,
                     "q": q,
                     "sort_by": sort_by,
                     "sort_dir": sort_dir,
@@ -242,35 +247,38 @@ def register_viewer_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
             radius = 0
         selected_cats = [c.strip().upper() for c in cat if c and c.strip()]
         active_preset = preset if preset in LOG_PRESETS else "gameplay"
-        cache_dir = config.resolved_maps_cache_dir()
-        map_manifest = map_renderer.get_map_manifest(cache_dir)
+        cache_dir, map_manifest = map_renderer.select_round_map(config.resolved_maps_cache_dir(), rnd["map_revision"])
+        area_dir = cache_dir if map_manifest["binding"] == "revision" else None
 
-        result = await read_log_page(
-            request, config, round_uid, file_path,
-            preset=active_preset,
-            categories=selected_cats or None,
-            ckey=ckey,
-            radius=radius,
-            q=q,
-            use_regex=use_regex,
-            time_from=time_from,
-            time_to=time_to,
-            page=page,
-            per_page=per_page,
-            focus_line=focus,
-            mask_ips=mask_flag,
-            render_html=render_html,
-            count_category_matches=True,
-        )
-
-        entries_vm = [
-            _entry_to_vm(entry, cache_dir, focus=focus, active_ckey_norm=active_ckey_norm)
-            for entry in result.entries
-        ]
-
-        category_counts = result.category_counts
-        if result.matching_category_counts is not None:
-            category_counts = {cat: result.matching_category_counts.get(cat, 0) for cat in category_counts}
+        result = None
+        entries_vm = []
+        category_counts = rnd["category_counts"] if selected_file == "game.log" else {}
+        if view_mode == "stream":
+            result = await read_log_page(
+                request, config, round_uid, file_path,
+                preset=active_preset,
+                categories=selected_cats or None,
+                ckey=ckey,
+                radius=radius,
+                q=q,
+                use_regex=use_regex,
+                time_from=time_from,
+                time_to=time_to,
+                page=page,
+                per_page=per_page,
+                focus_line=focus,
+                mask_ips=mask_flag,
+                render_html=render_html,
+                count_category_matches=True,
+            )
+            await require_indexed_entry(round_uid, selected_file, file_path, focus, entry_id)
+            entries_vm = [
+                _entry_to_vm(entry, area_dir, focus=focus, active_ckey_norm=active_ckey_norm)
+                for entry in result.entries
+            ]
+            category_counts = result.category_counts
+            if result.matching_category_counts is not None:
+                category_counts = {cat: result.matching_category_counts.get(cat, 0) for cat in category_counts}
         categories_vm = _ordered_categories(
             category_counts,
             preset=active_preset,
@@ -298,6 +306,11 @@ def register_viewer_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
         if time_to:
             query_pairs.append(("time_to", time_to))
         base_query_str = urlencode(query_pairs)
+        map_query_str = base_query_str
+        if focus is not None:
+            map_query_str += f"&line={focus}"
+            if entry_id is not None:
+                map_query_str += f"&entry_id={entry_id}"
 
         template_name = (
             "partials/logs_round_stream.html"
@@ -341,6 +354,7 @@ def register_viewer_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
                 "target_y": ty,
                 "map_manifest": map_manifest,
                 "base_query_str": base_query_str,
+                "map_query_str": map_query_str,
                 "unfiltered_line_query": _unfiltered_line_query(selected_file, mask_flag, render_html),
             },
         )
@@ -351,6 +365,7 @@ def register_viewer_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
         round_uid: str,
         file: str = "game.log",
         line: int = Query(default=1, ge=1),
+        entry_id: Optional[int] = Query(default=None, ge=1, le=2**63 - 1),
         radius: int = Query(default=20, ge=1, le=100),
         mask_ips: str = "0",
         html: str = "1",
@@ -359,6 +374,7 @@ def register_viewer_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
         user = await ctx.require_api_user(request)
         config = ctx.get_config_fn()
         rnd, file_path = await ctx.resolve_round_and_file(round_uid, file)
+        await require_indexed_entry(round_uid, file, file_path, line, entry_id)
 
         mask_flag = _parse_bool_flag(mask_ips, default=False)
         render_html = _parse_bool_flag(html, default=True)
@@ -370,9 +386,15 @@ def register_viewer_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
             radius=radius,
             mask_ips=mask_flag,
             render_html=render_html,
+            request=request,
+            config=config,
         )
-        cache_dir = config.resolved_maps_cache_dir()
-        rows = [_entry_to_vm(entry, cache_dir, target_line=line) for entry in context_entries]
+        await require_indexed_entry(round_uid, file, file_path, line, entry_id)
+        cache_dir, manifest = map_renderer.select_round_map(config.resolved_maps_cache_dir(), rnd["map_revision"])
+        area_dir = cache_dir if manifest["binding"] == "revision" else None
+        rows = [_entry_to_vm(entry, area_dir, target_line=line) for entry in context_entries]
+        await record_log_access(request, user, "view_round", f"{round_uid}:{file}",
+                                details=f"surface=html_context, line={line}, radius={radius}")
         return ctx.templates.TemplateResponse(
             request=request,
             name="partials/logs_context.html",
@@ -391,8 +413,8 @@ def register_viewer_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
     @router.get("/logs/search")
     async def logs_global_search(
         request: Request,
-        q: str = "",
-        ckey: str = "",
+        q: str = Query(default="", max_length=512),
+        ckey: str = Query(default="", max_length=128),
         preset: str = "gameplay",
         cat: List[str] = Query(default=[]),
         date_from: str = "",
@@ -402,7 +424,7 @@ def register_viewer_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
         only_coords: str = "0",
         scan_debug: str = "0",
         mask_ips: str = "0",
-        page: int = Query(default=1, ge=1),
+        page: int = Query(default=1, ge=1, le=10001),
     ):
         user, err_resp = await ctx.require_html_user(request)
         if err_resp is not None:
@@ -410,6 +432,7 @@ def register_viewer_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
 
         config = ctx.get_config_fn()
         shell = await ctx.get_shell_context_fn()
+        ckey, date_from, date_to = validate_log_search(ckey, date_from, date_to)
         active_preset = preset if preset in LOG_PRESETS else "gameplay"
         selected_cats = [c.strip().upper() for c in cat if c and c.strip()]
         scan_debug_flag = _parse_bool_flag(scan_debug, default=False)
@@ -419,10 +442,11 @@ def register_viewer_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
         if z_level.strip():
             try:
                 parsed_z = int(z_level.strip())
-                if 1 <= parsed_z <= 99:
-                    z_val = parsed_z
+                if not 1 <= parsed_z <= 99:
+                    raise ValueError
+                z_val = parsed_z
             except ValueError:
-                z_val = None
+                raise HTTPException(400, "Уровень Z должен быть числом от 1 до 99.") from None
         per_page = 100
         offset = (page - 1) * per_page
 
@@ -438,37 +462,36 @@ def register_viewer_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
         )
         hits: List[Dict[str, Any]] = []
         total_hits = 0
+        truncated = False
 
         if has_query:
-            await logs_db.record_audit_event(
-                "search_global",
-                discord_id=user.discord_id,
-                discord_username=user.username,
-                target=(q or ckey or round_uid)[:160],
-                ip_address=discord_auth.get_client_ip(request),
+            await record_log_access(
+                request, user, "search_global", (q or ckey or round_uid)[:160],
                 details=f"preset={active_preset}, scan_debug={scan_debug_flag}, z={z_val or ''}",
             )
             if scan_debug_flag:
-                all_rounds, _ = await logs_db.list_rounds(limit=5000, offset=0)
-                if round_uid.strip():
-                    all_rounds = [r for r in all_rounds if r["round_uid"] == round_uid.strip()]
-                raw_hits = await asyncio.to_thread(
-                    scan_raw_files_for_query,
-                    all_rounds,
+                rounds, rounds_total = await logs_db.list_rounds(
+                    limit=5000, date_from=date_from.strip(), date_to=date_to.strip(),
+                    round_uid=round_uid.strip(), require_game_log=True,
+                )
+                resolve_file = partial(
+                    logs_db.resolve_round_file_path, file_name="game.log",
+                    root_dir=config.resolved_logs_root_dir(), uploads_dir=config.resolved_logs_uploads_dir(),
+                )
+                hits, total_hits, truncated = await run_log_operation(
+                    request, config, search_raw_log_files, rounds,
                     query=q,
                     ckey=ckey,
                     preset=active_preset,
                     categories=selected_cats or None,
-                    date_from=date_from,
-                    date_to=date_to,
-                    limit=per_page if (z_val is None and not only_coords_flag) else 500,
+                    file_resolver=resolve_file,
+                    z_level=z_val,
+                    only_coords=only_coords_flag,
+                    mask_ips=mask_flag,
+                    offset=offset,
+                    limit=per_page,
                 )
-                if z_val is not None:
-                    raw_hits = [h for h in raw_hits if h.get("coord_z") == z_val]
-                elif only_coords_flag:
-                    raw_hits = [h for h in raw_hits if h.get("coord_z")]
-                hits = raw_hits[:per_page]
-                total_hits = len(hits)
+                truncated = truncated or rounds_total > len(rounds)
             else:
                 hits, total_hits = await logs_db.search_logs_fts(
                     query=q,
@@ -485,19 +508,23 @@ def register_viewer_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
                 )
 
         cache_dir = config.resolved_maps_cache_dir()
+        map_dirs = {"": None}
         hits_vm = []
         for h in hits:
             msg = mask_sensitive_text(h["message"]) if mask_flag else h["message"]
-            safe_html, _ = sanitize_byond_html(msg)
+            safe_html = escape(msg)
             meta = category_info(h["category"])
             cx, cy, cz = h.get("coord_x"), h.get("coord_y"), h.get("coord_z")
             coord_tuple = (int(cx), int(cy), int(cz)) if (cx and cy and cz) else None
+            revision = h.get("map_revision") or ""
+            if coord_tuple and revision not in map_dirs:
+                map_dirs[revision] = map_renderer.select_round_map(cache_dir, revision)[0]
             hits_vm.append(
                 {
                     **h,
                     "cat_css": meta["css"],
                     "safe_html": safe_html,
-                    "coords": _coord_vm(coord_tuple, cache_dir),
+                    "coords": _coord_vm(coord_tuple, map_dirs.get(revision)),
                 }
             )
 
@@ -550,6 +577,7 @@ def register_viewer_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
                 "hits": hits_vm,
                 "grouped_hits": grouped_hits,
                 "total_hits": total_hits,
+                "truncated": truncated,
                 "has_query": has_query,
                 "q": q,
                 "ckey": ckey,

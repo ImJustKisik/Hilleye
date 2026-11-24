@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional, Pattern, Sequence, Set, Tuple
 _TS_LINE_RE = re.compile(r"^\[(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}(?:\.\d+)?)\]\s*(.*)$")
 _CAT_PREFIX_RE = re.compile(r"^([A-Z][A-Z0-9_]{1,24}):\s*(.*)$")
 _ROUND_START_ID_RE = re.compile(r"Starting up\.\s*\(ID:\s*([A-Za-z0-9_-]+)\)")
+_ROUND_REVISION_RE = re.compile(r"^(?:git\s+)?(?:revision|commit)(?:\s+hash)?\s*[:=]\s*([0-9a-f]{7,40})\b", re.IGNORECASE)
 
 # Ckey extraction patterns:
 # 1) Start-of-message speaker/subject (allows spaces in legacy BYOND keys): "John Doe/(Name)" or "Login: John Doe/(Name)"
@@ -229,6 +230,11 @@ class QdelReport:
     total_unnecessary: int
     total_destroy_ms: float
     raw_text: str
+    page: int = 1
+    per_page: int = 100
+    total_pages: int = 1
+    matched_entries: int = 0
+    raw_truncated: bool = False
 
 
 @dataclass
@@ -239,6 +245,7 @@ class _RoundMetaAccumulator:
     round_id: Optional[str] = None
     started_at: Optional[str] = None
     ended_at: Optional[str] = None
+    map_revision: str = ""
 
     def observe(self, ts: str, cat: str, msg: str, is_cont: bool) -> None:
         self.total_lines += 1
@@ -253,6 +260,10 @@ class _RoundMetaAccumulator:
             m_rid = _ROUND_START_ID_RE.search(msg)
             if m_rid:
                 self.round_id = m_rid.group(1)
+        if not self.map_revision and self.total_lines <= 256 and not is_cont and cat == "SYSTEM":
+            revision = _ROUND_REVISION_RE.match(msg)
+            if revision:
+                self.map_revision = revision.group(1).lower()
 
 
 @dataclass

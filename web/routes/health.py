@@ -4,12 +4,13 @@ Hilleye // Web Health & Readiness Routes
 
 import asyncio
 import logging
+import shutil
 import time
 from pathlib import Path
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
-from core.log_jobs import logs_status
+from core.log_jobs import configured_logs_status
 from core.telemetry import telemetry
 
 logger = logging.getLogger(__name__)
@@ -47,8 +48,9 @@ async def health_check():
     logs = {"status": "unavailable"}
     if _app.core_logs_db._connection is not None and _app.core_logs_db._current_logs_db_path != ":memory:":
         try:
-            details = await asyncio.wait_for(asyncio.to_thread(logs_status, _app.core_logs_db._current_logs_db_path), 2)
-            logs = {key: details[key] for key in ("status", "pending_bytes", "index_errors", "queued", "last_backup_at")}
+            cfg = _app.get_config()
+            details = await asyncio.wait_for(configured_logs_status(cfg), 2)
+            logs = {key: details[key] for key in ("status", "pending_bytes", "pending_imports", "index_errors", "queued", "last_backup_at")}
             sizes = {}
             for label, path in (("tracker", _app.core_db._current_db_path), ("logs", _app.core_logs_db._current_logs_db_path)):
                 if path != ":memory:":
@@ -56,6 +58,11 @@ async def health_check():
                         file_path = Path(str(path) + suffix)
                         sizes[label + ("_wal_bytes" if suffix else "_bytes")] = file_path.stat().st_size if file_path.exists() else 0
             logs["storage"] = sizes
+            logs["disk"] = await asyncio.to_thread(
+                _free_disk_bytes,
+                {"index": Path(_app.core_logs_db._current_logs_db_path).parent,
+                 "uploads": cfg.resolved_logs_uploads_dir(), "maps": cfg.resolved_maps_cache_dir()},
+            )
         except Exception:
             logger.warning("Logs status is unavailable", exc_info=True)
     return JSONResponse(
@@ -74,3 +81,14 @@ async def health_check():
 @router.get("/live")
 async def liveness():
     return {"status": "ok"}
+
+
+def _free_disk_bytes(paths):
+    result = {}
+    for label, path in paths.items():
+        try:
+            usage = shutil.disk_usage(path)
+        except OSError:
+            continue
+        result[label] = {"free_bytes": usage.free, "total_bytes": usage.total}
+    return result

@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 from pathlib import Path
+import re
 import shutil
 import tempfile
 import os
@@ -43,6 +44,8 @@ from core.map_renderer.specs import (
 )
 
 logger = logging.getLogger(__name__)
+_MAP_VERSION = re.compile(r"[0-9a-f]{32}")
+_MAP_COMMIT = re.compile(r"[0-9a-f]{7,40}")
 
 
 def _render_nano_fallback(nano_path: Path, width: int, height: int, tile_px: int) -> Optional[Image.Image]:
@@ -379,6 +382,81 @@ def get_map_manifest(cache_dir: Path) -> Dict[str, Any]:
     }
 
 
+def get_map_version_dir(cache_dir: Path, version: str) -> Optional[Path]:
+    if not _MAP_VERSION.fullmatch(version):
+        return None
+    folder = cache_dir.resolve() / "versions" / version
+    return folder if folder.resolve() == folder and folder.is_dir() else None
+
+
+def _manifest_version(manifest):
+    version = manifest.get("version", "")
+    if isinstance(version, str) and _MAP_VERSION.fullmatch(version):
+        return version
+    for level in manifest.get("levels", []):
+        parts = str(level.get("image_file", "")).split("/")
+        if len(parts) == 3 and parts[0] == "versions" and _MAP_VERSION.fullmatch(parts[1]):
+            return parts[1]
+    return ""
+
+
+def public_map_manifest(manifest):
+    """Map assets use a logical version token and never expose local paths."""
+    return {key: manifest[key] for key in (
+        "ready", "source_kind", "github_repo", "github_branch", "commit", "tile_px", "generated_at",
+        "elapsed_seconds", "levels", "version", "binding", "expected_revision",
+    ) if key in manifest}
+
+
+def select_round_map(cache_dir: Path, revision: str = "") -> Tuple[Optional[Path], Dict[str, Any]]:
+    """Select the current map or a published version matching the round's Git revision."""
+    current = get_map_manifest(cache_dir)
+    current_version = _manifest_version(current)
+    current_dir = get_map_version_dir(cache_dir, current_version) or cache_dir
+    if not revision:
+        return current_dir, {**current, "version": current_version, "binding": "unverified"}
+
+    wanted = revision.lower()
+    matches = {}
+
+    def consider(folder, manifest, version):
+        commit = str(manifest.get("commit") or "").lower()
+        if manifest.get("ready") and _MAP_COMMIT.fullmatch(commit) and commit.startswith(wanted):
+            matches.setdefault(commit, (folder, {**manifest, "version": version, "binding": "revision"}))
+
+    if _MAP_COMMIT.fullmatch(wanted):
+        consider(current_dir, current, current_version)
+        if len(wanted) < 40 or not matches:
+            versions = cache_dir / "versions"
+            directories = sorted(versions.iterdir(), key=lambda path: path.name) if versions.is_dir() else []
+            for candidate in directories:
+                folder = get_map_version_dir(cache_dir, candidate.name)
+                if folder is not None:
+                    consider(folder, get_map_manifest(folder), candidate.name)
+    if len(matches) == 1:
+        return next(iter(matches.values()))
+    return None, {"ready": False, "tile_px": 16, "levels": [], "binding": "unavailable",
+                  "expected_revision": wanted}
+
+
+def expired_map_versions(cache_dir: Path, cutoff: float, referenced_revisions: Sequence[str]) -> List[Path]:
+    root = cache_dir.resolve()
+    active = _manifest_version(get_map_manifest(root))
+    versions = root / "versions"
+    if not versions.is_dir() or versions.resolve() != versions:
+        return []
+    expired = []
+    for path in versions.iterdir():
+        folder = get_map_version_dir(root, path.name)
+        if folder is None or path.name == active or folder.stat().st_mtime >= cutoff:
+            continue
+        commit = str(get_map_manifest(folder).get("commit") or "").lower()
+        if any(commit.startswith(revision) for revision in referenced_revisions):
+            continue
+        expired.append(folder)
+    return expired
+
+
 def get_map_image_path(cache_dir: Path, z_level: int) -> Optional[Path]:
     """Resolve cached PNG path for z_level with strict boundary checks."""
     if z_level not in _LEVEL_BY_Z:
@@ -513,7 +591,7 @@ async def _build_map_cache_unpublished(
                         shutil.rmtree(stale, ignore_errors=True)
                 with tempfile.TemporaryDirectory(prefix="_gh_src_", dir=cache_dir) as tmp_dir:
                     tmp_path = Path(tmp_dir)
-                    await _download_github_repo_subset(
+                    commit_sha = await _download_github_repo_subset(
                         config.maps_github_repo,
                         config.maps_github_branch,
                         tmp_path,
@@ -528,7 +606,7 @@ async def _build_map_cache_unpublished(
                         cache_dir,
                         tile_px=config.maps_tile_px,
                         source_kind="github",
-                        commit_sha=config.maps_github_branch,
+                        commit_sha=commit_sha,
                         github_repo=config.maps_github_repo,
                         github_branch=config.maps_github_branch,
                     )
@@ -571,13 +649,15 @@ async def build_map_cache(config: AppConfig, *, force=False, prefer_github=False
             manifest = await _build_map_cache_unpublished(staged_config, force=True, prefer_github=prefer_github)
             if not manifest.get("ready"):
                 raise ValueError("Map build produced no usable levels; previous version was preserved")
-            version = f"versions/{uuid.uuid4().hex}"
+            version_id = uuid.uuid4().hex
+            version = f"versions/{version_id}"
             def publish():
                 (root / "versions").mkdir(exist_ok=True)
                 rendered.rename(root / version)
                 for level in manifest["levels"]:
                     for key in ("image_file", "areas_file"):
                         level[key] = f"{version}/{level[key]}"
+                manifest["version"] = version_id
                 pending = root / f".manifest-{uuid.uuid4().hex}.json"
                 try:
                     pending.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")

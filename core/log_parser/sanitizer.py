@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from html import escape as html_escape
+from html import unescape
 from html.parser import HTMLParser
+from ipaddress import IPv6Address
+import re
 from typing import List, Optional, Tuple
 
 from core.log_parser.models import (
@@ -17,6 +20,12 @@ from core.log_parser.models import (
     _STYLE_COLOR_RE,
 )
 from core.text_encoding import decode_byond_text
+
+_IPV6_CANDIDATE = re.compile(
+    r"(?<![\w:.])(?P<address>(?:[\da-f]{0,4}:){1,8}[\da-f:.]*[\da-f:])(?P<cid>-[0-9]{6,14}\b)?",
+    re.IGNORECASE | re.ASCII,
+)
+_LABELLED_CID = re.compile(r"(\b(?:CID|computer[ _-]?id)\s*[:=]?\s*)[0-9]+\b", re.IGNORECASE)
 
 
 def _classify_rgb_bucket(r: int, g: int, b: int) -> Optional[str]:
@@ -224,10 +233,30 @@ def sanitize_byond_html(raw_text: str) -> Tuple[str, str]:
 
 
 def mask_sensitive_text(text: str) -> str:
-    """Mask IPv4 addresses and BYOND computer IDs (CIDs) for safe screenshot sharing."""
-    masked = _IP_CID_RE.sub("[IP-СКРЫТ]-[CID-СКРЫТ]", text)
+    """Redact addresses and labelled or address-paired BYOND computer IDs."""
+    def mask_ipv6(match: re.Match[str]) -> str:
+        try:
+            IPv6Address(match["address"])
+        except ValueError:
+            return match.group()
+        return "[IP-СКРЫТ]-[CID-СКРЫТ]" if match["cid"] else "[IP-СКРЫТ]"
+
+    masked = _IPV6_CANDIDATE.sub(mask_ipv6, text)
+    masked = _IP_CID_RE.sub("[IP-СКРЫТ]-[CID-СКРЫТ]", masked)
     masked = _IPV4_RE.sub("[IP-СКРЫТ]", masked)
-    return masked
+    return _LABELLED_CID.sub(r"\g<1>[CID-СКРЫТ]", masked)
+
+
+def prepare_log_message(raw_text: str, *, mask_ips: bool) -> Tuple[str, Tuple[str, str]]:
+    """Prepare both display representations from the same redacted message."""
+    if not mask_ips:
+        return raw_text, sanitize_byond_html(raw_text)
+    safe_html, plain_text = sanitize_byond_html(mask_sensitive_text(raw_text))
+    masked = mask_sensitive_text(unescape(plain_text))
+    if masked != plain_text:
+        safe_html = html_escape(masked)
+    # Export and plain view must not carry hidden attributes from the original markup.
+    return masked, (safe_html, masked)
 
 
 def decode_log_bytes(data: bytes) -> str:

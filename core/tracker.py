@@ -440,7 +440,6 @@ class Tracker:
             if shutil.disk_usage(path).free < self.config.min_free_disk_mb * 1024**2:
                 self._degraded_reasons.append("Low free disk space")
         self._tracked_players = len(total_online_seen)
-        self._poll_count += 1
         self._last_poll_time = ts
         self._last_poll_duration = mono - started
         self._last_topic_failures = topic_failures
@@ -452,6 +451,7 @@ class Tracker:
         if self._cycle_healthy:
             self._last_success_monotonic = mono
         await core_db.record_collector_cycle(ts, self._cycle_healthy)
+        self._poll_count += 1
         return self.get_stats()
 
     async def run(self) -> None:

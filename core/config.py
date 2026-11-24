@@ -117,11 +117,15 @@ class AppConfig(BaseModel):
     logs_max_upload_mb: int = Field(default=MAX_LOG_UPLOAD_MB, ge=1)
     logs_max_extracted_mb: int = Field(default=200, ge=1, le=2000)
     logs_max_archive_files: int = Field(default=100, ge=1, le=1000)
+    logs_upload_quota_mb: int = Field(default=0, ge=0)
     logs_index_include_debug: bool = Field(default=False)
     logs_auto_scan_on_startup: bool = Field(default=True)
     logs_periodic_scan: bool = Field(default=True)
     logs_scan_interval_seconds: float = Field(default=60, ge=1, le=86400, allow_inf_nan=False)
     logs_regex_timeout_seconds: float = Field(default=5, gt=0, le=60, allow_inf_nan=False)
+    logs_upload_retention_days: int = Field(default=0, ge=0)
+    logs_audit_retention_days: int = Field(default=0, ge=0)
+    logs_job_retention_days: int = Field(default=0, ge=0)
 
     maps_repo_dir: str = Field(default="", description="Local SierraBay12 git repo directory for DMM/DMI map rendering")
     maps_github_repo: str = Field(default="ImJustKisik/SierraBay12", description="GitHub owner/repo fallback for maps")
@@ -129,6 +133,7 @@ class AppConfig(BaseModel):
     maps_cache_dir: str = Field(default="map_cache", min_length=1, description="Directory for rendered map PNGs & area metadata")
     maps_tile_px: int = Field(default=16, ge=4, le=32, description="Rendered pixels per SS13 turf tile")
     maps_auto_build_on_startup: bool = Field(default=True, description="Automatically build map cache on startup if missing")
+    maps_retention_days: int = Field(default=0, ge=0, description="Age limit for unreferenced map versions")
 
     model_config = {"extra": "allow"}
 
@@ -287,11 +292,15 @@ class AppConfig(BaseModel):
             "max_upload_mb": "logs_max_upload_mb",
             "max_extracted_mb": "logs_max_extracted_mb",
             "max_archive_files": "logs_max_archive_files",
+            "upload_quota_mb": "logs_upload_quota_mb",
             "index_include_debug": "logs_index_include_debug",
             "auto_scan_on_startup": "logs_auto_scan_on_startup",
             "periodic_scan": "logs_periodic_scan",
             "scan_interval_seconds": "logs_scan_interval_seconds",
             "regex_timeout_seconds": "logs_regex_timeout_seconds",
+            "upload_retention_days": "logs_upload_retention_days",
+            "audit_retention_days": "logs_audit_retention_days",
+            "job_retention_days": "logs_job_retention_days",
         }
         for key, canonical in logs_aliases.items():
             if key in (logs_cfg or {}) and canonical not in data:
@@ -307,6 +316,7 @@ class AppConfig(BaseModel):
             "cache_dir": "maps_cache_dir",
             "tile_px": "maps_tile_px",
             "auto_build_on_startup": "maps_auto_build_on_startup",
+            "retention_days": "maps_retention_days",
         }
         for key, canonical in maps_aliases.items():
             if key in (maps_cfg or {}) and canonical not in data:
@@ -426,11 +436,16 @@ def _apply_env_overrides(raw_data: Dict[str, Any]) -> Dict[str, Any]:
         "HILLEYE_DISCORD_SUPERADMIN_IDS": "discord_superadmin_ids",
         "HILLEYE_LOGS_DIR": "logs_root_dir",
         "HILLEYE_LOGS_UPLOADS_DIR": "logs_uploads_dir",
+        "HILLEYE_LOGS_UPLOAD_QUOTA_MB": "logs_upload_quota_mb",
         "HILLEYE_LOGS_DB_PATH": "logs_db_path",
+        "HILLEYE_LOGS_UPLOAD_RETENTION_DAYS": "logs_upload_retention_days",
+        "HILLEYE_LOGS_AUDIT_RETENTION_DAYS": "logs_audit_retention_days",
+        "HILLEYE_LOGS_JOB_RETENTION_DAYS": "logs_job_retention_days",
         "HILLEYE_MAPS_REPO_DIR": "maps_repo_dir",
         "HILLEYE_MAPS_GITHUB_REPO": "maps_github_repo",
         "HILLEYE_MAPS_GITHUB_BRANCH": "maps_github_branch",
         "HILLEYE_MAPS_CACHE_DIR": "maps_cache_dir",
+        "HILLEYE_MAPS_RETENTION_DAYS": "maps_retention_days",
     }
     for env_name, field_name in env_string_map.items():
         val = os.getenv(env_name)

@@ -2,7 +2,8 @@
 {% block title %}Раунд {{ round.round_id }} ({{ selected_file }}) — Логи — Hilleye{% endblock %}
 {% block extra_head %}
 <link rel="stylesheet" href="/static/css/logs.css?v=round-stream">
-<script src="/static/js/logs.js?v=round-category-counts" defer></script>
+{% if view_mode == "map" %}<script src="/static/js/log-map.js" defer></script>{% endif %}
+<script src="/static/js/logs.js?v=logs-modules" defer></script>
 <script src="/static/js/log-jobs.js" defer></script>
 {% endblock %}
 
@@ -42,7 +43,7 @@
           {% endif %}
           <span class="logs-meta-sep" aria-hidden="true">&middot;</span>
           {% if selected_file == 'initialize.log' %}
-          <span>{{ selected_file }} · <span id="logs-open-file-line-count">{{ result.total_lines }}</span> строк</span>
+          <span>{{ selected_file }}{% if result %} · <span id="logs-open-file-line-count">{{ result.total_lines }}</span> строк{% endif %}</span>
           {% else %}
           <span title="Игровых строк: {{ round.gameplay_line_count }} из {{ round.line_count }}">{{ round.line_count }} строк</span>
           {% endif %}
@@ -52,12 +53,12 @@
       <div class="logs-file-tabs">
         {% if available_files|length > 1 %}
         {% for fname in available_files %}
-        <a href="/logs/round/{{ round.round_uid }}?file={{ fname|urlencode }}{% if view_mode == 'map' and fname != 'qdel.log' %}&view=map{% endif %}"
+        <a href="/logs/round/{{ round.round_uid }}?file={{ fname|urlencode }}{% if mask_ips %}&mask_ips=1{% endif %}{% if view_mode == 'map' and fname != 'qdel.log' %}&view=map{% endif %}"
            class="logs-nav-pill {% if selected_file == fname %}is-active{% endif %}">{{ fname }}</a>
         {% endfor %}
         {% endif %}
         {% if is_qdel %}
-        <a href="/api/v1/logs/rounds/{{ round.round_uid }}/download?file=qdel.log&mode=raw" class="logs-btn logs-btn-sm">Скачать raw</a>
+        <a href="/api/v1/logs/rounds/{{ round.round_uid }}/download?file=qdel.log&mode=raw&mask_ips={{ 1 if mask_ips else 0 }}" class="logs-btn logs-btn-sm">Скачать raw</a>
         {% else %}
         <span class="logs-view-switch" role="group" aria-label="Режим просмотра">
           <a id="logs-link-stream"
@@ -99,6 +100,7 @@
     <div class="logs-panel-body">
       <form action="/logs/round/{{ round.round_uid }}" method="get" class="logs-form-grid">
         <input type="hidden" name="file" value="qdel.log">
+        <input type="hidden" name="per_page" value="{{ qdel_report.per_page }}">
         <div class="logs-field">
           <label for="qdel-q" class="logs-label">Фильтр по пути</label>
           <input type="text" id="qdel-q" name="q" value="{{ q }}" class="logs-input" placeholder="/obj/item/...">
@@ -126,6 +128,7 @@
             <option value="raw" {% if qdel_view == 'raw' %}selected{% endif %}>Текст</option>
           </select>
         </div>
+        <label class="logs-check-label"><input type="checkbox" name="mask_ips" value="1" {% if mask_ips %}checked{% endif %}> Скрыть IP/CID</label>
         <button type="submit" class="logs-btn logs-btn-primary">Применить</button>
         {% if q %}
         <a href="/logs/round/{{ round.round_uid }}?file=qdel.log&sort_by={{ sort_by|urlencode }}&sort_dir={{ sort_dir|urlencode }}&qdel_view={{ qdel_view|urlencode }}" class="logs-btn">Сброс</a>
@@ -135,6 +138,9 @@
 
     {% if qdel_view == 'raw' %}
     <pre class="logs-raw-pre">{{ qdel_report.raw_text }}</pre>
+    {% if qdel_report.raw_truncated %}
+    <p class="logs-panel-body cell-sub">Длинные строки в предпросмотре сокращены. Полный текст доступен для скачивания.</p>
+    {% endif %}
     {% elif qdel_report.entries %}
     <div class="logs-table-wrap">
       <table class="logs-table">
@@ -174,6 +180,17 @@
     <div class="logs-panel-body">
       <div class="block-empty">Записи qdel() по заданному фильтру не найдены.</div>
     </div>
+    {% endif %}
+    {% if qdel_report.total_pages > 1 or qdel_report.page > 1 %}
+    <nav class="logs-pagination" aria-label="Страницы qdel.log">
+      {% if qdel_report.page > 1 %}
+      <a class="logs-btn" href="?{{ qdel_query }}&page={{ [qdel_report.page - 1, qdel_report.total_pages]|min }}">Назад</a>
+      {% endif %}
+      <span class="cell-sub">Страница {{ qdel_report.page }} из {{ qdel_report.total_pages }}</span>
+      {% if qdel_report.page < qdel_report.total_pages %}
+      <a class="logs-btn" href="?{{ qdel_query }}&page={{ qdel_report.page + 1 }}">Далее</a>
+      {% endif %}
+    </nav>
     {% endif %}
 
     {% else %}
@@ -301,7 +318,7 @@
       </form>
 
       {% if view_mode == 'map' %}
-      <div id="logs-map-error" class="logs-alert logs-alert-error" role="alert" {% if not result.regex_error %}hidden{% endif %}>{{ result.regex_error or '' }}</div>
+      <div id="logs-map-error" class="logs-alert logs-alert-error" role="alert" hidden></div>
       {% else %}
       <div id="logs-stream-request-error" class="logs-alert logs-alert-error" role="alert" hidden></div>
       {% endif %}
@@ -311,7 +328,7 @@
     <!-- Station Map View -->
     <div id="logs-map-root"
          class="logs-map-root"
-         data-events-url="/api/v1/logs/rounds/{{ round.round_uid }}/map-events?{{ base_query_str }}"
+         data-events-url="/api/v1/logs/rounds/{{ round.round_uid }}/map-events?{{ map_query_str }}"
          data-round-uid="{{ round.round_uid }}"
          data-selected-file="{{ selected_file }}"
          data-base-query="{{ base_query_str }}"
@@ -349,7 +366,15 @@
         </div>
       </div>
 
-      {% if not map_manifest.ready %}
+      {% if map_manifest.binding == 'unavailable' %}
+      <div class="logs-panel-body">
+        <div class="logs-alert logs-alert-info" role="status">Схема для ревизии {{ map_manifest.expected_revision }} отсутствует. События показаны на координатной сетке.</div>
+      </div>
+      {% elif map_manifest.ready and map_manifest.binding == 'unverified' %}
+      <div class="logs-panel-body">
+        <div class="logs-alert logs-alert-info" role="status">Ревизия раунда неизвестна. Показана текущая схема станции.</div>
+      </div>
+      {% elif not map_manifest.ready %}
       <div class="logs-panel-body">
         <div class="logs-alert logs-alert-info" role="status">
           Подложка карты не собрана &mdash; отображается координатная сетка 200&times;200.
@@ -361,6 +386,10 @@
       {% endif %}
 
       <div id="logs-map-status" class="logs-map-status mono-val cell-sub">Загрузка событий...</div>
+      <nav id="logs-map-pages" class="logs-pagination" aria-label="Страницы событий карты" hidden>
+        <button type="button" class="logs-btn logs-btn-sm" id="logs-map-page-prev">Предыдущие события</button>
+        <button type="button" class="logs-btn logs-btn-sm" id="logs-map-page-next">Следующие события</button>
+      </nav>
 
       <div id="logs-map-timeline" class="logs-map-timeline" hidden>
         <div class="logs-map-timeline-head">

@@ -16,7 +16,7 @@ def main():
     host = web_cfg.get("host", getattr(config, "host", "0.0.0.0"))
     port = int(web_cfg.get("port", getattr(config, "port", 8080)))
     print(f"[*] Launching Hilleye on http://{host}:{port}")
-    uvicorn.run("web.app:app", host=host, port=port, log_level="info", access_log=True)
+    uvicorn.run("web.app:app", host=host, port=port, log_level="info", access_log=False)
 
 
 if __name__ == "__main__":

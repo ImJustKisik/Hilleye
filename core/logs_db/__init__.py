@@ -18,12 +18,10 @@ from core.logs_db.connection import (
     init_logs_db,
 )
 from core.logs_db.indexer import (
-    _build_index_rows_for_game_log,
     _discover_dirs_with_logs,
     _infer_round_meta_from_path,
     _make_disk_round_uid,
     _slug,
-    _sync_rounds_sync,
     sync_and_index_rounds,
 )
 from core.logs_db.queries import (
@@ -37,7 +35,6 @@ from core.logs_db.queries import (
 )
 from core.logs_db.uploads import (
     _classify_uploaded_filename,
-    _extract_archive_groups,
     _safe_rel_group,
     delete_uploaded_round,
     ingest_uploaded_log,
@@ -85,8 +82,6 @@ __all__ = [
     "_make_disk_round_uid",
     "_infer_round_meta_from_path",
     "_discover_dirs_with_logs",
-    "_build_index_rows_for_game_log",
-    "_sync_rounds_sync",
     "sync_and_index_rounds",
     "list_rounds",
     "get_round_by_uid",
@@ -96,7 +91,6 @@ __all__ = [
     "search_logs_fts",
     "_classify_uploaded_filename",
     "_safe_rel_group",
-    "_extract_archive_groups",
     "ingest_uploaded_log",
     "delete_uploaded_round",
 ]
