@@ -7,15 +7,13 @@ import io
 import logging
 import math
 import time
-import tempfile
-from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.parse import quote, urlencode
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import RedirectResponse, Response, JSONResponse
 
-from core import discord_auth, logs_db, map_renderer
+from core import celadon_logs, discord_auth, logs_db, map_renderer
 from core.log_operations import heavy_slot, finish_thread, staging_directory
 from core.log_jobs import map_job_status
 import asyncio
@@ -32,6 +30,47 @@ from web.logs_routes.viewmodels import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+async def _ingest_log(request, config, user, filename, source, *, label, celadon_path=None):
+    try:
+        created = await logs_db.ingest_uploaded_log(
+            filename, source,
+            uploads_dir=config.resolved_logs_uploads_dir(), label=label,
+            uploaded_by=user.discord_id, max_upload_bytes=config.logs_max_upload_mb * 1024 * 1024,
+            max_extracted_bytes=config.logs_max_extracted_mb * 1024 * 1024,
+            max_archive_files=config.logs_max_archive_files,
+            include_debug=config.logs_index_include_debug,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    origin = f", celadon_path={celadon_path}" if celadon_path else ""
+    await logs_db.record_audit_event(
+        "upload_round",
+        discord_id=user.discord_id,
+        discord_username=user.username,
+        target=",".join(r["round_uid"] for r in created)[:180],
+        ip_address=discord_auth.get_client_ip(request),
+        details=f"filename={filename}, count={len(created)}{origin}",
+    )
+    if _prefers_json(request) or request.headers.get("x-requested-with") == "fetch":
+        return {
+            "ok": True,
+            "rounds": [
+                {
+                    "round_uid": r["round_uid"],
+                    "round_id": r["round_id"],
+                    "round_date": r["round_date"],
+                    "url": f"/logs/round/{r['round_uid']}",
+                }
+                for r in created
+            ],
+        }
+    if len(created) == 1:
+        return RedirectResponse(f"/logs/round/{created[0]['round_uid']}", status_code=303)
+    msg = quote(f"Загружено раундов: {len(created)}")
+    return RedirectResponse(f"/logs?notice={msg}", status_code=303)
 
 
 async def _index_job(request, config, user, kind, payload, background):
@@ -494,6 +533,59 @@ def register_admin_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
         )
         return RedirectResponse(f"/logs/admin?notice={msg}", status_code=303)
 
+    async def render_celadon(request, user, path, *, entries=(), error=None):
+        return ctx.templates.TemplateResponse(
+            request=request,
+            name="logs_celadon.html",
+            context={
+                **await ctx.get_shell_context_fn(),
+                "user": user,
+                "path": path,
+                "parent": path.rstrip("/").rpartition("/")[0],
+                "entries": entries,
+                "error": error.detail if error else "",
+                "max_upload_mb": ctx.get_config_fn().logs_max_upload_mb,
+            },
+            status_code=error.status_code if error else 200,
+            headers=error.headers if error else None,
+        )
+
+    @router.get("/logs/celadon")
+    async def browse_celadon(request: Request, path: str = Query(default="", max_length=1000)):
+        user, err_resp = await ctx.require_html_user(request)
+        if err_resp is not None:
+            return err_resp
+        try:
+            entries = await celadon_logs.list_directory(path)
+        except ValueError as exc:
+            return await render_celadon(request, user, "", error=HTTPException(400, str(exc)))
+        except HTTPException as exc:
+            return await render_celadon(request, user, path, error=exc)
+        return await render_celadon(request, user, path, entries=entries)
+
+    @router.post("/logs/celadon")
+    async def import_celadon(
+        request: Request,
+        path: str = Form(max_length=1000),
+        csrf_token: str = Form(default=""),
+    ):
+        user = await ctx.require_api_user(request)
+        discord_auth.verify_csrf(user, csrf_token or request.headers.get("x-csrf-token"))
+        config = ctx.get_config_fn()
+        try:
+            async with heavy_slot(config), staging_directory(prefix="hilleye-celadon-") as staging:
+                source = staging / "input"
+                filename = await celadon_logs.download(path, source, max_mb=config.logs_max_upload_mb)
+                return await _ingest_log(request, config, user, filename, source, label=path, celadon_path=path)
+        except ValueError as exc:
+            error = HTTPException(400, str(exc))
+        except HTTPException as exc:
+            error = exc
+        if _prefers_json(request):
+            raise error
+        directory, _, _ = path.rpartition("/")
+        return await render_celadon(request, user, f"{directory}/" if directory else "", error=error)
+
     @router.post("/logs/upload")
     async def upload_logs(
         request: Request,
@@ -505,55 +597,19 @@ def register_admin_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
         discord_auth.verify_csrf(user, csrf_token or request.headers.get("x-csrf-token"))
         config = ctx.get_config_fn()
 
-        max_upload_bytes = int(config.logs_max_upload_mb) * 1024 * 1024
-        max_extracted_bytes = int(config.logs_max_extracted_mb) * 1024 * 1024
-        try:
-            async with heavy_slot(config):
-                async with staging_directory(prefix="hilleye-upload-") as staging:
-                    source = staging / "input"
-                    total_read = 0
-                    with source.open("wb") as stream:
-                        while chunk := await file.read(1024 * 1024):
-                            total_read += len(chunk)
-                            if total_read > max_upload_bytes:
-                                raise HTTPException(413, f"Файл превышает максимальный размер ({config.logs_max_upload_mb} МБ).")
-                            await finish_thread(stream.write, chunk)
-                    created = await logs_db.ingest_uploaded_log(
-                        file.filename or "uploaded.log", source,
-                        uploads_dir=config.resolved_logs_uploads_dir(), label=label,
-                        uploaded_by=user.discord_id, max_upload_bytes=max_upload_bytes,
-                        max_extracted_bytes=max_extracted_bytes,
-                        max_archive_files=int(config.logs_max_archive_files),
-                        include_debug=config.logs_index_include_debug,
-                    )
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-        await logs_db.record_audit_event(
-            "upload_round",
-            discord_id=user.discord_id,
-            discord_username=user.username,
-            target=",".join(r["round_uid"] for r in created)[:180],
-            ip_address=discord_auth.get_client_ip(request),
-            details=f"filename={file.filename}, count={len(created)}",
-        )
-        if _prefers_json(request) or request.headers.get("x-requested-with") == "fetch":
-            return {
-                "ok": True,
-                "rounds": [
-                    {
-                        "round_uid": r["round_uid"],
-                        "round_id": r["round_id"],
-                        "round_date": r["round_date"],
-                        "url": f"/logs/round/{r['round_uid']}",
-                    }
-                    for r in created
-                ],
-            }
-        if len(created) == 1:
-            return RedirectResponse(f"/logs/round/{created[0]['round_uid']}", status_code=303)
-        msg = quote(f"Загружено раундов: {len(created)}")
-        return RedirectResponse(f"/logs?notice={msg}", status_code=303)
+        max_upload_bytes = config.logs_max_upload_mb * 1024 * 1024
+        if file.size is not None and file.size > max_upload_bytes:
+            raise HTTPException(413, f"Файл превышает максимальный размер ({config.logs_max_upload_mb} МБ).")
+        async with heavy_slot(config), staging_directory(prefix="hilleye-upload-") as staging:
+            source = staging / "input"
+            total_read = 0
+            with source.open("wb") as stream:
+                while chunk := await file.read(1024 * 1024):
+                    total_read += len(chunk)
+                    if total_read > max_upload_bytes:
+                        raise HTTPException(413, f"Файл превышает максимальный размер ({config.logs_max_upload_mb} МБ).")
+                    await finish_thread(stream.write, chunk)
+            return await _ingest_log(request, config, user, file.filename or "uploaded.log", source, label=label)
 
     @router.post("/logs/rounds/{round_uid}/delete")
     async def delete_upload_route(

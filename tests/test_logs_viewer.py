@@ -16,6 +16,7 @@ import httpx
 from PIL import Image, PngImagePlugin
 import pytest
 
+from core import celadon_logs
 from core import db as core_db
 from core import discord_auth
 from core import logs_db
@@ -413,6 +414,94 @@ async def _login_via_discord(client: AsyncClient, discord_id: str, username: str
     cb_resp = await client.get(f"/auth/discord/callback?code=fake_code&state={state}", follow_redirects=False)
     assert cb_resp.status_code == 302
     assert cb_resp.headers["location"] == "/logs"
+
+
+async def test_celadon_catalog_import_and_file_cap(logs_env, monkeypatch):
+    cfg = logs_env["cfg"]
+    assert AppConfig(logs_max_upload_mb=50).logs_max_upload_mb == 20
+    cfg.logs_max_upload_mb = 20
+    round_path = "2026/11/08/round-0fd7d409/"
+    log_path = round_path + "game.log"
+    upstream_requests = []
+
+    class LogStream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            for _ in range(20):
+                yield b"x" * (1024 * 1024)
+            yield b"x"
+
+    def upstream(request):
+        path = str(request.url).removeprefix(celadon_logs.ROOT_URL)
+        upstream_requests.append(path)
+        if path == "":
+            return httpx.Response(
+                200, headers={"Content-Type": "text/html"},
+                text=f'<a href="{round_path}">Deep link</a><a href="2026/">2026</a>'
+                '<a href="../">Parent</a><a href="https://example.org/a.zip">External</a>'
+                '<a href="%2e%2e/">Encoded parent</a><a href="redirect.log">Redirect</a>',
+            )
+        if path == round_path:
+            return httpx.Response(
+                200, headers={"Content-Type": "text/html"},
+                text='<a href="game.log">game.log</a><a href="notes.html">notes.html</a>',
+            )
+        if path == log_path:
+            return httpx.Response(200, content=SAMPLE_GAME_LOG.encode("utf-8"))
+        if path == "large.log":
+            return httpx.Response(200, stream=LogStream())
+        if path == "redirect.log":
+            return httpx.Response(302, headers={"Location": "https://example.org/redirected.log"})
+        if path == "blocked/":
+            return httpx.Response(403)
+        return httpx.Response(404)
+
+    monkeypatch.setattr(celadon_logs.httpx, "AsyncHTTPTransport", lambda **_: httpx.MockTransport(upstream))
+    async with AsyncClient(transport=ASGITransport(app=web_app.app), base_url="http://test") as client:
+        assert (await client.get("/logs/celadon")).status_code == 401
+        assert not upstream_requests
+        await _login_via_discord(client, "111111111111111111", "admin")
+        root = await client.get("/logs/celadon")
+        assert root.status_code == 200
+        assert "?path=2026/" in root.text
+        assert "example.org" not in root.text
+        assert round_path not in root.text
+
+        listing = await client.get("/logs/celadon", params={"path": round_path})
+        assert listing.status_code == 200
+        assert log_path in listing.text
+        assert "notes.html" not in listing.text
+        csrf = re.search(r'name="csrf_token" value="([^"]+)"', listing.text).group(1)
+        assert (await client.post("/logs/celadon", data={"path": log_path})).status_code == 403
+        assert upstream_requests == ["", round_path]
+
+        headers = {"Accept": "application/json"}
+        for path in ("../game.log", "%2e%2e/game.log", "https://example.org/evil.log"):
+            response = await client.post("/logs/celadon", data={"path": path, "csrf_token": csrf}, headers=headers)
+            assert response.status_code == 400
+        assert upstream_requests == ["", round_path]
+
+        for path, status in (("redirect.log", 502), ("large.log", 413)):
+            response = await client.post("/logs/celadon", data={"path": path, "csrf_token": csrf}, headers=headers)
+            assert response.status_code == status
+        blocked = await client.get("/logs/celadon", params={"path": "blocked/"})
+        assert blocked.status_code == 502 and "белом списке" in blocked.text
+
+        manual = await client.post(
+            "/logs/upload", data={"csrf_token": csrf},
+            files={"file": ("large.log", b"x" * (20 * 1024 * 1024 + 1))}, headers=headers,
+        )
+        assert manual.status_code == 413
+        assert (await logs_db.list_rounds(source_filter="upload"))[1] == 0
+
+        imported = await client.post("/logs/celadon", data={"path": log_path, "csrf_token": csrf})
+        assert imported.status_code == 303
+        assert imported.headers["location"].startswith("/logs/round/")
+        round_page = await client.get(imported.headers["location"])
+        assert round_page.status_code == 200
+        hits, total = await logs_db.search_logs_fts(query="punched", preset="gameplay")
+        assert total == 1 and hits[0]["round_id"] == "0fd7d409"
+        events, _ = await logs_db.get_audit_events(action_filter="upload_round")
+        assert log_path in events[0]["details"]
 
 
 async def test_logs_viewer_auth_whitelist_csrf_and_e2e(logs_env):

@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional
 import uuid
 import zipfile
 
+from core.config import MAX_LOG_UPLOAD_MB
 from core.log_parser import decode_log_bytes
 from core.logs_db.connection import ALLOWED_LOG_FILES
 from core.logs_db.indexer import _slug
@@ -241,7 +242,7 @@ def _prepare_upload(filename, source, staging, *, label, uploaded_by, max_extrac
 
 
 async def ingest_uploaded_log(filename, raw_bytes, *, uploads_dir, label="", uploaded_by="",
-                              max_upload_bytes=50*1024*1024, max_extracted_bytes=200*1024*1024,
+                              max_upload_bytes=MAX_LOG_UPLOAD_MB*1024*1024, max_extracted_bytes=200*1024*1024,
                               max_archive_files=100, include_debug=False):
     from core import logs_db as _ldb
     from core.file_lock import lease, lock_path

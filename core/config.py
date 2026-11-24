@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG_PATH = PROJECT_DIR / "config.json"
+MAX_LOG_UPLOAD_MB = 20
 
 DEFAULT_CUSTOM_SERVERS: List[Dict[str, Any]] = [
     {
@@ -113,7 +114,7 @@ class AppConfig(BaseModel):
     logs_root_dir: str = Field(default="", description="Root directory containing SierraBay12 round logs")
     logs_uploads_dir: str = Field(default="uploaded_logs", min_length=1, description="Directory for uploaded logs")
     logs_db_path: str = Field(default="logs.db", min_length=1, description="SQLite database path for log index/auth")
-    logs_max_upload_mb: int = Field(default=50, ge=1, le=500)
+    logs_max_upload_mb: int = Field(default=MAX_LOG_UPLOAD_MB, ge=1)
     logs_max_extracted_mb: int = Field(default=200, ge=1, le=2000)
     logs_max_archive_files: int = Field(default=100, ge=1, le=1000)
     logs_index_include_debug: bool = Field(default=False)
@@ -130,6 +131,11 @@ class AppConfig(BaseModel):
     maps_auto_build_on_startup: bool = Field(default=True, description="Automatically build map cache on startup if missing")
 
     model_config = {"extra": "allow"}
+
+    @field_validator("logs_max_upload_mb")
+    @classmethod
+    def cap_logs_max_upload_mb(cls, value: int) -> int:
+        return min(value, MAX_LOG_UPLOAD_MB)
 
     @field_validator("topic_probe_queries", mode="before")
     @classmethod

@@ -18,11 +18,11 @@
 
   {% if not root_dir_exists and logs_root_dir %}
   <div class="logs-alert logs-alert-warn" role="status">
-    Папка серверных логов на диске не найдена: <code>{{ logs_root_dir }}</code>. Проверьте <code>logs.root_dir</code> или загрузите архив вручную.
+    Папка серверных логов на диске не найдена (<code>{{ logs_root_dir }}</code>). Можно импортировать файл с Celadon или загрузить его вручную.
   </div>
   {% elif not root_dir_exists and not rounds %}
   <div class="logs-alert" role="status">
-    Локальная папка логов не задана (<code>logs.root_dir</code> / <code>HILLEYE_LOGS_DIR</code>) — можно загрузить файлы вручную ниже.
+    Локальная папка логов не задана. Можно импортировать файл с Celadon или загрузить его вручную.
   </div>
   {% endif %}
 
@@ -62,7 +62,7 @@
       <span class="block-meta mono-val">до {{ max_upload_mb }} МБ</span>
     </summary>
     <div class="logs-panel-body">
-      <form id="logs-upload-form" action="/logs/upload" method="post" enctype="multipart/form-data">
+      <form id="logs-upload-form" action="/logs/upload" method="post" enctype="multipart/form-data" data-max-upload-mb="{{ max_upload_mb }}">
         <input type="hidden" name="csrf_token" value="{{ user.csrf_token }}">
         <div class="logs-dropzone" id="logs-dropzone" tabindex="0" role="button" aria-label="Выбрать или перетащить файл лога">
           <div class="logs-dropzone-title" id="logs-dropzone-title">Перетащите файл или нажмите для выбора</div>

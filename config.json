@@ -74,7 +74,7 @@
     "root_dir": "",
     "uploads_dir": "uploaded_logs",
     "db_path": "logs.db",
-    "max_upload_mb": 50,
+    "max_upload_mb": 20,
     "max_extracted_mb": 200,
     "max_archive_files": 100,
     "index_include_debug": false,

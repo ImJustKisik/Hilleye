@@ -10,6 +10,9 @@
         <svg class="logs-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
         <span>{% if logs_round_search_uid %}Поиск в раунде{% else %}Поиск{% endif %}</span>
       </a>
+      <a href="/logs/celadon" class="logs-nav-pill {% if logs_nav_active == 'celadon' %}is-active{% endif %}">
+        <span>Логи Celadon</span>
+      </a>
       {% if user.is_admin %}
       <a href="/logs/admin" class="logs-nav-pill {% if logs_nav_active == 'admin' %}is-active{% endif %}">
         <svg class="logs-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>

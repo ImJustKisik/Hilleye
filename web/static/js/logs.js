@@ -78,6 +78,11 @@
         showStatus("Выберите файл .log, .txt, .zip или .tar.gz.", true);
         return;
       }
+      var maxUploadMb = Number(form.dataset.maxUploadMb);
+      if (maxUploadMb && fileInput.files[0].size > maxUploadMb * 1024 * 1024) {
+        showStatus("Файл превышает максимальный размер (" + maxUploadMb + " МБ).", true);
+        return;
+      }
       var data = new FormData(form);
       var csrfInput = form.querySelector('input[name="csrf_token"]');
       var headers = { "X-Requested-With": "fetch" };
