@@ -2,7 +2,7 @@
 {% block title %}Раунд {{ round.round_id }} ({{ selected_file }}) — Логи — Hilleye{% endblock %}
 {% block extra_head %}
 <link rel="stylesheet" href="/static/css/logs.css?v=round-stream">
-<script src="/static/js/logs.js?v=round-stream" defer></script>
+<script src="/static/js/logs.js?v=round-category-counts" defer></script>
 <script src="/static/js/log-jobs.js" defer></script>
 {% endblock %}
 
@@ -293,7 +293,7 @@
             <label class="logs-cat-chip {% if cat.name in selected_cats %}is-selected{% endif %}{% if not cat.included %} is-excluded{% endif %}" data-cat-toggle="{{ cat.name }}" title="{{ cat.desc }}">
               <input type="checkbox" name="cat" value="{{ cat.name }}" class="sr-only" {% if cat.name in selected_cats %}checked{% endif %}>
               <span class="log-cat-tag {{ cat.css }}">{{ cat.name }}</span>
-              <span>{{ cat.count }}</span>
+              <span data-category-count>{{ cat.count }}</span>
             </label>
             {% endfor %}
           </div>

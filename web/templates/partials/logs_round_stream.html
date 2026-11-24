@@ -18,12 +18,12 @@
 </div>
 {% endif %}
 
-<!-- Filtered Summary & Top Pagination -->
 <div class="logs-pagination" data-stream-results data-query="{{ base_query_str }}" data-page="{{ result.page }}"
-     data-total-lines="{{ result.total_lines }}" data-invalid-time-fields="{{ result.invalid_time_fields|join(' ') }}">
+     data-total-lines="{{ result.total_lines }}" data-invalid-time-fields="{{ result.invalid_time_fields|join(' ') }}"
+     data-category-counts='{{ category_counts|tojson }}'>
   <div class="logs-pagination-summary">
-    <span class="mono-val cell-sub">
-      <strong>{{ result.total_matches }}</strong> / {{ result.total_lines }} строк{% if result.total_pages > 1 %} &middot; стр. {{ result.page }} / {{ result.total_pages }}{% endif %}
+    <span class="mono-val cell-sub" data-stream-count>
+      <strong>{{ result.total_matches }}</strong> / {{ result.total_lines }} строк
     </span>
     {% if active_ckey_norm %}
     <span class="logs-active-ckey-pill mono-val">
@@ -37,23 +37,16 @@
     </span>
     {% endif %}
   </div>
-  <div class="logs-topbar-left">
-    {% if result.page > 1 %}
-    <a href="/logs/round/{{ round.round_uid }}?{{ base_query_str }}&page={{ result.page - 1 }}"
-       data-stream-pagination
-       class="logs-btn logs-btn-sm">&larr; Назад</a>
-    {% endif %}
-    {% if result.page < result.total_pages %}
-    <a href="/logs/round/{{ round.round_uid }}?{{ base_query_str }}&page={{ result.page + 1 }}"
-       data-stream-pagination
-       class="logs-btn logs-btn-sm">Вперёд &rarr;</a>
-    {% endif %}
-  </div>
 </div>
-
+{% if result.page > 1 %}
+<div class="logs-pagination" data-stream-boundary="previous">
+  <a href="/logs/round/{{ round.round_uid }}?{{ base_query_str }}&page={{ result.page - 1 }}"
+     class="logs-btn logs-btn-sm">Загрузить предыдущие строки</a>
+</div>
+{% endif %}
 <!-- Log Entries Stream -->
 {% if entries %}
-<div class="log-stream">
+<div class="log-stream" data-stream-rows>
   {% for entry in entries %}
   <div id="L{{ entry.line_no }}" class="log-row {{ entry.cat_css }} {% if entry.is_focused %}is-focused{% endif %} {% if entry.is_continuation %}is-continuation{% endif %}">
     <a href="/logs/round/{{ round.round_uid }}?{{ base_query_str }}&focus={{ entry.line_no }}#L{{ entry.line_no }}" class="log-ln" title="Прямая ссылка на строку">#L{{ entry.line_no }}</a>
@@ -100,26 +93,9 @@
 </div>
 {% endif %}
 
-{% if result.total_pages > 1 %}
-<div class="logs-pagination">
-  <span class="mono-val cell-sub">Страница {{ result.page }} из {{ result.total_pages }}</span>
-  <div class="logs-topbar-left">
-    {% if result.page > 1 %}
-    <a href="/logs/round/{{ round.round_uid }}?{{ base_query_str }}&page=1"
-       data-stream-pagination
-       class="logs-btn logs-btn-sm">Первая</a>
-    <a href="/logs/round/{{ round.round_uid }}?{{ base_query_str }}&page={{ result.page - 1 }}"
-       data-stream-pagination
-       class="logs-btn logs-btn-sm">&larr; Назад</a>
-    {% endif %}
-    {% if result.page < result.total_pages %}
-    <a href="/logs/round/{{ round.round_uid }}?{{ base_query_str }}&page={{ result.page + 1 }}"
-       data-stream-pagination
-       class="logs-btn logs-btn-sm">Вперёд &rarr;</a>
-    <a href="/logs/round/{{ round.round_uid }}?{{ base_query_str }}&page={{ result.total_pages }}"
-       data-stream-pagination
-       class="logs-btn logs-btn-sm">Последняя</a>
-    {% endif %}
-  </div>
+{% if result.page < result.total_pages %}
+<div class="logs-pagination" data-stream-boundary="next">
+  <a href="/logs/round/{{ round.round_uid }}?{{ base_query_str }}&page={{ result.page + 1 }}"
+     class="logs-btn logs-btn-sm">Загрузить ещё</a>
 </div>
 {% endif %}

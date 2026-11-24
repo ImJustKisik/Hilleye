@@ -285,6 +285,42 @@
   var liveSearchTimer;
   var streamRequest;
   var streamLocation;
+  var streamObserver;
+
+  function observeStreamEnd(container) {
+    if (!streamObserver) return;
+    streamObserver.disconnect();
+    var end = container.querySelector('[data-stream-boundary="next"]');
+    if (end) streamObserver.observe(end);
+  }
+
+  function insertStreamRows(container, boundary, fragment, results, url) {
+    var direction = boundary.dataset.streamBoundary;
+    var nextBoundary = fragment.querySelector('[data-stream-boundary="' + direction + '"]');
+    var incoming = fragment.querySelector("[data-stream-rows]");
+    var current = container.querySelector("[data-stream-results]");
+    var expectedPage = new URL(url).searchParams.get("page");
+    if (!incoming || results.dataset.page !== expectedPage || results.dataset.query !== current.dataset.query) {
+      throw new Error("Лог изменился. Обновите страницу, чтобы продолжить чтение.");
+    }
+
+    Array.from(incoming.children).forEach(function (row) {
+      if (document.getElementById(row.id)) row.remove();
+    });
+    var anchor = direction === "previous" ? boundary.nextElementSibling : null;
+    var oldTop = anchor && anchor.getBoundingClientRect().top;
+    var hadFocus = boundary.contains(document.activeElement);
+    boundary.replaceWith(incoming);
+    if (nextBoundary) incoming.insertAdjacentElement(direction === "next" ? "afterend" : "beforebegin", nextBoundary);
+    if (anchor) window.scrollBy(0, anchor.getBoundingClientRect().top - oldTop);
+    if (hadFocus) {
+      var focusLink = (nextBoundary || incoming).querySelector("a");
+      if (focusLink) focusLink.focus({ preventScroll: true });
+    }
+    current.querySelector("[data-stream-count]").textContent =
+      results.querySelector("[data-stream-count]").textContent;
+    bindStreamHelpers(incoming);
+  }
 
   function applyStreamFilters(form, results) {
     var params = new URLSearchParams(results.dataset.query);
@@ -320,8 +356,10 @@
     syncHeaderActionLinks(form, results.dataset.query);
   }
 
-  async function loadStreamPage(url, form, container) {
+  async function loadStreamPage(url, form, container, boundary) {
+    if (boundary && (streamRequest || liveSearchTimer || !container.contains(boundary))) return;
     clearTimeout(liveSearchTimer);
+    liveSearchTimer = null;
     if (streamRequest && streamRequest.url === url && !streamRequest.controller.signal.aborted) return;
     if (streamRequest) streamRequest.controller.abort();
     var controller = new AbortController();
@@ -330,6 +368,7 @@
     var errorBox = document.getElementById("logs-stream-request-error");
     errorBox.hidden = true;
     container.setAttribute("aria-busy", "true");
+    var updated = false;
     try {
       var response = await fetch(url, {
         headers: { "HX-Request": "true" },
@@ -348,6 +387,12 @@
       }
       var results = fragment.content.querySelector("[data-stream-results]");
       if (!results) throw new Error();
+      if (boundary) {
+        insertStreamRows(container, boundary, fragment.content, results, url);
+        updateStreamCategoryCounts(form, results);
+        updated = true;
+        return;
+      }
 
       var next = new URL(url, window.location.href);
       next.search = results.dataset.query + "&page=" + results.dataset.page;
@@ -357,8 +402,11 @@
         streamLocation = nextLocation;
       }
       applyStreamFilters(form, results);
+      updateStreamCategoryCounts(form, results);
       container.replaceChildren(fragment.content);
       bindStreamHelpers();
+      window.scrollTo(0, 0);
+      updated = true;
     } catch (error) {
       if (streamRequest !== request || controller.signal.aborted) return;
       errorBox.textContent = error.message || "Не удалось обновить ленту. Повторите попытку.";
@@ -367,8 +415,16 @@
       if (streamRequest === request) {
         streamRequest = null;
         container.removeAttribute("aria-busy");
+        if (updated) observeStreamEnd(container);
       }
     }
+  }
+
+  function updateStreamCategoryCounts(form, results) {
+    var counts = JSON.parse(results.dataset.categoryCounts);
+    form.querySelectorAll("[data-cat-toggle]").forEach(function (chip) {
+      chip.querySelector("[data-category-count]").textContent = counts[chip.dataset.catToggle] || 0;
+    });
   }
 
   function initStreamNavigation() {
@@ -377,11 +433,21 @@
     var form = document.getElementById("logs-filter-form");
     streamLocation = window.location.pathname + window.location.search;
     container.addEventListener("click", function (ev) {
-      var link = ev.target.closest("a[data-stream-pagination]");
+      var link = ev.target.closest("[data-stream-boundary] a");
       if (!link || ev.defaultPrevented || ev.button !== 0 || ev.ctrlKey || ev.metaKey || ev.shiftKey || ev.altKey) return;
       ev.preventDefault();
-      loadStreamPage(link.href, form, container);
+      loadStreamPage(link.href, form, container, link.parentElement);
     });
+    if ("IntersectionObserver" in window) {
+      streamObserver = new IntersectionObserver(function (entries) {
+        entries.forEach(function (entry) {
+          if (entry.isIntersecting) {
+            loadStreamPage(entry.target.querySelector("a").href, form, container, entry.target);
+          }
+        });
+      }, { rootMargin: "0px 0px 350px 0px" });
+      observeStreamEnd(container);
+    }
     window.addEventListener("popstate", function () {
       if (window.location.pathname + window.location.search !== streamLocation) {
         clearTimeout(liveSearchTimer);
@@ -417,7 +483,8 @@
     filterForm.submit();
   }
 
-  function initRoundFilterHelpers() {
+  function initRoundFilterHelpers(root) {
+    root = root || document;
     var filterForm = document.getElementById("logs-filter-form");
     var ckeyInput = document.getElementById("logs-ckey-input");
     var presetField = document.getElementById("logs-preset-input");
@@ -483,7 +550,7 @@
     }
 
     // Preset buttons
-    document.querySelectorAll("[data-preset-id]").forEach(function (btn) {
+    root.querySelectorAll("[data-preset-id]").forEach(function (btn) {
       if (btn.dataset.bound) return;
       btn.dataset.bound = "1";
       btn.addEventListener("click", function () {
@@ -500,7 +567,7 @@
     });
 
     // Category chip toggle (native <label> toggles checkbox once; submit inside round viewer, toggle class outside)
-    document.querySelectorAll('.logs-cat-chip input[name="cat"]').forEach(function (cb) {
+    root.querySelectorAll('.logs-cat-chip input[name="cat"]').forEach(function (cb) {
       if (cb.dataset.bound) return;
       cb.dataset.bound = "1";
       cb.addEventListener("change", function () {
@@ -517,7 +584,7 @@
     });
 
     // Clickable ckey filter inside log lines
-    document.querySelectorAll(".log-ckey-btn[data-ckey]").forEach(function (btn) {
+    root.querySelectorAll(".log-ckey-btn[data-ckey]").forEach(function (btn) {
       if (btn.dataset.bound) return;
       btn.dataset.bound = "1";
       btn.addEventListener("click", function () {
@@ -530,7 +597,7 @@
     });
 
     // Clear active ckey pill button
-    document.querySelectorAll("[data-clear-ckey]").forEach(function (btn) {
+    root.querySelectorAll("[data-clear-ckey]").forEach(function (btn) {
       if (btn.dataset.bound) return;
       btn.dataset.bound = "1";
       btn.addEventListener("click", function () {
@@ -649,7 +716,7 @@
       });
   }
 
-  function initContextModal() {
+  function initContextModal(root) {
     var modal = document.getElementById("log-context-modal");
     var modalBody = document.getElementById("log-context-modal-body");
     var closeBtn = document.getElementById("log-context-modal-close");
@@ -674,7 +741,7 @@
       }
     }
 
-    document.querySelectorAll("[data-context-url]").forEach(function (btn) {
+    (root || document).querySelectorAll("[data-context-url]").forEach(function (btn) {
       if (btn.dataset.bound) return;
       btn.dataset.bound = "1";
       btn.addEventListener("click", function () {
@@ -739,8 +806,8 @@
     });
   }
 
-  function initCopyButtons() {
-    document.querySelectorAll("[data-copy-text]").forEach(function (btn) {
+  function initCopyButtons(root) {
+    (root || document).querySelectorAll("[data-copy-text]").forEach(function (btn) {
       if (btn.dataset.bound) return;
       btn.dataset.bound = "1";
       btn.addEventListener("click", function () {
@@ -2854,11 +2921,11 @@
     syncResetAndChips();
   }
 
-  function bindStreamHelpers() {
-    initRoundFilterHelpers();
-    initContextModal();
-    initCopyButtons();
-    scrollFocusedLine();
+  function bindStreamHelpers(root) {
+    initRoundFilterHelpers(root);
+    initContextModal(root);
+    initCopyButtons(root);
+    if (!root) scrollFocusedLine();
   }
 
   function initAll() {
