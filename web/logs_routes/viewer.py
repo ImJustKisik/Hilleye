@@ -76,9 +76,10 @@ def register_viewer_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
         today_utc = now_utc.strftime("%Y-%m-%d")
         yesterday_utc = (now_utc - timedelta(days=1)).strftime("%Y-%m-%d")
 
+        is_rounds_fragment = request.headers.get("HX-Request") == "true"
         template_name = (
             "partials/logs_rounds_table.html"
-            if request.headers.get("HX-Request") == "true"
+            if is_rounds_fragment
             else "logs_index.html"
         )
 
@@ -90,6 +91,7 @@ def register_viewer_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
                 "user": user,
                 "rounds": rounds,
                 "total_rounds": total_rounds,
+                "is_rounds_fragment": is_rounds_fragment,
                 "page": page,
                 "total_pages": total_pages,
                 "stats": stats,

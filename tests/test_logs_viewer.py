@@ -1206,6 +1206,7 @@ async def test_logs_ux_overhaul_partials_and_csp(logs_env):
         assert dash.status_code == 200
         assert "data-quick-date" in dash.text
         assert 'id="logs-rounds-container"' in dash.text
+        assert dash.text.count('id="logs-rounds-header-count"') == 1
 
         dash_htmx = await client.get("/logs?source=disk", headers={"HX-Request": "true"})
         assert dash_htmx.status_code == 200

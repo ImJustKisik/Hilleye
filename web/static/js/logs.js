@@ -2694,7 +2694,9 @@
     function syncResetAndChips() {
       var curDate = dateSelect.value || "";
       chips.forEach(function (ch) {
-        ch.classList.toggle("is-active", (ch.dataset.quickDate || "") === curDate);
+        var active = (ch.dataset.quickDate || "") === curDate;
+        ch.classList.toggle("is-active", active);
+        ch.setAttribute("aria-pressed", String(active));
       });
       if (resetLink) {
         var hasFilter = Boolean(curDate || (sourceSelect && sourceSelect.value) || (qInput && qInput.value.trim()));

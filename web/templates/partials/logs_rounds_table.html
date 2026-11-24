@@ -1,28 +1,19 @@
-<span id="logs-rounds-header-count" class="mono-val cell-sub" hx-swap-oob="true">({{ total_rounds }})</span>
-
-<div class="logs-rounds-meta-bar">
-  <span class="mono-val cell-sub">Найдено раундов: <strong class="logs-count-em">{{ total_rounds }}</strong></span>
-  {% if date_filter or source_filter or q_filter %}
-  <span class="mono-val cell-sub">
-    {% if date_filter %}дата: <strong>{{ date_filter }}</strong>{% endif %}
-    {% if source_filter %} &middot; источник: <strong>{{ 'диск' if source_filter == 'disk' else 'загруженные' }}</strong>{% endif %}
-    {% if q_filter %} &middot; фильтр: <strong>{{ q_filter }}</strong>{% endif %}
-  </span>
-  {% endif %}
-</div>
+{% if is_rounds_fragment %}
+<strong id="logs-rounds-header-count" class="logs-count-em mono-val" hx-swap-oob="true">{{ total_rounds|comma }}</strong>
+{% endif %}
 
 {% if rounds %}
-<div class="logs-table-wrap">
+<div class="logs-table-wrap" tabindex="0" role="region" aria-label="Таблица раундов">
   <table class="logs-table logs-rounds-table">
     <thead>
       <tr>
-        <th>Дата</th>
-        <th>Раунд</th>
-        <th>Файлы</th>
-        <th>Время (UTC)</th>
-        <th class="col-num">Строк (игр. / всего)</th>
-        <th class="col-num">Размер</th>
-        <th class="col-actions">Открыть</th>
+        <th scope="col">Дата</th>
+        <th scope="col">Раунд</th>
+        <th scope="col">Файлы</th>
+        <th scope="col">Время (UTC)</th>
+        <th scope="col" class="col-num">Строк (игр. / всего)</th>
+        <th scope="col" class="col-num">Размер</th>
+        <th scope="col" class="col-actions">Открыть</th>
       </tr>
     </thead>
     <tbody>
@@ -41,10 +32,12 @@
           </div>
           {% if r.label %}<div class="cell-sub">{{ r.label }}</div>{% endif %}
         </td>
-        <td class="mono-val logs-files-cell">
-          {% if r.has_game_log %}<a href="/logs/round/{{ r.round_uid }}?file=game.log" class="logs-file-link">game.log</a>{% endif %}
-          {% if r.has_qdel_log %}<a href="/logs/round/{{ r.round_uid }}?file=qdel.log" class="logs-file-link">qdel.log</a>{% endif %}
-          {% if r.has_initialize_log %}<a href="/logs/round/{{ r.round_uid }}?file=initialize.log" class="logs-file-link">init.log</a>{% endif %}
+        <td class="mono-val">
+          <div class="logs-files-cell">
+            {% if r.has_game_log %}<a href="/logs/round/{{ r.round_uid }}?file=game.log" class="logs-file-link">game.log</a>{% endif %}
+            {% if r.has_qdel_log %}<a href="/logs/round/{{ r.round_uid }}?file=qdel.log" class="logs-file-link">qdel.log</a>{% endif %}
+            {% if r.has_initialize_log %}<a href="/logs/round/{{ r.round_uid }}?file=initialize.log" class="logs-file-link">init.log</a>{% endif %}
+          </div>
         </td>
         <td class="mono-val">
           <div class="logs-time-cell">
@@ -59,8 +52,8 @@
           </div>
         </td>
         <td class="col-num mono-val">
-          <strong>{{ "{:,}".format(r.gameplay_line_count or 0) }}</strong>
-          <span class="cell-sub">/ {{ "{:,}".format(r.line_count or 0) }}</span>
+          <strong>{{ r.gameplay_line_count|comma }}</strong>
+          <span class="cell-sub">/ {{ r.line_count|comma }}</span>
         </td>
         <td class="col-num mono-val">{{ r.size_label }}</td>
         <td class="col-actions">
@@ -100,6 +93,6 @@
 {% endif %}
 {% else %}
 <div class="logs-panel-body">
-  <div class="block-empty">Раунды по заданным фильтрам не найдены.</div>
+  <div class="block-empty">{% if date_filter or source_filter or q_filter %}Раунды по заданным фильтрам не найдены{% else %}В архиве пока нет раундов{% endif %}</div>
 </div>
 {% endif %}

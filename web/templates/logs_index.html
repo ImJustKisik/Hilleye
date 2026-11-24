@@ -1,15 +1,22 @@
 {% extends "base.html" %}
 {% block title %}Логи SierraBay12 — Hilleye{% endblock %}
+{% block language %}ru{% endblock %}
 {% block extra_head %}
 <link rel="stylesheet" href="/static/css/logs.css">
+<link rel="stylesheet" href="/static/css/logs-index.css">
 <script src="/static/js/logs.js" defer></script>
 <script src="/static/js/log-jobs.js" defer></script>
 {% endblock %}
 
 {% block content %}
-<div class="logs-page-stack">
+<div class="logs-page-stack logs-index">
+  <header class="logs-index-heading">
+    <h1>Логи SierraBay12</h1>
+  </header>
+
   {% set logs_nav_active = 'rounds' %}
   {% set logs_show_refresh = true %}
+  {% set logs_show_boot = false %}
   {% include "partials/logs_topbar.html" %}
 
   {% if notice %}
@@ -26,25 +33,24 @@
   </div>
   {% endif %}
 
-  <!-- Quick Global Search + Collapsible Upload -->
-  <section class="panel" aria-label="Быстрый поиск по логам">
+  <section class="panel" aria-labelledby="logs-search-title">
     <div class="panel-header">
-      <h1 class="panel-title">Поиск по архиву логов</h1>
-      <a href="/logs/search" class="raw-json-link">Расширенный поиск &rarr;</a>
+      <h2 class="panel-title" id="logs-search-title">Поиск по архиву</h2>
+      <a href="/logs/search" class="logs-index-search-link">Расширенный поиск <span aria-hidden="true">&rarr;</span></a>
     </div>
     <div class="logs-panel-body">
-      <form action="/logs/search" method="get" class="logs-form-grid">
+      <form action="/logs/search" method="get" class="logs-form-grid logs-index-search-form">
         <div class="logs-field">
-          <label for="quick-search-q" class="sr-only">Запрос</label>
-          <input type="text" id="quick-search-q" name="q" class="logs-input" placeholder="Поиск по всем раундам (текст, событие, предмет...)">
+          <label for="quick-search-q" class="logs-label">Запрос</label>
+          <input type="text" id="quick-search-q" name="q" class="logs-input" placeholder="Текст события, предмет или сообщение">
         </div>
         <div class="logs-field logs-field-sm">
-          <label for="quick-search-ckey" class="sr-only">CKey</label>
-          <input type="text" id="quick-search-ckey" name="ckey" class="logs-input" placeholder="ckey">
+          <label for="quick-search-ckey" class="logs-label">CKey</label>
+          <input type="text" id="quick-search-ckey" name="ckey" class="logs-input">
         </div>
         <div class="logs-field logs-field-md">
-          <label for="quick-search-preset" class="sr-only">Категории</label>
-          <select id="quick-search-preset" name="preset" class="logs-select" aria-label="Категории">
+          <label for="quick-search-preset" class="logs-label">Категория</label>
+          <select id="quick-search-preset" name="preset" class="logs-select">
             <option value="gameplay">Игровые события</option>
             <option value="admin_combat">Админ / Атаки</option>
             <option value="chat">Чат</option>
@@ -59,7 +65,8 @@
   <details class="panel logs-upload-details" aria-label="Загрузка лога вручную">
     <summary class="panel-header logs-upload-summary">
       <span class="panel-title">Загрузить лог или архив</span>
-      <span class="block-meta mono-val">до {{ max_upload_mb }} МБ</span>
+      <span class="logs-upload-limit mono-val">до {{ max_upload_mb }} МБ</span>
+      <span class="logs-upload-chevron" aria-hidden="true"></span>
     </summary>
     <div class="logs-panel-body">
       <form id="logs-upload-form" action="/logs/upload" method="post" enctype="multipart/form-data" data-max-upload-mb="{{ max_upload_mb }}">
@@ -81,20 +88,19 @@
     </div>
   </details>
 
-  <!-- Rounds Directory -->
-  <section class="panel" aria-label="Список раундов">
+  <section class="panel" aria-labelledby="logs-rounds-title">
     <div class="panel-header">
-      <h2 class="panel-title">Раунды <span id="logs-rounds-header-count" class="mono-val cell-sub">({{ total_rounds }})</span></h2>
-      <span class="mono-val cell-sub">{{ stats.total_size_label }} &middot; {{ "{:,}".format(stats.indexed_entries) }} строк в индексе</span>
+      <h2 class="panel-title" id="logs-rounds-title">Раунды</h2>
+      <span class="logs-archive-size">{{ stats.total_size_label }} &middot; {{ stats.indexed_entries|comma }} строк в индексе</span>
     </div>
     <div class="logs-toolbar-compact">
-      <div class="logs-quick-chips" aria-label="Быстрый выбор даты">
-        <button type="button" class="logs-quick-chip {% if not date_filter %}is-active{% endif %}" data-quick-date="">Все даты</button>
-        <button type="button" class="logs-quick-chip {% if date_filter == today_utc %}is-active{% endif %}" data-quick-date="{{ today_utc }}">Сегодня</button>
-        <button type="button" class="logs-quick-chip {% if date_filter == yesterday_utc %}is-active{% endif %}" data-quick-date="{{ yesterday_utc }}">Вчера</button>
+      <div class="logs-quick-chips" role="group" aria-label="Быстрый выбор даты (UTC)">
+        <button type="button" class="logs-quick-chip {% if not date_filter %}is-active{% endif %}" data-quick-date="" aria-pressed="{{ 'true' if not date_filter else 'false' }}">Все даты</button>
+        <button type="button" class="logs-quick-chip {% if date_filter == today_utc %}is-active{% endif %}" data-quick-date="{{ today_utc }}" aria-pressed="{{ 'true' if date_filter == today_utc else 'false' }}">Сегодня</button>
+        <button type="button" class="logs-quick-chip {% if date_filter == yesterday_utc %}is-active{% endif %}" data-quick-date="{{ yesterday_utc }}" aria-pressed="{{ 'true' if date_filter == yesterday_utc else 'false' }}">Вчера</button>
         {% for d in stats.dates[:3] %}
           {% if d.round_date != today_utc and d.round_date != yesterday_utc %}
-          <button type="button" class="logs-quick-chip {% if date_filter == d.round_date %}is-active{% endif %}" data-quick-date="{{ d.round_date }}">{{ d.round_date }} ({{ d.cnt }})</button>
+          <button type="button" class="logs-quick-chip {% if date_filter == d.round_date %}is-active{% endif %}" data-quick-date="{{ d.round_date }}" aria-pressed="{{ 'true' if date_filter == d.round_date else 'false' }}">{{ d.round_date }} ({{ d.cnt }})</button>
           {% endif %}
         {% endfor %}
       </div>
@@ -104,28 +110,37 @@
             method="get"
             class="logs-form-grid">
         <div class="logs-field logs-field-md">
-          <select id="logs-rounds-date" name="date" class="logs-select" aria-label="Фильтр по дате">
+          <label for="logs-rounds-date" class="logs-label">Дата (UTC)</label>
+          <select id="logs-rounds-date" name="date" class="logs-select">
             <option value="">Все даты</option>
+            {% if date_filter and date_filter not in (stats.dates|map(attribute='round_date')|list) %}
+            <option value="{{ date_filter }}" selected>{{ date_filter }}</option>
+            {% endif %}
             {% for d in stats.dates %}
             <option value="{{ d.round_date }}" {% if date_filter == d.round_date %}selected{% endif %}>{{ d.round_date }} ({{ d.cnt }})</option>
             {% endfor %}
           </select>
         </div>
         <div class="logs-field logs-field-md">
-          <select id="logs-rounds-source" name="source" class="logs-select" aria-label="Фильтр по источнику">
+          <label for="logs-rounds-source" class="logs-label">Источник</label>
+          <select id="logs-rounds-source" name="source" class="logs-select">
             <option value="">Все источники</option>
             <option value="disk" {% if source_filter == 'disk' %}selected{% endif %}>Диск</option>
             <option value="upload" {% if source_filter == 'upload' %}selected{% endif %}>Загруженные</option>
           </select>
         </div>
         <div class="logs-field">
-          <input type="text" id="logs-rounds-q" name="q" value="{{ q_filter }}" class="logs-input" placeholder="ID раунда или заметка">
+          <label for="logs-rounds-q" class="logs-label">ID раунда или примечание</label>
+          <input type="text" id="logs-rounds-q" name="q" value="{{ q_filter }}" class="logs-input">
         </div>
-        <button type="submit" class="logs-btn logs-btn-primary">Фильтр</button>
-        <a id="logs-rounds-reset" href="/logs" class="logs-btn" {% if not (date_filter or source_filter or q_filter) %}hidden{% endif %}>Сброс</a>
+        <button type="submit" class="logs-btn">Применить</button>
+        <a id="logs-rounds-reset" href="/logs" class="logs-btn" {% if not (date_filter or source_filter or q_filter) %}hidden{% endif %}>Сбросить</a>
       </form>
     </div>
 
+    <div class="logs-rounds-meta-bar" role="status">
+      <span>Найдено раундов <strong id="logs-rounds-header-count" class="logs-count-em mono-val">{{ total_rounds|comma }}</strong></span>
+    </div>
     <div id="logs-rounds-container">
       {% include "partials/logs_rounds_table.html" %}
     </div>

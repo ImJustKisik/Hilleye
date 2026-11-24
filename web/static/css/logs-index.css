@@ -1,0 +1,300 @@
+.logs-index {
+  --archive-control-radius: 4px;
+  --archive-panel-radius: 8px;
+  --archive-focus: #ed8390;
+  gap: 12px;
+}
+
+.logs-index-heading {
+  padding-block: 4px 0;
+}
+
+.logs-index-heading h1 {
+  font-size: clamp(1.65rem, 3vw, 2rem);
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.logs-index .logs-topbar {
+  gap: 8px 16px;
+  padding: 0 0 8px;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--border-subtle);
+  border-radius: 0;
+}
+
+.logs-index :is(.logs-topbar-right, .logs-subnav, .logs-user-meta) {
+  gap: 8px;
+}
+
+.logs-index .logs-nav-pill {
+  min-height: 36px;
+  gap: 8px;
+  padding: 0 8px;
+  background: transparent;
+  border-color: transparent;
+  border-radius: var(--archive-control-radius);
+}
+
+.logs-index .logs-nav-pill:hover,
+.logs-index .logs-nav-pill.is-active {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+
+.logs-index .logs-nav-pill.is-active {
+  box-shadow: inset 0 -2px var(--accent-red);
+}
+
+.logs-index .logs-ico {
+  width: 16px;
+  height: 16px;
+  stroke-width: 1.5;
+}
+
+.logs-index .panel {
+  min-width: 0;
+  border-radius: var(--archive-panel-radius);
+}
+
+.logs-index :is(.panel-header, .logs-panel-body, .logs-toolbar-compact) {
+  padding: 12px 16px;
+}
+
+.logs-index .panel-header {
+  padding-block: 8px;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+
+.logs-index .panel-title {
+  font-size: 1.06rem;
+}
+
+.logs-index :is(.logs-index-search-link, .logs-upload-limit, .logs-archive-size) {
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+}
+
+.logs-index .logs-index-search-link {
+  text-underline-offset: 3px;
+}
+
+.logs-index .logs-index-search-link:hover {
+  color: var(--text-primary);
+}
+
+.logs-index .logs-form-grid {
+  align-items: end;
+}
+
+.logs-index .logs-field {
+  gap: 4px;
+}
+
+.logs-index .logs-label {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+}
+
+.logs-index :is(.logs-btn, .logs-input, .logs-select) {
+  min-height: 36px;
+  padding: 4px 12px;
+  border-radius: var(--archive-control-radius);
+  font-size: 0.9rem;
+}
+
+.logs-index .logs-btn-sm {
+  min-height: 32px;
+  font-size: 0.82rem;
+}
+
+.logs-index .logs-btn-primary {
+  background: var(--text-primary);
+  border-color: var(--text-primary);
+  color: var(--bg-canvas);
+}
+
+.logs-index .logs-btn-primary:hover {
+  background: var(--text-secondary);
+  border-color: var(--text-secondary);
+}
+
+.logs-index .logs-input::placeholder {
+  color: var(--text-muted);
+}
+
+.logs-index :focus-visible {
+  outline: 2px solid var(--archive-focus);
+  outline-offset: 2px;
+}
+
+.logs-index .logs-upload-summary {
+  flex-wrap: nowrap;
+  justify-content: flex-start;
+  border-bottom-color: transparent;
+  border-radius: var(--archive-panel-radius);
+}
+
+.logs-index .logs-upload-summary:hover {
+  background: var(--bg-elevated);
+}
+
+.logs-index .logs-upload-limit {
+  margin-inline-start: auto;
+  white-space: nowrap;
+}
+
+.logs-index .logs-upload-chevron {
+  flex: 0 0 8px;
+  height: 8px;
+  margin-inline-end: 4px;
+  border-right: 1px solid var(--text-secondary);
+  border-bottom: 1px solid var(--text-secondary);
+  transform: rotate(-45deg);
+}
+
+.logs-index .logs-upload-details[open] .logs-upload-summary {
+  border-bottom-color: var(--border-subtle);
+}
+
+.logs-index .logs-upload-details[open] .logs-upload-chevron {
+  transform: rotate(45deg);
+}
+
+.logs-index .logs-alert {
+  padding: 8px 12px;
+  overflow-wrap: anywhere;
+}
+
+.logs-index .logs-quick-chips {
+  gap: 4px;
+  margin-bottom: 12px;
+}
+
+.logs-index .logs-quick-chip {
+  min-height: 32px;
+  padding: 4px 8px;
+  background: transparent;
+  border-color: transparent;
+  border-radius: var(--archive-control-radius);
+  font-size: 0.85rem;
+}
+
+.logs-index .logs-quick-chip:hover,
+.logs-index .logs-quick-chip.is-active {
+  background: var(--bg-row-hover);
+  border-color: var(--border-strong);
+}
+
+.logs-index .logs-rounds-meta-bar {
+  padding: 8px 16px;
+  background: var(--bg-surface);
+  border: 0;
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+}
+
+.logs-index .logs-table-wrap:focus-visible {
+  outline-offset: -2px;
+}
+
+.logs-index .logs-rounds-table {
+  min-width: 840px;
+}
+
+.logs-index .logs-rounds-table :is(th, td) {
+  display: table-cell;
+  padding: 8px 12px;
+}
+
+.logs-index .logs-rounds-table th {
+  color: var(--text-secondary);
+  font-family: var(--font-sans);
+  font-size: 0.82rem;
+  font-weight: 500;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.logs-index .logs-rounds-table :is(th, td):first-child {
+  padding-inline-start: 16px;
+}
+
+.logs-index .logs-rounds-table :is(th, td):last-child {
+  padding-inline-end: 16px;
+  text-align: right;
+}
+
+.logs-index .logs-rounds-table .mono-val {
+  font-weight: 400;
+}
+
+.logs-index .logs-rounds-table :is(td:first-child, .logs-time-cell, .logs-duration-pill) {
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.logs-index .logs-rounds-table tr:focus-within {
+  background: var(--bg-row-hover);
+}
+
+.logs-index .logs-rounds-table .logs-round-id-link {
+  font-weight: 600;
+  text-decoration: underline;
+  text-decoration-color: var(--border-input-focus);
+  text-underline-offset: 3px;
+}
+
+.logs-index :is(.logs-files-cell, .logs-row-quick-actions) {
+  gap: 8px;
+}
+
+.logs-index .logs-duration-pill {
+  padding: 0;
+  background: transparent;
+  border: 0;
+}
+
+.logs-index .log-mini-btn {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 8px;
+  border-radius: var(--archive-control-radius);
+  font-size: 0.8rem;
+}
+
+@media (max-width: 640px) {
+  .logs-index .logs-quick-chip {
+    min-height: 36px;
+  }
+
+  .logs-index .logs-index-search-form > .logs-field:first-child {
+    flex-basis: 100%;
+  }
+
+  .logs-index .logs-field-md {
+    flex: 1 1 120px;
+    min-width: 0;
+  }
+
+  .logs-index .logs-index-search-form .logs-field-md {
+    min-width: 156px;
+  }
+
+  .logs-index .logs-index-search-form .logs-field-sm {
+    flex: 0 1 64px;
+    min-width: 64px;
+  }
+}
+
+@media (max-width: 440px) {
+  .logs-index .logs-subnav {
+    gap: 4px;
+  }
+
+  .logs-index .logs-subnav .logs-ico {
+    display: none;
+  }
+}
