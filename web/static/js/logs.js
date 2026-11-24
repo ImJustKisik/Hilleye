@@ -2337,7 +2337,7 @@
             return;
           }
           clearInterval(timer);
-          window.location.replace("/logs/admin");
+          window.location.reload();
         })
         .catch(function () {
           // Keep polling quietly on transient error
@@ -2482,9 +2482,13 @@
     var tabs = document.querySelectorAll("[data-admin-tab]");
     var sections = document.querySelectorAll("[data-admin-section]");
     if (!tabs.length || !sections.length) return;
-    var activeTab = tabName || "all";
+    var activeTab = Array.from(tabs).some(function (btn) {
+      return btn.dataset.adminTab === tabName;
+    }) ? tabName : "audit";
     tabs.forEach(function (btn) {
-      btn.classList.toggle("is-active", btn.dataset.adminTab === activeTab);
+      var selected = btn.dataset.adminTab === activeTab;
+      btn.classList.toggle("is-active", selected);
+      btn.setAttribute("aria-pressed", String(selected));
     });
     sections.forEach(function (sec) {
       var visible = activeTab === "all" || sec.dataset.adminSection === activeTab;
@@ -2500,50 +2504,25 @@
     initLoadingForms(adminRoot);
     initAdminAuditHelpers();
 
-    // Workspace tabs
     var tabs = adminRoot.querySelectorAll("[data-admin-tab]");
-    if (tabs.length) {
-      var hashMatch = (window.location.hash || "").match(/tab=([a-z]+)/);
-      if (hashMatch) {
-        setActiveAdminTab(hashMatch[1]);
-      }
-      tabs.forEach(function (btn) {
-        if (btn.dataset.bound) return;
-        btn.dataset.bound = "1";
-        btn.addEventListener("click", function () {
-          var nextTab = btn.dataset.adminTab || "all";
-          setActiveAdminTab(nextTab);
-          if (window.history && window.history.replaceState) {
-            var newHash = nextTab === "all" ? "" : ("#tab=" + nextTab);
-            window.history.replaceState(null, "", window.location.pathname + window.location.search + newHash);
-          }
-        });
-      });
-    }
-
-    // KPI card jumps
-    adminRoot.querySelectorAll("[data-admin-jump]").forEach(function (card) {
-      if (card.dataset.bound) return;
-      card.dataset.bound = "1";
-      card.addEventListener("click", function (ev) {
-        var targetSec = card.dataset.adminJump;
-        if (card.getAttribute("href").charAt(0) === "#") {
-          ev.preventDefault();
-          setActiveAdminTab("all");
-          var el = document.getElementById("admin-" + targetSec + "-section");
-          if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
-        }
+    var hashMatch = window.location.hash.match(/^#tab=([a-z]+)$/);
+    setActiveAdminTab(hashMatch ? hashMatch[1] : "audit");
+    tabs.forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var nextTab = btn.dataset.adminTab;
+        setActiveAdminTab(nextTab);
+        var newHash = nextTab === "audit" ? "" : "#tab=" + nextTab;
+        window.history.replaceState(null, "", window.location.pathname + window.location.search + newHash);
       });
     });
 
-    // Jump to audit section when clicking "история ->" on whitelist row
     adminRoot.querySelectorAll("[data-audit-jump]").forEach(function (link) {
       if (link.dataset.bound) return;
       link.dataset.bound = "1";
       link.addEventListener("click", function () {
-        setActiveAdminTab("all");
+        setActiveAdminTab("audit");
         var auditSec = document.getElementById("admin-audit-section");
-        if (auditSec) auditSec.scrollIntoView({ behavior: "smooth", block: "start" });
+        if (auditSec) auditSec.scrollIntoView({ block: "start" });
       });
     });
 
@@ -2571,7 +2550,7 @@
       if (wlIdInput) wlIdInput.value = "";
       if (wlNoteInput) wlNoteInput.value = "";
       if (wlRoleSelect) wlRoleSelect.value = "viewer";
-      if (wlSubmitBtn) wlSubmitBtn.textContent = "Добавить";
+      if (wlSubmitBtn) wlSubmitBtn.textContent = "Выдать доступ";
       if (wlEditBanner) wlEditBanner.hidden = true;
     }
 

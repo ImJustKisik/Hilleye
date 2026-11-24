@@ -1300,15 +1300,104 @@
    ========================================================================== */
 
 .admin-page-root {
-  gap: 12px;
+  gap: 16px;
   min-width: 0;
   max-width: 100%;
+}
+
+.admin-page-title {
+  font-size: clamp(1.6rem, 3vw, 2rem);
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.admin-titlebar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.admin-page-root .logs-topbar {
+  padding: 0 0 8px;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.admin-page-root .logs-topbar .logs-nav-pill {
+  background: transparent;
+  border-color: transparent;
+}
+
+.admin-page-root .logs-topbar .logs-nav-pill:is(:hover, .is-active) {
+  background: var(--bg-elevated);
+}
+
+.admin-page-root .logs-topbar .logs-nav-pill.is-active {
+  box-shadow: inset 0 -2px var(--accent-red);
 }
 
 .admin-page-root .panel,
 .logs-dashboard-grid > * {
   min-width: 0;
   max-width: 100%;
+}
+
+.admin-page-root .panel {
+  border-radius: 8px;
+}
+
+.admin-page-root .panel-header {
+  flex-wrap: wrap;
+  padding: 12px 16px;
+}
+
+.admin-page-root .panel-title {
+  font-size: 1.12rem;
+}
+
+.admin-page-root .logs-panel-body {
+  padding: 16px;
+}
+
+.admin-page-root :is(.logs-input, .logs-select, .logs-btn) {
+  min-height: 36px;
+  border-radius: 4px;
+}
+
+.admin-page-root .logs-input::placeholder {
+  color: var(--text-muted);
+}
+
+.admin-page-root .logs-label {
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+}
+
+.admin-page-root .logs-btn-primary:not(.is-confirm-armed) {
+  background: var(--text-primary);
+  border-color: var(--text-primary);
+  color: var(--bg-canvas);
+}
+
+.admin-page-root .logs-btn-primary:not(.is-confirm-armed):hover {
+  background: var(--text-secondary);
+  border-color: var(--text-secondary);
+}
+
+.admin-page-root :focus-visible {
+  outline: 2px solid #ed8390;
+  outline-offset: 2px;
+}
+
+.admin-page-root .logs-table-wrap:focus-visible {
+  outline-offset: -2px;
+}
+
+.admin-page-root .logs-alert {
+  overflow-wrap: anywhere;
 }
 
 .logs-table-wrap {
@@ -1319,19 +1408,21 @@
 .admin-kpi-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 10px;
+  gap: 8px;
 }
 
 .admin-kpi-card {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding: 11px 14px;
+  padding: 12px 16px;
   background: var(--bg-surface);
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-  text-decoration: none;
+  border-radius: 8px;
   color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
   transition: border-color 0.12s ease, background-color 0.12s ease;
 }
 
@@ -1340,41 +1431,31 @@
   background: var(--bg-elevated);
 }
 
-.admin-kpi-card.is-alert {
-  border-color: rgba(239, 68, 68, 0.5);
-  background: linear-gradient(180deg, rgba(239, 68, 68, 0.08) 0%, var(--bg-surface) 100%);
-}
-
-.admin-kpi-card.is-warn {
-  border-color: rgba(245, 158, 11, 0.45);
-}
-
-.admin-kpi-card.is-ok {
-  border-left: 2px solid var(--status-online);
+.admin-kpi-card.is-active {
+  background: var(--bg-elevated);
+  border-color: var(--border-strong);
+  box-shadow: inset 0 -2px var(--accent-red);
 }
 
 .admin-kpi-label {
-  font-size: 0.75rem;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  font-size: 0.95rem;
   font-weight: 600;
 }
 
 .admin-kpi-value {
-  font-size: 1.3rem;
-  font-weight: 700;
+  font-size: 0.92rem;
+  color: var(--text-secondary);
+}
+
+.admin-kpi-value strong {
   color: var(--text-primary);
-  line-height: 1.2;
+  font-size: 1.2rem;
+  font-weight: 600;
 }
 
 .admin-kpi-sub {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  flex-wrap: wrap;
-  font-size: 0.76rem;
-  color: var(--text-secondary);
+  font-size: 0.82rem;
+  color: var(--text-muted);
 }
 
 .admin-kpi-warn {
@@ -1386,6 +1467,7 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
+  margin-bottom: 16px;
 }
 
 .admin-errors-title {
@@ -1400,11 +1482,14 @@
   font-size: 0.82rem;
 }
 
-.admin-section-tabs {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
+.admin-titlebar > .logs-btn {
+  min-height: 32px;
+  background: transparent;
+}
+
+.admin-titlebar > .logs-btn.is-active {
+  background: var(--bg-elevated);
+  border-color: var(--border-input-focus);
 }
 
 .admin-section-hidden {
@@ -1419,14 +1504,8 @@
 }
 
 .admin-count-pill {
-  display: inline-flex;
-  align-items: center;
-  padding: 1px 7px;
-  border-radius: 2px;
-  background: var(--bg-recessed);
-  border: 1px solid var(--border-subtle);
   color: var(--text-secondary);
-  font-size: 0.74rem;
+  font-size: 0.85rem;
 }
 
 .admin-header-actions {
@@ -1437,16 +1516,11 @@
 }
 
 .admin-live-toggle {
-  padding: 3px 8px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border-subtle);
-  background: var(--bg-recessed);
-  font-size: 0.77rem;
+  min-height: 36px;
+  font-size: 0.85rem;
 }
 
 .admin-live-toggle.is-live {
-  border-color: rgba(16, 185, 129, 0.45);
-  background: rgba(16, 185, 129, 0.1);
   color: #a7f3d0;
 }
 
@@ -1462,8 +1536,8 @@
 .admin-audit-toolbar {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 10px 14px;
+  gap: 12px;
+  padding: 12px 16px;
 }
 
 .admin-audit-presets {
@@ -1474,21 +1548,43 @@
 }
 
 .admin-pill-sm {
-  padding: 4px 9px;
-  font-size: 0.78rem;
+  min-height: 32px;
+  padding: 4px 8px;
+  background: transparent;
+  border-color: transparent;
+  font-size: 0.85rem;
 }
 
-.admin-pill-sm.is-alert-pill {
-  border-color: rgba(239, 68, 68, 0.45);
+.admin-pill-sm.is-active {
+  background: var(--bg-elevated);
+  border-color: var(--border-input-focus);
 }
 
-.admin-badge-alert {
-  padding: 0 5px;
-  border-radius: 2px;
-  background: rgba(239, 68, 68, 0.22);
-  color: #fecaca;
-  font-size: 0.7rem;
-  font-weight: 700;
+.admin-audit-form > .logs-field-sm {
+  flex-basis: 224px;
+}
+
+.admin-audit-options {
+  flex-basis: 100%;
+}
+
+.admin-audit-options > summary,
+.admin-event-details > summary {
+  width: fit-content;
+  max-width: 100%;
+  padding-block: 4px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+
+.admin-audit-options > summary:hover,
+.admin-event-details > summary:hover {
+  color: var(--text-primary);
+}
+
+.admin-audit-options[open] > .logs-form-grid {
+  padding-top: 8px;
 }
 
 .admin-active-filters {
@@ -1498,24 +1594,48 @@
   flex-wrap: wrap;
 }
 
-.admin-audit-table td,
-.admin-wl-table td {
+.admin-audit-table {
+  min-width: 940px;
+}
+
+.admin-wl-table {
+  min-width: 760px;
+}
+
+.admin-upload-table {
+  min-width: 600px;
+}
+
+.admin-page-root .logs-table :is(th, td) {
+  padding: 8px 12px;
+}
+
+.admin-page-root .logs-table :is(th, td):first-child {
+  padding-inline-start: 16px;
+}
+
+.admin-page-root .logs-table th {
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  font-weight: 500;
+}
+
+.admin-page-root .logs-table tbody tr:focus-within {
+  background: var(--bg-row-hover);
+}
+
+.admin-audit-table td {
   vertical-align: top;
+  overflow-wrap: anywhere;
 }
 
 .admin-time-cell {
   white-space: nowrap;
 }
 
-.admin-rel-time {
-  font-size: 0.8rem;
-  color: var(--text-primary);
-}
-
 .admin-utc-time {
-  display: block;
-  font-size: 0.71rem;
-  margin-top: 1px;
+  color: var(--text-primary);
+  font-size: 0.8rem;
 }
 
 .admin-user-cell {
@@ -1532,14 +1652,13 @@
 .admin-id-inline {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  flex-wrap: wrap;
+  gap: 4px;
 }
 
 .admin-inline-filter-link {
   color: var(--text-secondary);
   text-decoration: none;
-  font-size: 0.75rem;
+  font-size: 0.8rem;
   border-bottom: 1px dotted var(--border-strong);
 }
 
@@ -1549,79 +1668,26 @@
 }
 
 .admin-copy-btn {
-  padding: 0 5px;
-  font-size: 0.68rem;
-  opacity: 0.6;
-}
-
-tr:hover .admin-copy-btn,
-.admin-copy-btn:focus-visible {
-  opacity: 1;
+  min-height: 24px;
+  padding: 0 4px;
+  border-color: transparent;
+  color: var(--text-secondary);
+  background: transparent;
 }
 
 /* Semantic Audit & Role Badges */
 .audit-badge {
-  display: inline-flex;
-  align-items: center;
-  padding: 2px 7px;
-  border-radius: 2px;
-  font-family: var(--font-mono);
-  font-size: 0.73rem;
-  font-weight: 600;
-  white-space: nowrap;
-  border: 1px solid transparent;
+  color: var(--text-primary);
+  font-size: 0.86rem;
+  font-weight: 500;
 }
 
 .audit-badge.audit-danger {
-  background: rgba(239, 68, 68, 0.16);
   color: #fca5a5;
-  border-color: rgba(239, 68, 68, 0.4);
 }
 
 .audit-badge.audit-warn {
-  background: rgba(245, 158, 11, 0.15);
   color: #fcd34d;
-  border-color: rgba(245, 158, 11, 0.38);
-}
-
-.audit-badge.audit-ok {
-  background: rgba(16, 185, 129, 0.15);
-  color: #6ee7b7;
-  border-color: rgba(16, 185, 129, 0.35);
-}
-
-.audit-badge.audit-info {
-  background: rgba(96, 165, 250, 0.14);
-  color: #93c5fd;
-  border-color: rgba(96, 165, 250, 0.35);
-}
-
-.audit-badge.audit-muted {
-  background: rgba(148, 163, 184, 0.13);
-  color: #cbd5e1;
-  border-color: rgba(148, 163, 184, 0.3);
-}
-
-.audit-badge.admin-role-superadmin {
-  background: rgba(217, 38, 56, 0.16);
-  color: #fda4af;
-  border-color: rgba(217, 38, 56, 0.45);
-}
-
-.audit-badge.admin-role-admin {
-  background: rgba(245, 158, 11, 0.15);
-  color: #fcd34d;
-  border-color: rgba(245, 158, 11, 0.38);
-}
-
-.audit-badge.admin-role-viewer {
-  background: rgba(20, 184, 166, 0.14);
-  color: #5eead4;
-  border-color: rgba(20, 184, 166, 0.35);
-}
-
-.admin-audit-row.audit-danger-row {
-  background: rgba(239, 68, 68, 0.04);
 }
 
 .admin-target-links {
@@ -1636,21 +1702,8 @@ tr:hover .admin-copy-btn,
   gap: 6px;
 }
 
-.admin-kv-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-
-.admin-kv-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  padding: 1px 6px;
-  border-radius: 2px;
-  background: var(--bg-recessed);
-  border: 1px solid var(--border-subtle);
-  font-size: 0.72rem;
+.admin-kv-line {
+  font-size: 0.8rem;
   color: var(--text-secondary);
 }
 
@@ -1662,22 +1715,7 @@ tr:hover .admin-copy-btn,
   display: inline-flex;
 }
 
-.admin-quick-grant-btn {
-  background: rgba(16, 185, 129, 0.14);
-  border-color: rgba(16, 185, 129, 0.42);
-  color: #a7f3d0;
-}
-
-.admin-quick-grant-btn:hover {
-  background: rgba(16, 185, 129, 0.25);
-  border-color: var(--status-online);
-}
-
 /* Whitelist, Indexing & Map Cards */
-.admin-manage-grid {
-  grid-template-columns: minmax(0, 1.25fr) minmax(300px, 0.95fr);
-}
-
 .admin-wl-edit-banner {
   display: flex;
   align-items: center;
@@ -1751,10 +1789,8 @@ tr:hover .admin-copy-btn,
 }
 
 .admin-meta-item {
-  padding: 8px 10px;
-  border-radius: var(--radius-sm);
-  background: var(--bg-recessed);
-  border: 1px solid var(--border-subtle);
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-subtle);
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -1762,10 +1798,8 @@ tr:hover .admin-copy-btn,
 }
 
 .admin-meta-item dt {
-  font-size: 0.71rem;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
 }
 
 .admin-meta-item dd {
@@ -1835,9 +1869,6 @@ tr:hover .admin-copy-btn,
     height: auto;
     max-height: 420px;
   }
-  .admin-kpi-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
   .admin-map-dl {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -1860,13 +1891,41 @@ tr:hover .admin-copy-btn,
     grid-column: 1 / -1;
     opacity: 1;
   }
-  .admin-manage-grid {
-    grid-template-columns: 1fr;
-  }
 }
 
 @media (max-width: 640px) {
-  .admin-kpi-grid,
+  .admin-kpi-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .admin-kpi-card {
+    padding: 8px 12px;
+  }
+  .admin-page-root {
+    gap: 12px;
+  }
+  .admin-page-root .logs-subnav {
+    gap: 4px;
+  }
+  .admin-page-root .logs-subnav .logs-nav-pill {
+    padding-inline: 8px;
+  }
+  .admin-page-root .logs-subnav .logs-ico {
+    display: none;
+  }
+  .admin-audit-presets {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding: 2px;
+  }
+  .admin-audit-presets > .logs-nav-pill {
+    flex-shrink: 0;
+  }
+  .admin-audit-form > .logs-field:first-of-type {
+    flex-basis: 100%;
+  }
+  .admin-audit-form > .logs-field-sm {
+    flex: 1 1 160px;
+  }
   .admin-meta-dl,
   .admin-map-dl {
     grid-template-columns: 1fr;
