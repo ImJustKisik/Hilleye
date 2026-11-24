@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime
 from html import escape as html_escape
 from pathlib import Path
@@ -491,6 +492,7 @@ def filter_game_log_file(
     focus_line: Optional[int] = None,
     mask_ips: bool = False,
     render_html: bool = True,
+    count_category_matches: bool = False,
 ) -> LogPageResult:
     """Filter and paginate a game.log file directly from disk."""
     per_page = max(25, min(int(per_page), 500))
@@ -513,6 +515,13 @@ def filter_game_log_file(
     )
     anchor_hint = 0
 
+    matching_category_counts: Optional[Dict[str, int]] = None
+    scan_filter = filt
+    if count_category_matches and (filt.ckey_norm or filt.q_lower or time_from or time_to):
+        # Count matches in every category so users can see what switching categories would show.
+        matching_category_counts = {}
+        scan_filter = replace(filt, preset="all", categories=None)
+
     acc = _RoundMetaAccumulator()
     matched_raw = []
     total_matches = 0
@@ -528,7 +537,7 @@ def filter_game_log_file(
             ts,
             cat,
             raw_msg,
-            filt,
+            scan_filter,
             mask_ips=mask_ips,
             line_no=line_no,
             anchors=anchors,
@@ -536,6 +545,11 @@ def filter_game_log_file(
         )
         if not matched:
             continue
+
+        if matching_category_counts is not None:
+            matching_category_counts[cat] = matching_category_counts.get(cat, 0) + 1
+            if not category_matches_filters(cat, preset=filt.preset, selected_categories=filt.categories):
+                continue
 
         if line_no == focus_line:
             focus_index = total_matches
@@ -554,10 +568,14 @@ def filter_game_log_file(
             if filt.regex_error:
                 break
             matched, pre_display_raw, pre_sanitized, anchor_hint = _evaluate_line_filter(
-                ts, cat, raw_msg, filt, mask_ips=mask_ips, line_no=line_no,
+                ts, cat, raw_msg, scan_filter, mask_ips=mask_ips, line_no=line_no,
                 anchors=anchors, anchor_hint=anchor_hint,
             )
             if matched:
+                if matching_category_counts is not None and not category_matches_filters(
+                    cat, preset=filt.preset, selected_categories=filt.categories
+                ):
+                    continue
                 if start_idx <= match_index < start_idx + per_page:
                     matched_raw.append((line_no, ts, cat, raw_msg, is_cont, pre_display_raw, pre_sanitized))
                 match_index += 1
@@ -592,6 +610,7 @@ def filter_game_log_file(
         ended_at=acc.ended_at,
         regex_error=filt.regex_error,
         invalid_time_fields=filt.invalid_time_fields,
+        matching_category_counts=matching_category_counts,
     )
 
 

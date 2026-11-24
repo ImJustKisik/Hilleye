@@ -1284,6 +1284,35 @@ async def test_logs_ux_overhaul_partials_and_csp(logs_env):
             assert ' style="' not in html_text.lower()
 
 
+async def test_round_category_counts_follow_search(logs_env):
+    cfg = logs_env["cfg"]
+    await logs_db.sync_and_index_rounds(cfg.resolved_logs_root_dir(), cfg.resolved_logs_uploads_dir())
+    uid = (await logs_db.list_rounds())[0][0]["round_uid"]
+    url = f"/logs/round/{uid}"
+
+    async with AsyncClient(transport=ASGITransport(app=web_app.app), base_url="http://test") as client:
+        await _login_via_discord(client, "111111111111111111", "admin_user")
+        hx = {"HX-Request": "true"}
+
+        def counts(response):
+            assert response.status_code == 200
+            return json.loads(re.search(r"data-category-counts='([^']+)'", response.text).group(1))
+
+        baseline = counts(await client.get(url, headers=hx))
+        assert baseline["SAY"] == 2
+        player = counts(await client.get(url, params={"ckey": "AwkwardlyConfusedNeuralNetwork"}, headers=hx))
+        assert {cat: count for cat, count in player.items() if count} == {"ACCESS": 1, "SAY": 1, "ATTACK": 1}
+        assert player["ADMIN"] == 0
+
+        params = {"q": "noise", "cat": "SAY"}
+        text_search = counts(await client.get(url, params=params, headers=hx))
+        assert {cat: count for cat, count in text_search.items() if count} == {"DEBUG": 1}
+        full = await client.get(url, params=params)
+        debug_chip = re.search(r'data-cat-toggle="DEBUG"[^>]*>(.*?)</label>', full.text, re.S)
+        assert "data-category-count>1</span>" in debug_chip.group(1)
+        assert counts(await client.get(url, headers=hx)) == baseline
+
+
 async def test_stream_navigation_display_options_and_validation(logs_env):
     cfg = logs_env["cfg"]
     (logs_env["round1_dir"] / "initialize.log").write_text("First\nSecond\n", encoding="utf-8")

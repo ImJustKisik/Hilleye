@@ -260,6 +260,7 @@ def register_viewer_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
             focus_line=focus,
             mask_ips=mask_flag,
             render_html=render_html,
+            count_category_matches=True,
         )
 
         entries_vm = [
@@ -267,8 +268,11 @@ def register_viewer_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
             for entry in result.entries
         ]
 
+        category_counts = result.category_counts
+        if result.matching_category_counts is not None:
+            category_counts = {cat: result.matching_category_counts.get(cat, 0) for cat in category_counts}
         categories_vm = _ordered_categories(
-            result.category_counts,
+            category_counts,
             preset=active_preset,
             selected_cats=selected_cats,
         )
@@ -316,6 +320,7 @@ def register_viewer_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
                 "entries": entries_vm,
                 "result": result,
                 "categories_vm": categories_vm,
+                "category_counts": category_counts,
                 "selected_cats": set(selected_cats),
                 "active_preset": active_preset,
                 "presets": LOG_PRESETS,

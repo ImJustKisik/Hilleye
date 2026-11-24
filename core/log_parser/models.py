@@ -208,6 +208,7 @@ class LogPageResult:
     ended_at: Optional[str] = None
     regex_error: Optional[str] = None
     invalid_time_fields: Tuple[str, ...] = ()
+    matching_category_counts: Optional[Dict[str, int]] = None
 
 
 @dataclass
