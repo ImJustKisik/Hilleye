@@ -2,6 +2,23 @@
 (function () {
   "use strict";
 
+  // Remove round HTML persisted by older versions of the log viewer.
+  try {
+    var historyKey = "htmx-history-cache";
+    var historyCache = JSON.parse(localStorage.getItem(historyKey));
+    if (Array.isArray(historyCache)) {
+      var remainingHistory = historyCache.filter(function (entry) {
+        return !entry || typeof entry.url !== "string" || !entry.url.startsWith("/logs/round/");
+      });
+      if (remainingHistory.length !== historyCache.length) {
+        if (remainingHistory.length) localStorage.setItem(historyKey, JSON.stringify(remainingHistory));
+        else localStorage.removeItem(historyKey);
+      }
+    }
+  } catch (_) {
+    // Storage may be disabled or contain a malformed history cache.
+  }
+
   function initDirectoryControls() {
     var list = document.getElementById("servers-grid-container");
     var filterInput = document.getElementById("server-filter-input");

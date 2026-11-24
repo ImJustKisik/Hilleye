@@ -20,9 +20,9 @@ from core.config import AppConfig
 from core.file_lock import FileLock, lock_path
 from core.log_jobs import JobRunner, enqueue_job, get_job, logs_status
 from core.log_operations import heavy_slot, run_log_operation
-from core.log_parser import filter_game_log_file
+from core.log_parser import filter_game_log_file, read_context_lines
 from core.logs_db.indexer import DiscoveryResult
-from core.logs_db.reader import _indexed_page
+from core.logs_db.reader import _indexed_page, read_log_context
 from core.maintenance import create_backup, restore_backup, verify_archive
 import web.app as web
 
@@ -161,6 +161,40 @@ async def test_fast_page_reads_only_selected_offsets(hardening_env, monkeypatch)
     page = await asyncio.to_thread(_indexed_page, config.resolved_logs_db_path(), uid, file, {"preset": "all", "per_page": 25, "page": 4})
     assert page.total_matches == 1000 and page.entries[0].line_no == 76
     assert len(reads) == 25 and sum(reads) == 25 * (file.stat().st_size // 1000)
+
+
+async def test_indexed_context_seeks_and_preserves_unindexed_lines(hardening_env, monkeypatch):
+    from core.logs_db import reader
+
+    _, _, file, _ = hardening_env
+    file.write_text(
+        LINE * 1000 + "SAY continuation\n"
+        "[2026-11-16 12:00:01] DEBUG: 192.0.2.10 <b>debug</b>\n"
+        "DEBUG continuation\n" + LINE,
+        encoding="utf-8",
+    )
+    await _sync(hardening_env)
+    uid = (await logs_db.list_rounds())[0][0]["round_uid"]
+    line_bytes = len(file.read_bytes().splitlines(keepends=True)[0])
+    options = {"radius": 1, "mask_ips": True, "render_html": False}
+    expected = read_context_lines(file, 1002, **options)
+    original_stream = reader._iter_parsed_log_stream
+    starts = []
+
+    def tracked_stream(stream, **kwargs):
+        starts.append((stream.tell(), kwargs["first_line"]))
+        return original_stream(stream, **kwargs)
+
+    monkeypatch.setattr(reader, "_iter_parsed_log_stream", tracked_stream)
+    entries = await read_log_context(uid, file, 1002, **options)
+    assert starts == [(line_bytes * 1000, 1001)]
+    assert entries == expected
+    assert [entry.category for entry in entries] == ["SAY", "DEBUG", "DEBUG"]
+
+    with file.open("a", encoding="utf-8") as stream:
+        stream.write("unindexed tail\n")
+    assert await read_log_context(uid, file, 1005, **options) == read_context_lines(file, 1005, **options)
+    assert len(starts) == 1
 
 
 def test_streaming_pagination_memory_and_focus(tmp_path):

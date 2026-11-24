@@ -237,6 +237,8 @@ async def response_headers(request: Request, call_next):
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     if not request.url.path.startswith(("/docs", "/redoc", "/openapi.json")):
         response.headers["Content-Security-Policy"] = _CSP_HEADER
+    if request.url.path.startswith("/logs/round/"):
+        response.headers["Cache-Control"] = "private, no-store"
     if request.url.path.startswith("/static/") and response.status_code in (200, 206, 304):
         response.headers["Cache-Control"] = "public, max-age=86400, stale-while-revalidate=3600"
     return response

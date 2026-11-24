@@ -3,17 +3,24 @@
   <div class="logs-alert logs-alert-error" role="alert">{{ result.regex_error }}</div>
 </div>
 {% endif %}
-{% if focus_line and not entries|selectattr("is_focused")|list %}
+{% if focus_line and (focus_line > result.total_lines or (
+      not (result.regex_error or result.invalid_time_fields) and not entries|selectattr("is_focused")|list
+   )) %}
 <div class="logs-panel-body">
   <div class="logs-alert logs-alert-info" role="status">
+    {% if focus_line > result.total_lines %}
+    Строки <code>#L{{ focus_line }}</code> нет в этом файле. Всего строк: {{ result.total_lines }}.
+    {% else %}
     Строка <code>#L{{ focus_line }}</code> скрыта активным фильтром.
-    <a href="/logs/round/{{ round.round_uid }}?file={{ selected_file|urlencode }}&preset=all&focus={{ focus_line }}#L{{ focus_line }}" class="server-link">Открыть в режиме «Все категории»</a>
+    <a href="/logs/round/{{ round.round_uid }}?{{ unfiltered_line_query }}&focus={{ focus_line }}#L{{ focus_line }}" class="server-link">Открыть в режиме «Все категории»</a>
+    {% endif %}
   </div>
 </div>
 {% endif %}
 
 <!-- Filtered Summary & Top Pagination -->
-<div class="logs-pagination">
+<div class="logs-pagination" data-stream-results data-query="{{ base_query_str }}" data-page="{{ result.page }}"
+     data-total-lines="{{ result.total_lines }}" data-invalid-time-fields="{{ result.invalid_time_fields|join(' ') }}">
   <div class="logs-pagination-summary">
     <span class="mono-val cell-sub">
       <strong>{{ result.total_matches }}</strong> / {{ result.total_lines }} строк{% if result.total_pages > 1 %} &middot; стр. {{ result.page }} / {{ result.total_pages }}{% endif %}
@@ -33,16 +40,12 @@
   <div class="logs-topbar-left">
     {% if result.page > 1 %}
     <a href="/logs/round/{{ round.round_uid }}?{{ base_query_str }}&page={{ result.page - 1 }}"
-       hx-get="/logs/round/{{ round.round_uid }}?{{ base_query_str }}&page={{ result.page - 1 }}"
-       hx-target="#logs-stream-container"
-       hx-push-url="true"
+       data-stream-pagination
        class="logs-btn logs-btn-sm">&larr; Назад</a>
     {% endif %}
     {% if result.page < result.total_pages %}
     <a href="/logs/round/{{ round.round_uid }}?{{ base_query_str }}&page={{ result.page + 1 }}"
-       hx-get="/logs/round/{{ round.round_uid }}?{{ base_query_str }}&page={{ result.page + 1 }}"
-       hx-target="#logs-stream-container"
-       hx-push-url="true"
+       data-stream-pagination
        class="logs-btn logs-btn-sm">Вперёд &rarr;</a>
     {% endif %}
   </div>
@@ -85,13 +88,13 @@
               title="Показать соседние ±20 строк (включая DEBUG)">&plusmn;20</button>
       <button type="button"
               class="log-mini-btn"
-              data-copy-text="/logs/round/{{ round.round_uid }}?file={{ selected_file|urlencode }}&preset=all&focus={{ entry.line_no }}#L{{ entry.line_no }}"
+              data-copy-text="/logs/round/{{ round.round_uid }}?{{ unfiltered_line_query }}&focus={{ entry.line_no }}#L{{ entry.line_no }}"
               title="Скопировать ссылку на строку">Ссылка</button>
     </div>
   </div>
   {% endfor %}
 </div>
-{% else %}
+{% elif not (result.regex_error or result.invalid_time_fields) %}
 <div class="logs-panel-body">
   <div class="block-empty">Нет строк по выбранным фильтрам.</div>
 </div>
@@ -103,26 +106,18 @@
   <div class="logs-topbar-left">
     {% if result.page > 1 %}
     <a href="/logs/round/{{ round.round_uid }}?{{ base_query_str }}&page=1"
-       hx-get="/logs/round/{{ round.round_uid }}?{{ base_query_str }}&page=1"
-       hx-target="#logs-stream-container"
-       hx-push-url="true"
+       data-stream-pagination
        class="logs-btn logs-btn-sm">Первая</a>
     <a href="/logs/round/{{ round.round_uid }}?{{ base_query_str }}&page={{ result.page - 1 }}"
-       hx-get="/logs/round/{{ round.round_uid }}?{{ base_query_str }}&page={{ result.page - 1 }}"
-       hx-target="#logs-stream-container"
-       hx-push-url="true"
+       data-stream-pagination
        class="logs-btn logs-btn-sm">&larr; Назад</a>
     {% endif %}
     {% if result.page < result.total_pages %}
     <a href="/logs/round/{{ round.round_uid }}?{{ base_query_str }}&page={{ result.page + 1 }}"
-       hx-get="/logs/round/{{ round.round_uid }}?{{ base_query_str }}&page={{ result.page + 1 }}"
-       hx-target="#logs-stream-container"
-       hx-push-url="true"
+       data-stream-pagination
        class="logs-btn logs-btn-sm">Вперёд &rarr;</a>
     <a href="/logs/round/{{ round.round_uid }}?{{ base_query_str }}&page={{ result.total_pages }}"
-       hx-get="/logs/round/{{ round.round_uid }}?{{ base_query_str }}&page={{ result.total_pages }}"
-       hx-target="#logs-stream-container"
-       hx-push-url="true"
+       data-stream-pagination
        class="logs-btn logs-btn-sm">Последняя</a>
     {% endif %}
   </div>

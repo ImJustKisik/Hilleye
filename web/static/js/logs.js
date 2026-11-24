@@ -135,9 +135,9 @@
     return clean;
   }
 
-  function syncHeaderActionLinks(filterForm) {
+  function syncHeaderActionLinks(filterForm, query) {
     if (!filterForm) return;
-    var cleanStr = buildCleanFilterParams(filterForm).toString();
+    var cleanStr = query || buildCleanFilterParams(filterForm).toString();
     var streamLink = document.getElementById("logs-link-stream");
     if (streamLink && streamLink.dataset.baseHref) {
       var sFocus = streamLink.dataset.focusLine || "";
@@ -240,6 +240,14 @@
       htmlInput.value = rawHtmlCb.checked ? "0" : "1";
     }
 
+    var ckeyInput = filterForm.elements.namedItem("ckey");
+    var radiusSelect = filterForm.elements.namedItem("radius");
+    if (ckeyInput && radiusSelect) {
+      var ckey = ckeyInput.value;
+      radiusSelect.disabled = ckey.length > 128 || !/[a-z0-9]/.test(ckey.toLowerCase());
+      if (radiusSelect.disabled) radiusSelect.value = "0";
+    }
+
     var resetBtn = document.getElementById("logs-filter-reset");
     if (resetBtn) {
       var qVal = (filterForm.querySelector('input[name="q"]') || {}).value || "";
@@ -274,21 +282,129 @@
     }
   }
 
+  var liveSearchTimer;
+  var streamRequest;
+  var streamLocation;
+
+  function applyStreamFilters(form, results) {
+    var params = new URLSearchParams(results.dataset.query);
+    Array.from(form.elements).forEach(function (field) {
+      var name = field.name;
+      if (!name || name === "view" || name === "page") return;
+      if (field.type === "checkbox") {
+        field.checked = params.getAll(name).includes(field.value);
+      } else {
+        field.value = params.get(name) || (name === "radius" ? "0" : "");
+      }
+    });
+    document.getElementById("logs-raw-html-cb").checked = params.get("html") === "0";
+    var invalidTimeFields = results.dataset.invalidTimeFields.split(" ");
+    ["time_from", "time_to"].forEach(function (name) {
+      var field = form.elements.namedItem(name);
+      var invalid = invalidTimeFields.includes(name);
+      field.setAttribute("aria-invalid", String(invalid));
+      document.getElementById(field.getAttribute("aria-errormessage")).hidden = !invalid;
+    });
+    if (results.dataset.invalidTimeFields && document.getElementById("logs-filter-drawer").hidden) {
+      document.getElementById("logs-filter-drawer-toggle").click();
+    }
+    var fileLineCount = document.getElementById("logs-open-file-line-count");
+    if (fileLineCount) fileLineCount.textContent = results.dataset.totalLines;
+
+    var streamLink = document.getElementById("logs-link-stream");
+    var mapLink = document.getElementById("logs-link-map");
+    streamLink.dataset.focusLine = "";
+    ["focusLine", "targetX", "targetY", "targetZ"].forEach(function (key) {
+      mapLink.dataset[key] = "";
+    });
+    syncHeaderActionLinks(form, results.dataset.query);
+  }
+
+  async function loadStreamPage(url, form, container) {
+    clearTimeout(liveSearchTimer);
+    if (streamRequest && streamRequest.url === url && !streamRequest.controller.signal.aborted) return;
+    if (streamRequest) streamRequest.controller.abort();
+    var controller = new AbortController();
+    var request = { url: url, controller: controller };
+    streamRequest = request;
+    var errorBox = document.getElementById("logs-stream-request-error");
+    errorBox.hidden = true;
+    container.setAttribute("aria-busy", "true");
+    try {
+      var response = await fetch(url, {
+        headers: { "HX-Request": "true" },
+        signal: controller.signal,
+      });
+      var fragment = document.createElement("template");
+      fragment.innerHTML = await response.text();
+      if (streamRequest !== request || controller.signal.aborted) return;
+      if (response.redirected || response.status === 401 || response.status === 403) {
+        window.location.assign(url);
+        return;
+      }
+      if (!response.ok) {
+        var alert = fragment.content.querySelector("[role=alert]");
+        throw new Error(alert ? alert.textContent : "");
+      }
+      var results = fragment.content.querySelector("[data-stream-results]");
+      if (!results) throw new Error();
+
+      var next = new URL(url, window.location.href);
+      next.search = results.dataset.query + "&page=" + results.dataset.page;
+      var nextLocation = next.pathname + next.search;
+      if (nextLocation !== streamLocation || window.location.hash) {
+        window.history.pushState(null, "", nextLocation);
+        streamLocation = nextLocation;
+      }
+      applyStreamFilters(form, results);
+      container.replaceChildren(fragment.content);
+      bindStreamHelpers();
+    } catch (error) {
+      if (streamRequest !== request || controller.signal.aborted) return;
+      errorBox.textContent = error.message || "Не удалось обновить ленту. Повторите попытку.";
+      errorBox.hidden = false;
+    } finally {
+      if (streamRequest === request) {
+        streamRequest = null;
+        container.removeAttribute("aria-busy");
+      }
+    }
+  }
+
+  function initStreamNavigation() {
+    var container = document.getElementById("logs-stream-container");
+    if (!container) return;
+    var form = document.getElementById("logs-filter-form");
+    streamLocation = window.location.pathname + window.location.search;
+    container.addEventListener("click", function (ev) {
+      var link = ev.target.closest("a[data-stream-pagination]");
+      if (!link || ev.defaultPrevented || ev.button !== 0 || ev.ctrlKey || ev.metaKey || ev.shiftKey || ev.altKey) return;
+      ev.preventDefault();
+      loadStreamPage(link.href, form, container);
+    });
+    window.addEventListener("popstate", function () {
+      if (window.location.pathname + window.location.search !== streamLocation) {
+        clearTimeout(liveSearchTimer);
+        if (streamRequest) streamRequest.controller.abort();
+        window.location.reload();
+      }
+    });
+  }
+
   function submitFilterForm(filterForm) {
     if (!filterForm) return;
+    clearTimeout(liveSearchTimer);
     syncToolbarActiveStates(filterForm);
-    syncHeaderActionLinks(filterForm);
 
     var streamContainer = document.getElementById("logs-stream-container");
-    if (streamContainer && window.htmx && typeof window.htmx.ajax === "function") {
-      var params = new URLSearchParams(new FormData(filterForm));
-      var action = filterForm.getAttribute("action") || window.location.pathname;
-      var url = action + "?" + params.toString();
-      window.history.pushState({}, "", url);
-      window.htmx.ajax("GET", url, { target: "#logs-stream-container", swap: "innerHTML" });
+    if (streamContainer) {
+      var action = new URL(filterForm.action);
+      action.search = new URLSearchParams(new FormData(filterForm));
+      loadStreamPage(action.href, filterForm, streamContainer);
       return;
     }
 
+    syncHeaderActionLinks(filterForm);
     if (typeof window.__logsMapReload === "function") {
       var mapParams = new URLSearchParams(new FormData(filterForm));
       var mapAction = filterForm.getAttribute("action") || window.location.pathname;
@@ -308,14 +424,14 @@
 
     if (filterForm) {
       syncToolbarActiveStates(filterForm);
-      syncHeaderActionLinks(filterForm);
+      if (!document.getElementById("logs-stream-container")) syncHeaderActionLinks(filterForm);
     }
 
     if (filterForm && !filterForm.dataset.htmxBound) {
       filterForm.dataset.htmxBound = "1";
       filterForm.addEventListener("submit", function (ev) {
         var streamContainer = document.getElementById("logs-stream-container");
-        var isAjaxStream = Boolean(streamContainer && window.htmx);
+        var isAjaxStream = Boolean(streamContainer);
         var isAjaxMap = typeof window.__logsMapReload === "function";
         if (isAjaxStream || isAjaxMap) {
           ev.preventDefault();
@@ -347,17 +463,14 @@
         });
       }
 
-      var liveSearchTimer = null;
       filterForm.querySelectorAll('input[type="text"]').forEach(function (inp) {
         if (inp.dataset.resetBound) return;
         inp.dataset.resetBound = "1";
         inp.addEventListener("input", function () {
           syncToolbarActiveStates(filterForm);
-          if (
-            (inp.id === "logs-q-input" || inp.id === "logs-ckey-input") &&
-            document.getElementById("logs-stream-container") &&
-            window.htmx
-          ) {
+          if (!document.getElementById("logs-stream-container")) return;
+          if (streamRequest) streamRequest.controller.abort();
+          if (inp.id === "logs-q-input" || inp.id === "logs-ckey-input") {
             clearTimeout(liveSearchTimer);
             liveSearchTimer = setTimeout(function () {
               var pageInput = filterForm.querySelector('input[name="page"]');
@@ -2753,6 +2866,7 @@
     initDragAndDropUpload();
     initQuickDateChips();
     initRoundMapViewer();
+    initStreamNavigation();
     bindStreamHelpers();
     initKeyboardShortcuts();
     initAdminMapBuildPolling();
@@ -2761,9 +2875,7 @@
     document.body.addEventListener("htmx:afterSwap", function (ev) {
       var target = ev.detail && ev.detail.target;
       if (!target) return;
-      if (target.id === "logs-stream-container") {
-        bindStreamHelpers();
-      } else if (target.id === "admin-audit-container") {
+      if (target.id === "admin-audit-container") {
         initAdminAuditHelpers();
       } else if (target.id === "logs-rounds-container") {
         initQuickDateChips();

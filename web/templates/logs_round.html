@@ -1,13 +1,13 @@
 {% extends "base.html" %}
 {% block title %}Раунд {{ round.round_id }} ({{ selected_file }}) — Логи — Hilleye{% endblock %}
 {% block extra_head %}
-<link rel="stylesheet" href="/static/css/logs.css">
-<script src="/static/js/logs.js" defer></script>
+<link rel="stylesheet" href="/static/css/logs.css?v=round-stream">
+<script src="/static/js/logs.js?v=round-stream" defer></script>
 <script src="/static/js/log-jobs.js" defer></script>
 {% endblock %}
 
 {% block content %}
-<div class="logs-page-stack">
+<div class="logs-page-stack logs-round-page" hx-history="false">
   {% set logs_nav_active = 'rounds' %}
   {% set logs_round_search_uid = round.round_uid %}
   {% include "partials/logs_topbar.html" %}
@@ -27,6 +27,7 @@
         </div>
         <div class="logs-round-meta mono-val"
              {% if round.started_at and round.ended_at %}title="{{ round.started_at }} – {{ round.ended_at }}"{% endif %}>
+          {% if selected_file == 'initialize.log' %}<span>Раунд</span>{% endif %}
           {% if round_time and round_time.date %}
           <span>{{ round_time.date }}</span>
           {% elif round.round_date %}
@@ -40,7 +41,11 @@
           <span>{{ round.started_at }}</span>
           {% endif %}
           <span class="logs-meta-sep" aria-hidden="true">&middot;</span>
+          {% if selected_file == 'initialize.log' %}
+          <span>{{ selected_file }} · <span id="logs-open-file-line-count">{{ result.total_lines }}</span> строк</span>
+          {% else %}
           <span title="Игровых строк: {{ round.gameplay_line_count }} из {{ round.line_count }}">{{ round.line_count }} строк</span>
+          {% endif %}
         </div>
       </div>
 
@@ -176,6 +181,7 @@
     {% set adv_count = (1 if (radius and radius > 0) else 0) + (1 if time_from else 0) + (1 if time_to else 0) + (1 if use_regex else 0) + (1 if mask_ips else 0) + (1 if not render_html else 0) + (selected_cats|length) %}
     {% set has_active_filters = (active_preset != 'gameplay') or q or ckey or (adv_count > 0) %}
     {% set drawer_open = (adv_count > 0) %}
+    {% set invalid_time_fields = result.invalid_time_fields if view_mode == 'stream' else () %}
     <div id="logs-round-toolbar" class="logs-panel-body {% if view_mode == 'map' %}logs-toolbar-compact{% else %}logs-sticky-toolbar{% endif %}">
       <form id="logs-filter-form" action="/logs/round/{{ round.round_uid }}" method="get">
         <input type="hidden" name="file" value="{{ selected_file }}">
@@ -232,7 +238,7 @@
           <div class="logs-drawer-controls">
             <div class="logs-field logs-field-xs">
               <label for="logs-radius-select" class="logs-label" title="Показывать логи других игроков в радиусе N тайлов вокруг позиции выбранного ckey">Радиус</label>
-              <select id="logs-radius-select" name="radius" class="logs-select">
+              <select id="logs-radius-select" name="radius" class="logs-select" {% if not active_ckey_norm %}disabled{% endif %}>
                 <option value="0" {% if not radius %}selected{% endif %}>Выкл</option>
                 {% set radius_presets = [3, 5, 7, 10, 15, 25, 50] %}
                 {% if radius and radius not in radius_presets %}
@@ -245,19 +251,24 @@
             </div>
             <div class="logs-field logs-field-xs">
               <label for="logs-time-from" class="logs-label" title="Начало интервала (ЧЧ:ММ)">Время с</label>
-              <input type="text" id="logs-time-from" name="time_from" value="{{ time_from }}" class="logs-input" placeholder="ЧЧ:ММ">
+              <input type="text" id="logs-time-from" name="time_from" value="{{ time_from }}" class="logs-input" placeholder="ЧЧ:ММ"
+                     aria-errormessage="logs-time-from-error" aria-invalid="{{ 'true' if 'time_from' in invalid_time_fields else 'false' }}">
+              <span id="logs-time-from-error" class="logs-field-error" role="alert" {% if 'time_from' not in invalid_time_fields %}hidden{% endif %}>Укажите время в формате ЧЧ:ММ или ЧЧ:ММ:СС.</span>
             </div>
             <div class="logs-field logs-field-xs">
               <label for="logs-time-to" class="logs-label" title="Конец интервала (ЧЧ:ММ)">Время по</label>
-              <input type="text" id="logs-time-to" name="time_to" value="{{ time_to }}" class="logs-input" placeholder="ЧЧ:ММ">
+              <input type="text" id="logs-time-to" name="time_to" value="{{ time_to }}" class="logs-input" placeholder="ЧЧ:ММ"
+                     aria-errormessage="logs-time-to-error" aria-invalid="{{ 'true' if 'time_to' in invalid_time_fields else 'false' }}">
+              <span id="logs-time-to-error" class="logs-field-error" role="alert" {% if 'time_to' not in invalid_time_fields %}hidden{% endif %}>Укажите время в формате ЧЧ:ММ или ЧЧ:ММ:СС.</span>
             </div>
             {% if view_mode != 'map' %}
             <div class="logs-field logs-field-xs">
               <label for="logs-per-page" class="logs-label">Строк</label>
               <select id="logs-per-page" name="per_page" class="logs-select">
-                <option value="100" {% if per_page == 100 %}selected{% endif %}>100</option>
-                <option value="200" {% if per_page == 200 %}selected{% endif %}>200</option>
-                <option value="500" {% if per_page == 500 %}selected{% endif %}>500</option>
+                {% set page_sizes = [100, 200, 500] %}
+                {% for size in (page_sizes if per_page in page_sizes else (page_sizes + [per_page])|sort) %}
+                <option value="{{ size }}" {% if per_page == size %}selected{% endif %}>{{ size }}</option>
+                {% endfor %}
               </select>
             </div>
             {% endif %}
@@ -289,7 +300,11 @@
         </div>
       </form>
 
-      <div id="logs-map-error" class="logs-alert logs-alert-error" role="alert" {% if not (view_mode == 'map' and result.regex_error) %}hidden{% endif %}>{{ result.regex_error or '' }}</div>
+      {% if view_mode == 'map' %}
+      <div id="logs-map-error" class="logs-alert logs-alert-error" role="alert" {% if not result.regex_error %}hidden{% endif %}>{{ result.regex_error or '' }}</div>
+      {% else %}
+      <div id="logs-stream-request-error" class="logs-alert logs-alert-error" role="alert" hidden></div>
+      {% endif %}
     </div>
 
     {% if view_mode == 'map' %}

@@ -207,6 +207,7 @@ class LogPageResult:
     started_at: Optional[str] = None
     ended_at: Optional[str] = None
     regex_error: Optional[str] = None
+    invalid_time_fields: Tuple[str, ...] = ()
 
 
 @dataclass
@@ -263,5 +264,5 @@ class _PreparedLogFilter:
     regex_error: Optional[str]
     from_sec: Optional[int]
     to_sec: Optional[int]
-    time_invalid: bool
+    invalid_time_fields: Tuple[str, ...]
     radius: int = 0

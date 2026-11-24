@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse, Response
 
 from core import discord_auth, logs_db, map_renderer
 from core.log_operations import run_log_operation, finish_thread
-from core.logs_db.reader import read_log_page
+from core.logs_db.reader import read_log_context, read_log_page
 from core.log_jobs import get_job, logs_status, map_job_status
 from core.log_parser.filters import export_filtered_game_log_to_file, mask_log_to_file
 from core.log_parser import (
@@ -23,7 +23,6 @@ from core.log_parser import (
     filter_game_log_file,
     mask_sensitive_text,
     parse_qdel_log_file,
-    read_context_lines,
 )
 from web.logs_routes.deps import LogsRouteContext
 
@@ -176,8 +175,8 @@ def register_api_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
     ):
         await ctx.require_api_user(request)
         _rnd, file_path = await ctx.resolve_round_and_file(round_uid, file)
-        entries = await asyncio.to_thread(
-            read_context_lines, file_path, line, radius=radius, mask_ips=mask_ips, render_html=False
+        entries = await read_log_context(
+            round_uid, file_path, line, radius=radius, mask_ips=mask_ips, render_html=False
         )
         return {
             "round_uid": round_uid,

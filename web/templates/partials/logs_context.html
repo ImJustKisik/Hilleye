@@ -2,7 +2,7 @@
   <div class="logs-context-bar">
     <span class="mono-val">Контекст <strong>#L{{ target_line }}</strong> (&plusmn;{{ radius }}, все категории)</span>
     <div class="logs-context-actions">
-      <a href="/logs/round/{{ round.round_uid }}?file={{ selected_file|urlencode }}&preset=all&focus={{ target_line }}#L{{ target_line }}"
+      <a href="/logs/round/{{ round.round_uid }}?{{ unfiltered_line_query }}&focus={{ target_line }}#L{{ target_line }}"
          class="logs-btn logs-btn-sm">Открыть в раунде</a>
       {% if inline %}
       <button type="button" class="logs-btn logs-btn-sm js-close-inline-context" title="Свернуть контекст (Esc)">Скрыть</button>
@@ -19,7 +19,7 @@
         <div>{{ r.safe_html | safe }}</div>
         {% if r.coords %}
         <div class="log-meta-badges">
-          <a href="/logs/round/{{ round.round_uid }}?file={{ selected_file|urlencode }}&preset=all&view=map&z={{ r.coords.z }}&tx={{ r.coords.x }}&ty={{ r.coords.y }}&focus={{ r.line_no }}"
+          <a href="/logs/round/{{ round.round_uid }}?{{ unfiltered_line_query }}&view=map&z={{ r.coords.z }}&tx={{ r.coords.x }}&ty={{ r.coords.y }}&focus={{ r.line_no }}"
              class="log-coord-badge"
              title="Показать точку ({{ r.coords.x }}, {{ r.coords.y }}, Z{{ r.coords.z }}) на карте">
             {{ r.coords.x }}, {{ r.coords.y }}, Z{{ r.coords.z }}{% if r.coords.area %} &middot; {{ r.coords.area }}{% endif %}
@@ -27,7 +27,6 @@
         </div>
         {% endif %}
       </div>
-      <span></span>
     </div>
     {% endfor %}
   </div>

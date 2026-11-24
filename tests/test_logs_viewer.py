@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import io
 import json
+from html import unescape
 from pathlib import Path
 import re
 import tarfile
 import time
 import zipfile
+from urllib.parse import parse_qs, urlsplit
 
 import aiosqlite
 from httpx import ASGITransport, AsyncClient
@@ -590,7 +592,8 @@ async def test_logs_viewer_auth_whitelist_csrf_and_e2e(logs_env):
         focus_hidden = await client.get(f"/logs/round/{uid}?focus=4")
         assert focus_hidden.status_code == 200
         assert "скрыта активным фильтром" in focus_hidden.text
-        assert "preset=all&amp;focus=4#L4" in focus_hidden.text or "preset=all&focus=4#L4" in focus_hidden.text
+        recovery_href = re.search(r'href="([^"]*#L4)" class="server-link"', focus_hidden.text).group(1)
+        assert parse_qs(urlsplit(unescape(recovery_href)).query)["preset"] == ["all"]
 
         # Download filtered log
         dl = await client.get(f"/api/v1/logs/rounds/{uid}/download?mode=filtered&preset=admin_combat&mask_ips=1")
@@ -1279,3 +1282,48 @@ async def test_logs_ux_overhaul_partials_and_csp(logs_env):
             assert "<style" not in html_text.lower()
             assert "<script>" not in html_text.lower()
             assert ' style="' not in html_text.lower()
+
+
+async def test_stream_navigation_display_options_and_validation(logs_env):
+    cfg = logs_env["cfg"]
+    (logs_env["round1_dir"] / "initialize.log").write_text("First\nSecond\n", encoding="utf-8")
+    await logs_db.sync_and_index_rounds(cfg.resolved_logs_root_dir(), cfg.resolved_logs_uploads_dir())
+    uid = (await logs_db.list_rounds())[0][0]["round_uid"]
+    url = f"/logs/round/{uid}"
+
+    async with AsyncClient(transport=ASGITransport(app=web_app.app), base_url="http://test") as client:
+        await _login_via_discord(client, "111111111111111111", "admin_user")
+        hx = {"HX-Request": "true"}
+        params = {"mask_ips": 1, "html": 0, "per_page": 25, "focus": 4, "radius": 15}
+        partial = await client.get(url, params=params, headers=hx)
+        assert partial.status_code == 200
+        assert partial.headers["cache-control"] == "private, no-store"
+        assert "<!DOCTYPE html>" not in partial.text
+        assert "data-stream-results" in partial.text and "radius=15" not in partial.text
+        restored = await client.get(url, params=params, headers={**hx, "HX-History-Restore-Request": "true"})
+        assert 'hx-history="false"' in restored.text and 'id="logs-filter-form"' in restored.text
+        assert re.search(r'<option value="25"\s+selected>25</option>', restored.text)
+        assert re.search(r'<select id="logs-radius-select"[^>]+disabled', restored.text)
+
+        invalid = await client.get(url, params={"time_from": "25:00"})
+        assert 'aria-errormessage="logs-time-from-error" aria-invalid="true"' in invalid.text
+        assert 'aria-errormessage="logs-time-to-error" aria-invalid="false"' in invalid.text
+        assert "Нет строк по выбранным фильтрам." not in invalid.text
+        invalid_partial = await client.get(url, params={"time_to": "25:00"}, headers=hx)
+        assert 'data-invalid-time-fields="time_to"' in invalid_partial.text
+        invalid_export = await client.get(f"/api/v1/logs/rounds/{uid}/download", params={"time_to": "25:00"})
+        assert invalid_export.status_code == 400 and "ЧЧ:ММ" in invalid_export.json()["detail"]
+
+        missing = await client.get(url, params={"focus": 10**20})
+        assert "нет в этом файле" in missing.text and "Открыть в режиме" not in missing.text
+        init = await client.get(url, params={"file": "initialize.log"})
+        assert 'id="logs-open-file-line-count">2</span>' in init.text
+
+        context = await client.get(f"{url}/context", params={"line": 5, "mask_ips": 1, "html": 0})
+        copy_href = re.search(r'data-copy-text="([^"]*#L5)"', partial.text).group(1)
+        recovery_href = re.search(r'href="([^"]*#L4)" class="server-link"', partial.text).group(1)
+        context_href = re.search(r'href="([^"]*#L5)"', context.text).group(1)
+        for href in (copy_href, recovery_href, context_href):
+            query = parse_qs(urlsplit(unescape(href)).query)
+            assert query["preset"] == ["all"]
+            assert query["mask_ips"] == ["1"] and query["html"] == ["0"]

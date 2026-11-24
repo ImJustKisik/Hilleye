@@ -1887,10 +1887,22 @@
   .log-row.is-search-hit {
     grid-template-columns: 56px 90px minmax(0, 1fr);
   }
+  .logs-round-page .log-msg-cell {
+    grid-column: 1 / -1;
+  }
   .log-row-actions {
     grid-column: 1 / -1;
     opacity: 1;
   }
+}
+
+.logs-field-error {
+  color: var(--text-primary);
+  font-size: 0.75rem;
+}
+
+.logs-input[aria-invalid="true"] {
+  border-color: var(--accent-red);
 }
 
 @media (max-width: 640px) {

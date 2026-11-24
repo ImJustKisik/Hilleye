@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 
 from core import celadon_logs, discord_auth, logs_db, map_renderer
 from core.log_operations import run_log_operation
-from core.logs_db.reader import read_log_page
+from core.logs_db.reader import read_log_context, read_log_page
 from core.byond_topic import normalize_ckey
 from core.log_parser import (
     CATEGORY_META,
@@ -20,7 +20,6 @@ from core.log_parser import (
     filter_game_log_file,
     mask_sensitive_text,
     parse_qdel_log_file,
-    read_context_lines,
     sanitize_byond_html,
     scan_raw_files_for_query,
 )
@@ -34,6 +33,10 @@ from web.logs_routes.viewmodels import (
     _parse_bool_flag,
     _round_time_vm,
 )
+
+
+def _unfiltered_line_query(file: str, mask_ips: bool, render_html: bool) -> str:
+    return urlencode({"file": file, "preset": "all", "mask_ips": int(mask_ips), "html": int(render_html)})
 
 
 def register_viewer_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
@@ -234,13 +237,16 @@ def register_viewer_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
         mask_flag = _parse_bool_flag(mask_ips, default=False)
         render_html = _parse_bool_flag(html, default=True)
         view_mode = "map" if view == "map" else "stream"
+        active_ckey_norm = normalize_ckey(ckey)
+        if not active_ckey_norm:
+            radius = 0
         selected_cats = [c.strip().upper() for c in cat if c and c.strip()]
         active_preset = preset if preset in LOG_PRESETS else "gameplay"
         cache_dir = config.resolved_maps_cache_dir()
         map_manifest = map_renderer.get_map_manifest(cache_dir)
 
         result = await read_log_page(
-            request, ctx.get_config_fn(), round_uid, file_path,
+            request, config, round_uid, file_path,
             preset=active_preset,
             categories=selected_cats or None,
             ckey=ckey,
@@ -256,7 +262,6 @@ def register_viewer_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
             render_html=render_html,
         )
 
-        active_ckey_norm = normalize_ckey(ckey) if ckey else ""
         entries_vm = [
             _entry_to_vm(entry, cache_dir, focus=focus, active_ckey_norm=active_ckey_norm)
             for entry in result.entries
@@ -292,7 +297,8 @@ def register_viewer_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
 
         template_name = (
             "partials/logs_round_stream.html"
-            if request.headers.get("HX-Request") == "true" and view_mode == "stream"
+            if view_mode == "stream" and request.headers.get("HX-Request") == "true"
+            and request.headers.get("HX-History-Restore-Request") != "true"
             else "logs_round.html"
         )
 
@@ -330,6 +336,7 @@ def register_viewer_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
                 "target_y": ty,
                 "map_manifest": map_manifest,
                 "base_query_str": base_query_str,
+                "unfiltered_line_query": _unfiltered_line_query(selected_file, mask_flag, render_html),
             },
         )
 
@@ -351,8 +358,8 @@ def register_viewer_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
         mask_flag = _parse_bool_flag(mask_ips, default=False)
         render_html = _parse_bool_flag(html, default=True)
         inline_flag = _parse_bool_flag(inline, default=False)
-        context_entries = await asyncio.to_thread(
-            read_context_lines,
+        context_entries = await read_log_context(
+            round_uid,
             file_path,
             line,
             radius=radius,
@@ -372,6 +379,7 @@ def register_viewer_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
                 "radius": radius,
                 "rows": rows,
                 "inline": inline_flag,
+                "unfiltered_line_query": _unfiltered_line_query(file, mask_flag, render_html),
             },
         )
 

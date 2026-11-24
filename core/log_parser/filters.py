@@ -6,7 +6,7 @@ from datetime import datetime
 from html import escape as html_escape
 from pathlib import Path
 import re
-from typing import Any, Dict, Iterator, List, Optional, Pattern, Sequence, Tuple
+from typing import Any, BinaryIO, Dict, Iterator, List, Optional, Pattern, Sequence, Tuple
 
 from core.byond_topic import normalize_ckey
 from core.log_parser.extractors import (
@@ -61,18 +61,21 @@ def _decode_log_line(raw_line: bytes) -> str:
 
 def iter_parsed_file_lines(file_path: Path) -> Iterator[Tuple[int, str, str, str, bool]]:
     """Stream physical lines from a log file yielding (line_no, timestamp, category, raw_message, is_continuation)."""
-    prev_ts = ""
-    prev_cat = "SYSTEM"
     with file_path.open("rb") as fh:
-        for line_no, raw_bytes in enumerate(fh, 1):
-            raw_line = _decode_log_line(raw_bytes)
-            if line_no == 1 and raw_line.startswith("\ufeff"):
-                raw_line = raw_line.lstrip("\ufeff")
-            ts, cat, msg, is_cont = parse_raw_line(line_no, raw_line, prev_ts, prev_cat)
-            if not is_cont:
-                prev_ts = ts
-                prev_cat = cat
-            yield line_no, ts, cat, msg, is_cont
+        yield from _iter_parsed_log_stream(fh)
+
+
+def _iter_parsed_log_stream(
+    stream: BinaryIO, *, first_line: int = 1, prev_ts: str = "", prev_cat: str = "SYSTEM",
+) -> Iterator[Tuple[int, str, str, str, bool]]:
+    for line_no, raw_bytes in enumerate(stream, first_line):
+        raw_line = _decode_log_line(raw_bytes)
+        if line_no == 1:
+            raw_line = raw_line.lstrip("\ufeff")
+        ts, cat, msg, is_cont = parse_raw_line(line_no, raw_line, prev_ts, prev_cat)
+        if not is_cont:
+            prev_ts, prev_cat = ts, cat
+        yield line_no, ts, cat, msg, is_cont
 
 
 def inspect_game_log_summary(file_path: Path) -> Dict[str, Any]:
@@ -341,7 +344,7 @@ def _prepare_log_filter(
         regex_error=regex_error,
         from_sec=from_sec,
         to_sec=to_sec,
-        time_invalid=from_inv or to_inv,
+        invalid_time_fields=tuple(name for name, invalid in (("time_from", from_inv), ("time_to", to_inv)) if invalid),
         radius=clamped_radius,
     )
 
@@ -398,7 +401,7 @@ def _evaluate_line_filter(
 ) -> Tuple[bool, Optional[str], Optional[Tuple[str, str]], int]:
     if not category_matches_filters(cat, preset=filt.preset, selected_categories=filt.categories):
         return False, None, None, anchor_hint
-    if not _time_matches_range(ts, filt.from_sec, filt.to_sec, filt.time_invalid):
+    if not _time_matches_range(ts, filt.from_sec, filt.to_sec, bool(filt.invalid_time_fields)):
         return False, None, None, anchor_hint
 
     if not filt.ckey_norm and not filt.q_lower and filt.pattern is None:
@@ -466,7 +469,7 @@ def _line_matches_filters(
         regex_error=None,
         from_sec=from_sec,
         to_sec=to_sec,
-        time_invalid=from_inv or to_inv,
+        invalid_time_fields=tuple(name for name, invalid in (("time_from", from_inv), ("time_to", to_inv)) if invalid),
     )
     matched, _, _, _ = _evaluate_line_filter(ts, cat, raw_msg, filt)
     return matched
@@ -505,7 +508,7 @@ def filter_game_log_file(
     )
     anchors = (
         _collect_ckey_coord_anchors(file_path, filt.ckey_norm)
-        if (filt.ckey_norm and filt.radius > 0 and not filt.regex_error)
+        if (filt.ckey_norm and filt.radius > 0 and not filt.regex_error and not filt.invalid_time_fields)
         else []
     )
     anchor_hint = 0
@@ -588,6 +591,7 @@ def filter_game_log_file(
         started_at=acc.started_at,
         ended_at=acc.ended_at,
         regex_error=filt.regex_error,
+        invalid_time_fields=filt.invalid_time_fields,
     )
 
 
@@ -617,6 +621,8 @@ def iter_export_filtered_game_log(
     )
     if filt.regex_error:
         raise ValueError(filt.regex_error)
+    if filt.invalid_time_fields:
+        raise ValueError("Укажите время в формате ЧЧ:ММ или ЧЧ:ММ:СС.")
 
     anchors = (
         _collect_ckey_coord_anchors(file_path, filt.ckey_norm)
@@ -681,10 +687,18 @@ def read_context_lines(
     """Read [target_line - radius .. target_line + radius] lines regardless of category filter."""
     target_line = max(1, int(target_line))
     radius = max(1, min(int(radius), 100))
-    lo = max(1, target_line - radius)
-    hi = target_line + radius
+    return _build_context_entries(
+        iter_parsed_file_lines(file_path), max(1, target_line - radius), target_line + radius,
+        mask_ips=mask_ips, render_html=render_html,
+    )
+
+
+def _build_context_entries(
+    lines: Iterator[Tuple[int, str, str, str, bool]], lo: int, hi: int, *,
+    mask_ips: bool, render_html: bool,
+) -> List[ParsedLogLine]:
     entries: List[ParsedLogLine] = []
-    for line_no, ts, cat, msg, is_cont in iter_parsed_file_lines(file_path):
+    for line_no, ts, cat, msg, is_cont in lines:
         if line_no < lo:
             continue
         if line_no > hi:
