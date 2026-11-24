@@ -204,6 +204,15 @@
   min-width: 840px;
 }
 
+.logs-index .logs-celadon-table {
+  min-width: 0;
+}
+
+.logs-index .logs-celadon-table #celadon-files .logs-row-quick-actions {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
+
 .logs-index .logs-rounds-table :is(th, td) {
   display: table-cell;
   padding: 8px 12px;

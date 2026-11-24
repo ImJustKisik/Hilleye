@@ -433,25 +433,26 @@ async def test_celadon_catalog_import_and_file_cap(logs_env, monkeypatch):
     def upstream(request):
         path = str(request.url).removeprefix(celadon_logs.ROOT_URL)
         upstream_requests.append(path)
-        if path == "":
-            return httpx.Response(
-                200, headers={"Content-Type": "text/html"},
-                text=f'<a href="{round_path}">Deep link</a><a href="2026/">2026</a>'
-                '<a href="../">Parent</a><a href="https://example.org/a.zip">External</a>'
-                '<a href="%2e%2e/">Encoded parent</a><a href="redirect.log">Redirect</a>',
-            )
-        if path == round_path:
-            return httpx.Response(
-                200, headers={"Content-Type": "text/html"},
-                text='<a href="game.log">game.log</a><a href="notes.html">notes.html</a>',
-            )
+        directories = {
+            "": '<a href="2025/">2025</a><a href="2026/">2026</a>',
+            "2026/": '<a href="10/">10</a><a href="11/">11</a>',
+            "2026/11/": '<a href="01/">01</a><a href="08/">08</a>',
+            "2026/11/08/": (
+                '<a href="round-0fd7d409/">Первый</a><a href="round-abcd1234/">Второй</a>'
+                '<a href="misc/">Разное</a><a href="https://example.org/round-external/">External</a>'
+                '<a href="%2e%2e/">Parent</a>'
+            ),
+            round_path: '<a href="game.log">game.log</a><a href="notes.html">notes.html</a>',
+        }
+        if path in directories:
+            return httpx.Response(200, headers={"Content-Type": "text/html"}, text=directories[path])
         if path == log_path:
             return httpx.Response(200, content=SAMPLE_GAME_LOG.encode("utf-8"))
         if path == "large.log":
             return httpx.Response(200, stream=LogStream())
         if path == "redirect.log":
             return httpx.Response(302, headers={"Location": "https://example.org/redirected.log"})
-        if path == "blocked/":
+        if path == "2026/11/09/":
             return httpx.Response(403)
         return httpx.Response(404)
 
@@ -460,31 +461,45 @@ async def test_celadon_catalog_import_and_file_cap(logs_env, monkeypatch):
         assert (await client.get("/logs/celadon")).status_code == 401
         assert not upstream_requests
         await _login_via_discord(client, "111111111111111111", "admin")
-        root = await client.get("/logs/celadon")
+        dashboard = await client.get("/logs")
+        assert "Показать Celadon" in dashboard.text
+        assert 'href="/logs/celadon"' not in dashboard.text
+        assert not upstream_requests
+        root = await client.get("/logs/celadon", follow_redirects=True)
         assert root.status_code == 200
-        assert "?path=2026/" in root.text
+        assert root.url.path == "/logs"
+        assert 'type="date"' in root.text and 'value="2026-11-08"' in root.text
+        assert "08.11.2026" in root.text and "#0fd7d409" in root.text and "#abcd1234" in root.text
         assert "example.org" not in root.text
-        assert round_path not in root.text
+        assert "Разное" not in root.text
+        assert upstream_requests == ["", "2026/", "2026/11/", "2026/11/08/"]
 
-        listing = await client.get("/logs/celadon", params={"path": round_path})
+        matches = await client.get("/logs", params={"source": "celadon", "date": "2026-11-08", "q": "#0FD7"})
+        assert "#0fd7d409" in matches.text and "#abcd1234" not in matches.text
+        missing = await client.get("/logs", params={"source": "celadon", "date": "2026-11-10"})
+        assert "Раунды по заданным фильтрам не найдены" in missing.text
+
+        listing = await client.get("/logs/celadon", params={"path": round_path}, follow_redirects=True)
         assert listing.status_code == 200
+        assert listing.url.path == "/logs"
         assert log_path in listing.text
         assert "notes.html" not in listing.text
+        requests_before_import = upstream_requests.copy()
         csrf = re.search(r'name="csrf_token" value="([^"]+)"', listing.text).group(1)
         assert (await client.post("/logs/celadon", data={"path": log_path})).status_code == 403
-        assert upstream_requests == ["", round_path]
+        assert upstream_requests == requests_before_import
 
         headers = {"Accept": "application/json"}
         for path in ("../game.log", "%2e%2e/game.log", "https://example.org/evil.log"):
             response = await client.post("/logs/celadon", data={"path": path, "csrf_token": csrf}, headers=headers)
             assert response.status_code == 400
-        assert upstream_requests == ["", round_path]
+        assert upstream_requests == requests_before_import
 
         for path, status in (("redirect.log", 502), ("large.log", 413)):
             response = await client.post("/logs/celadon", data={"path": path, "csrf_token": csrf}, headers=headers)
             assert response.status_code == status
-        blocked = await client.get("/logs/celadon", params={"path": "blocked/"})
-        assert blocked.status_code == 502 and "белом списке" in blocked.text
+        blocked = await client.get("/logs", params={"source": "celadon", "date": "2026-11-09"})
+        assert "белом списке" in blocked.text
 
         manual = await client.post(
             "/logs/upload", data={"csrf_token": csrf},

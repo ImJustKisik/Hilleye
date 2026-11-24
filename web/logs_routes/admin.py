@@ -533,35 +533,14 @@ def register_admin_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
         )
         return RedirectResponse(f"/logs/admin?notice={msg}", status_code=303)
 
-    async def render_celadon(request, user, path, *, entries=(), error=None):
-        return ctx.templates.TemplateResponse(
-            request=request,
-            name="logs_celadon.html",
-            context={
-                **await ctx.get_shell_context_fn(),
-                "user": user,
-                "path": path,
-                "parent": path.rstrip("/").rpartition("/")[0],
-                "entries": entries,
-                "error": error.detail if error else "",
-                "max_upload_mb": ctx.get_config_fn().logs_max_upload_mb,
-            },
-            status_code=error.status_code if error else 200,
-            headers=error.headers if error else None,
-        )
-
     @router.get("/logs/celadon")
     async def browse_celadon(request: Request, path: str = Query(default="", max_length=1000)):
-        user, err_resp = await ctx.require_html_user(request)
+        _, err_resp = await ctx.require_html_user(request)
         if err_resp is not None:
             return err_resp
-        try:
-            entries = await celadon_logs.list_directory(path)
-        except ValueError as exc:
-            return await render_celadon(request, user, "", error=HTTPException(400, str(exc)))
-        except HTTPException as exc:
-            return await render_celadon(request, user, path, error=exc)
-        return await render_celadon(request, user, path, entries=entries)
+        date, folder = celadon_logs.round_location(path)
+        params = urlencode(dict(source="celadon", date=date, round_folder=folder))
+        return RedirectResponse(f"/logs?{params}#logs-rounds-title", status_code=303)
 
     @router.post("/logs/celadon")
     async def import_celadon(
@@ -583,8 +562,9 @@ def register_admin_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
             error = exc
         if _prefers_json(request):
             raise error
-        directory, _, _ = path.rpartition("/")
-        return await render_celadon(request, user, f"{directory}/" if directory else "", error=error)
+        date, folder = celadon_logs.round_location(path)
+        params = urlencode(dict(source="celadon", date=date, round_folder=folder, import_error=str(error.detail)[:1000]))
+        return RedirectResponse(f"/logs?{params}#logs-rounds-title", status_code=303)
 
     @router.post("/logs/upload")
     async def upload_logs(

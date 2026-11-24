@@ -2686,7 +2686,7 @@
     function submitRoundsDirectory() {
       syncResetAndChips();
       var container = document.getElementById("logs-rounds-container");
-      if (container && window.htmx && typeof window.htmx.ajax === "function") {
+      if (!usesCeladon() && container && window.htmx && typeof window.htmx.ajax === "function") {
         var params = buildCleanFilterParams(form);
         var qs = params.toString();
         var action = form.getAttribute("action") || "/logs";
@@ -2698,12 +2698,16 @@
       }
     }
 
+    function usesCeladon() {
+      return form.dataset.roundsSource === "celadon" || (sourceSelect && sourceSelect.value === "celadon");
+    }
+
     chips.forEach(function (chip) {
       if (chip.dataset.bound) return;
       chip.dataset.bound = "1";
       chip.addEventListener("click", function () {
         var val = chip.dataset.quickDate || "";
-        if (val && !Array.prototype.some.call(dateSelect.options, function (o) { return o.value === val; })) {
+        if (val && dateSelect.options && !Array.prototype.some.call(dateSelect.options, function (o) { return o.value === val; })) {
           var opt = document.createElement("option");
           opt.value = val;
           opt.textContent = val;
@@ -2719,7 +2723,7 @@
       var qDebounce = null;
       form.addEventListener("submit", function (ev) {
         var container = document.getElementById("logs-rounds-container");
-        if (container && window.htmx && typeof window.htmx.ajax === "function") {
+        if (!usesCeladon() && container && window.htmx && typeof window.htmx.ajax === "function") {
           ev.preventDefault();
           submitRoundsDirectory();
         }
@@ -2730,7 +2734,7 @@
         qInput.addEventListener("input", function () {
           syncResetAndChips();
           clearTimeout(qDebounce);
-          qDebounce = setTimeout(submitRoundsDirectory, 280);
+          if (!usesCeladon()) qDebounce = setTimeout(submitRoundsDirectory, 280);
         });
       }
     }

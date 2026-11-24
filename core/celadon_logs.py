@@ -1,8 +1,10 @@
 """Browse and download files from the IP-restricted SierraBay log directory."""
 
 from contextlib import asynccontextmanager
+from datetime import date
 from html.parser import HTMLParser
 from pathlib import Path
+import re
 from time import monotonic
 from urllib.parse import quote, unquote, urljoin, urlsplit
 
@@ -111,6 +113,44 @@ async def list_directory(path):
         parser.feed(page.decode("utf-8", errors="replace"))
         parser.close()
     return sorted(parser.entries, key=lambda item: (not item[0].endswith("/"), item[0].casefold()))
+
+
+def round_location(path: str) -> tuple[str, str]:
+    year, month, day, folder, *_ = path.split("/", 4) + [""] * 4
+    if not re.fullmatch(r"[0-9]{4}/[0-9]{2}/[0-9]{2}", f"{year}/{month}/{day}"):
+        return "", ""
+    try:
+        day = date.fromisoformat(f"{year}-{month}-{day}").isoformat()
+    except ValueError:
+        return "", ""
+    return day, folder if folder.startswith("round-") else ""
+
+
+async def latest_day() -> str:
+    path = ""
+    for pattern in (r"[0-9]{4}/", r"(?:0[1-9]|1[0-2])/", r"(?:0[1-9]|[12][0-9]|3[01])/"):
+        entries = await list_directory(path)
+        path = max((entry for name, entry in entries if re.fullmatch(pattern, name)), default="")
+        if not path:
+            return ""
+    return round_location(path)[0]
+
+
+async def list_rounds(day: str):
+    if not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", day):
+        raise ValueError("Введите дату в формате ГГГГ-ММ-ДД.")
+    date.fromisoformat(day)
+    try:
+        entries = await list_directory(day.replace("-", "/") + "/")
+    except HTTPException as exc:
+        if exc.status_code == 404:
+            return []
+        raise
+    return [
+        {"round_id": name.removesuffix("/").removeprefix("round-"), "folder": name.rstrip("/"), "path": path}
+        for name, path in entries
+        if name.startswith("round-") and name.endswith("/") and len(name) > len("round-/")
+    ]
 
 
 async def download(path: str, destination: Path, *, max_mb: int) -> str:

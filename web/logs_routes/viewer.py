@@ -9,7 +9,7 @@ from urllib.parse import urlencode
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
-from core import discord_auth, logs_db, map_renderer
+from core import celadon_logs, discord_auth, logs_db, map_renderer
 from core.log_operations import run_log_operation
 from core.logs_db.reader import read_log_page
 from core.byond_topic import normalize_ckey
@@ -45,6 +45,8 @@ def register_viewer_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
         q: str = "",
         page: int = Query(default=1, ge=1),
         notice: str = "",
+        round_folder: str = Query(default="", max_length=1000),
+        import_error: str = Query(default="", max_length=1000),
     ):
         user, err_resp = await ctx.require_html_user(request)
         if err_resp is not None:
@@ -54,17 +56,41 @@ def register_viewer_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
         shell = await ctx.get_shell_context_fn()
         per_page = 40
         offset = (page - 1) * per_page
-        rounds, total_rounds = await logs_db.list_rounds(
-            date_filter=date,
-            source_filter=source,
-            q=q,
-            limit=per_page,
-            offset=offset,
-        )
-        for r in rounds:
-            r["size_label"] = _fmt_bytes(int(r.get("game_log_size") or 0) + int(r.get("qdel_log_size") or 0))
-            r["uploaded_at_str"] = _fmt_ts_utc(r.get("uploaded_at"))
-            r["duration_str"] = _round_time_vm(r).get("duration", "")
+        celadon_error = ""
+        if source == "celadon":
+            rounds, total_rounds = [], 0
+            try:
+                date = date or await celadon_logs.latest_day()
+                catalog = await celadon_logs.list_rounds(date) if date else []
+                search = q.strip().casefold().removeprefix("#").removeprefix("round-")
+                matches = [item for item in catalog if search in item["round_id"].casefold()]
+                total_rounds = len(matches)
+                rounds = matches[offset:offset + per_page]
+                for item in rounds:
+                    item["files_url"] = "/logs?" + urlencode(
+                        dict(source=source, date=date, q=q, page=page, round_folder=item["folder"])
+                    ) + "#celadon-files"
+                    if item["folder"] == round_folder:
+                        item["files"] = [
+                            (name, path) for name, path in await celadon_logs.list_directory(item["path"])
+                            if not path.endswith("/")
+                        ]
+            except ValueError:
+                celadon_error = "Укажите корректную дату."
+            except HTTPException as exc:
+                celadon_error = exc.detail
+        else:
+            rounds, total_rounds = await logs_db.list_rounds(
+                date_filter=date,
+                source_filter=source,
+                q=q,
+                limit=per_page,
+                offset=offset,
+            )
+            for r in rounds:
+                r["size_label"] = _fmt_bytes(int(r.get("game_log_size") or 0) + int(r.get("qdel_log_size") or 0))
+                r["uploaded_at_str"] = _fmt_ts_utc(r.get("uploaded_at"))
+                r["duration_str"] = _round_time_vm(r).get("duration", "")
 
         stats = await logs_db.get_logs_stats()
         stats["total_size_label"] = _fmt_bytes(stats["total_bytes"])
@@ -101,6 +127,9 @@ def register_viewer_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
                 "today_utc": today_utc,
                 "yesterday_utc": yesterday_utc,
                 "notice": notice,
+                "celadon_error": celadon_error,
+                "celadon_date_label": ".".join(reversed(date.split("-"))) if source == "celadon" else "",
+                "import_error": import_error if source == "celadon" else "",
                 "logs_root_dir": str(root_dir) if root_dir else "",
                 "root_dir_exists": root_dir_exists,
                 "max_upload_mb": config.logs_max_upload_mb,

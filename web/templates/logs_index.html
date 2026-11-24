@@ -3,8 +3,8 @@
 {% block language %}ru{% endblock %}
 {% block extra_head %}
 <link rel="stylesheet" href="/static/css/logs.css">
-<link rel="stylesheet" href="/static/css/logs-index.css">
-<script src="/static/js/logs.js" defer></script>
+<link rel="stylesheet" href="/static/css/logs-index.css?v=celadon-rounds">
+<script src="/static/js/logs.js?v=celadon-rounds" defer></script>
 <script src="/static/js/log-jobs.js" defer></script>
 {% endblock %}
 
@@ -91,14 +91,19 @@
   <section class="panel" aria-labelledby="logs-rounds-title">
     <div class="panel-header">
       <h2 class="panel-title" id="logs-rounds-title">Раунды</h2>
+      {% if source_filter == 'celadon' %}
+      <span class="logs-archive-size">Celadon · до {{ max_upload_mb }} МБ на файл</span>
+      {% else %}
       <span class="logs-archive-size">{{ stats.total_size_label }} &middot; {{ stats.indexed_entries|comma }} строк в индексе</span>
+      <a class="logs-btn logs-btn-sm" href="/logs?source=celadon{% if date_filter %}&amp;date={{ date_filter|urlencode }}{% endif %}#logs-rounds-title">Показать Celadon</a>
+      {% endif %}
     </div>
     <div class="logs-toolbar-compact">
       <div class="logs-quick-chips" role="group" aria-label="Быстрый выбор даты (UTC)">
-        <button type="button" class="logs-quick-chip {% if not date_filter %}is-active{% endif %}" data-quick-date="" aria-pressed="{{ 'true' if not date_filter else 'false' }}">Все даты</button>
+        <button type="button" class="logs-quick-chip {% if not date_filter %}is-active{% endif %}" data-quick-date="" aria-pressed="{{ 'true' if not date_filter else 'false' }}">{{ 'Последняя дата' if source_filter == 'celadon' else 'Все даты' }}</button>
         <button type="button" class="logs-quick-chip {% if date_filter == today_utc %}is-active{% endif %}" data-quick-date="{{ today_utc }}" aria-pressed="{{ 'true' if date_filter == today_utc else 'false' }}">Сегодня</button>
         <button type="button" class="logs-quick-chip {% if date_filter == yesterday_utc %}is-active{% endif %}" data-quick-date="{{ yesterday_utc }}" aria-pressed="{{ 'true' if date_filter == yesterday_utc else 'false' }}">Вчера</button>
-        {% for d in stats.dates[:3] %}
+        {% for d in stats.dates[:3] if source_filter != 'celadon' %}
           {% if d.round_date != today_utc and d.round_date != yesterday_utc %}
           <button type="button" class="logs-quick-chip {% if date_filter == d.round_date %}is-active{% endif %}" data-quick-date="{{ d.round_date }}" aria-pressed="{{ 'true' if date_filter == d.round_date else 'false' }}">{{ d.round_date }} ({{ d.cnt }})</button>
           {% endif %}
@@ -108,9 +113,13 @@
       <form id="logs-rounds-filter-form"
             action="/logs"
             method="get"
+            data-rounds-source="{{ source_filter }}"
             class="logs-form-grid">
         <div class="logs-field logs-field-md">
           <label for="logs-rounds-date" class="logs-label">Дата (UTC)</label>
+          {% if source_filter == 'celadon' %}
+          <input type="date" id="logs-rounds-date" name="date" class="logs-input" value="{{ date_filter }}">
+          {% else %}
           <select id="logs-rounds-date" name="date" class="logs-select">
             <option value="">Все даты</option>
             {% if date_filter and date_filter not in (stats.dates|map(attribute='round_date')|list) %}
@@ -120,17 +129,19 @@
             <option value="{{ d.round_date }}" {% if date_filter == d.round_date %}selected{% endif %}>{{ d.round_date }} ({{ d.cnt }})</option>
             {% endfor %}
           </select>
+          {% endif %}
         </div>
         <div class="logs-field logs-field-md">
           <label for="logs-rounds-source" class="logs-label">Источник</label>
           <select id="logs-rounds-source" name="source" class="logs-select">
-            <option value="">Все источники</option>
+            <option value="">Все в индексе</option>
             <option value="disk" {% if source_filter == 'disk' %}selected{% endif %}>Диск</option>
             <option value="upload" {% if source_filter == 'upload' %}selected{% endif %}>Загруженные</option>
+            <option value="celadon" {% if source_filter == 'celadon' %}selected{% endif %}>Celadon</option>
           </select>
         </div>
         <div class="logs-field">
-          <label for="logs-rounds-q" class="logs-label">ID раунда или примечание</label>
+          <label for="logs-rounds-q" class="logs-label">{{ 'ID раунда за выбранную дату' if source_filter == 'celadon' else 'ID раунда или примечание' }}</label>
           <input type="text" id="logs-rounds-q" name="q" value="{{ q_filter }}" class="logs-input">
         </div>
         <button type="submit" class="logs-btn">Применить</button>

@@ -2,7 +2,51 @@
 <strong id="logs-rounds-header-count" class="logs-count-em mono-val" hx-swap-oob="true">{{ total_rounds|comma }}</strong>
 {% endif %}
 
-{% if rounds %}
+{% if import_error or celadon_error %}
+<div class="logs-panel-body">
+  {% if import_error %}<div class="logs-alert logs-alert-error" role="alert">{{ import_error }}</div>{% endif %}
+  {% if celadon_error %}<div class="logs-alert logs-alert-warn" role="alert">{{ celadon_error }}</div>{% endif %}
+</div>
+{% endif %}
+
+{% if rounds and source_filter == 'celadon' %}
+<div class="logs-table-wrap" tabindex="0" role="region" aria-label="Раунды Celadon">
+  <table class="logs-table logs-rounds-table logs-celadon-table">
+    <thead>
+      <tr><th scope="col">Дата (UTC)</th><th scope="col">Раунд</th><th scope="col">Логи</th></tr>
+    </thead>
+    <tbody>
+      {% for r in rounds %}
+      <tr class="logs-round-row">
+        <td><time class="mono-val" datetime="{{ date_filter }}">{{ celadon_date_label }}</time></td>
+        <td class="mono-val">#{{ r.round_id }}</td>
+        <td><a href="{{ r.files_url }}" class="log-mini-btn" aria-label="Файлы раунда {{ r.round_id }}">Файлы</a></td>
+      </tr>
+      {% if r.files is defined %}
+      <tr id="celadon-files">
+        <td colspan="3">
+          {% if r.files %}
+          <div class="logs-row-quick-actions">
+            <span class="cell-sub">Импортировать</span>
+            {% for filename, path in r.files %}
+            <form action="/logs/celadon" method="post" class="logs-inline-form">
+              <input type="hidden" name="csrf_token" value="{{ user.csrf_token }}">
+              <input type="hidden" name="path" value="{{ path }}">
+              <button class="log-mini-btn mono-val" type="submit" aria-label="Импортировать {{ filename }}">{{ filename }}</button>
+            </form>
+            {% endfor %}
+          </div>
+          {% else %}
+          <span class="cell-sub">Файлов для импорта пока нет</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endif %}
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% elif rounds %}
 <div class="logs-table-wrap" tabindex="0" role="region" aria-label="Таблица раундов">
   <table class="logs-table logs-rounds-table">
     <thead>
@@ -70,6 +114,8 @@
   </table>
 </div>
 
+{% endif %}
+
 {% if total_pages > 1 %}
 <div class="logs-pagination">
   <span class="mono-val cell-sub">Страница {{ page }} из {{ total_pages }}</span>
@@ -91,7 +137,7 @@
   </div>
 </div>
 {% endif %}
-{% else %}
+{% if not rounds and not celadon_error %}
 <div class="logs-panel-body">
   <div class="block-empty">{% if date_filter or source_filter or q_filter %}Раунды по заданным фильтрам не найдены{% else %}В архиве пока нет раундов{% endif %}</div>
 </div>
