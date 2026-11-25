@@ -91,7 +91,7 @@ def register_auth_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
             )
 
         ip = discord_auth.get_client_ip(request)
-        if profile["mfa_enabled"] is not True:
+        if not discord_auth.meets_mfa_requirement(profile["discord_id"], profile["mfa_enabled"], config):
             await logs_db.record_audit_event(
                 "login_denied",
                 discord_id=profile["discord_id"],

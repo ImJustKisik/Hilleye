@@ -219,6 +219,12 @@ async def exchange_discord_code(code: str, config: AppConfig) -> Dict[str, Any]:
         }
 
 
+def meets_mfa_requirement(discord_id: str, mfa_enabled: object, config: AppConfig) -> bool:
+    return mfa_enabled is True or (
+        mfa_enabled is False and discord_id in config.discord_superadmin_ids
+    )
+
+
 def create_session_cookie(profile: Dict[str, Any], config: AppConfig) -> str:
     now = time.time()
     payload = {
@@ -236,10 +242,10 @@ def create_session_cookie(profile: Dict[str, Any], config: AppConfig) -> str:
 def read_session_cookie(request: Request, config: AppConfig) -> Optional[Dict[str, Any]]:
     raw = request.cookies.get(SESSION_COOKIE_NAME)
     payload = verify_payload(raw, config)
-    if not payload or payload.get("mfa_enabled") is not True:
+    if not payload:
         return None
     uid = str(payload.get("uid") or "").strip()
-    if not uid.isdigit():
+    if not uid.isdigit() or not meets_mfa_requirement(uid, payload.get("mfa_enabled"), config):
         return None
     return payload
 

@@ -152,7 +152,7 @@ state; keep them when cleaning development artifacts.
 
 ### SierraBay12 Log Viewer (`/logs`)
 - Protected by Discord OAuth2 + user ID whitelist (`discord` section in `config.json` or `HILLEYE_DISCORD_CLIENT_ID`, `HILLEYE_DISCORD_CLIENT_SECRET`, `HILLEYE_DISCORD_REDIRECT_URI`, `HILLEYE_SESSION_SECRET`, `HILLEYE_DISCORD_SUPERADMIN_IDS`).
-- Sign-in requires Discord to confirm that two-factor authentication is enabled on the account, including for superadmins. Sessions issued before this check require a new sign-in.
+- Sign-in requires Discord two-factor authentication for viewers and admins. Superadmins configured in `discord.superadmin_ids` can sign in without 2FA. Removing an ID from that list revokes access for its sessions issued without 2FA. Sessions issued before the 2FA check was introduced require a new sign-in.
 - Configure `logs.root_dir` (`HILLEYE_LOGS_DIR`) to point to SierraBay12's `data/logs` directory (`game.log`, `qdel.log`), and upload `.log`/`.txt`/`.zip`/`.tar.gz` logs manually through the `/logs` web UI (`logs.uploads_dir`, `HILLEYE_LOGS_UPLOADS_DIR`).
 - Select **Celadon** as the source in **Раунды** to find rounds by date and ID and import their logs. Celadon must allowlist the Hilleye server's outbound IPv4. Manual uploads and Celadon imports have a 20 MiB per-file cap. `logs.max_upload_mb` or `HILLEYE_LOGS_MAX_UPLOAD_MB` can lower it.
 - Uses a dedicated SQLite WAL + FTS5 database (`logs.db`, override with `HILLEYE_LOGS_DB_PATH`) for fast cross-round search, dynamic whitelist management (`/logs/admin`), and access audit logging.

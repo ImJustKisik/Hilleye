@@ -431,9 +431,10 @@ async def _login_via_discord(client: AsyncClient, discord_id: str, username: str
     ],
 )
 async def test_discord_login_requires_confirmed_mfa(logs_env, callback_path, mfa_enabled):
-    uid = "111111111111111111"  # Superadmins must also enable MFA.
+    uid = "222222222222222222"
+    await logs_db.add_to_whitelist(uid, role="admin")
     discord_auth.set_discord_http_transport(
-        lambda: _mock_discord_transport(uid, "headadmin", mfa_enabled=mfa_enabled)
+        lambda: _mock_discord_transport(uid, "admin", mfa_enabled=mfa_enabled)
     )
     async with AsyncClient(transport=ASGITransport(app=web_app.app), base_url="http://test") as client:
         login = await client.get("/auth/discord/login", params={"next": "/logs/admin"})
@@ -461,8 +462,10 @@ async def test_discord_popup_result_requires_matching_oauth_state(
     logs_env, mfa_enabled, expected_status, popup_result
 ):
     attempt = "1a10763d-a82c-4309-a445-98ee47e29217"
+    uid = "222222222222222222"
+    await logs_db.add_to_whitelist(uid, role="admin")
     discord_auth.set_discord_http_transport(
-        lambda: _mock_discord_transport("111111111111111111", "headadmin", mfa_enabled=mfa_enabled)
+        lambda: _mock_discord_transport(uid, "admin", mfa_enabled=mfa_enabled)
     )
     async with AsyncClient(transport=ASGITransport(app=web_app.app), base_url="http://test") as client:
         login = await client.get(
@@ -493,6 +496,36 @@ async def test_discord_popup_result_requires_matching_oauth_state(
         else:
             assert "Воспроизвести звук" in callback.text
             assert (await client.get("/logs/admin")).status_code == 401
+
+
+@pytest.mark.parametrize(
+    ("login_params", "mfa_enabled"),
+    [({}, False), ({"popup_attempt": "1a10763d-a82c-4309-a445-98ee47e29217"}, None)],
+)
+async def test_discord_superadmin_can_sign_in_without_mfa(logs_env, login_params, mfa_enabled):
+    config = logs_env["cfg"]
+    uid = config.discord_superadmin_ids[0]
+    await logs_db.add_to_whitelist(uid, role="admin")
+    discord_auth.set_discord_http_transport(
+        lambda: _mock_discord_transport(uid, "headadmin", mfa_enabled=mfa_enabled)
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=web_app.app), base_url="http://test") as client:
+        login = await client.get("/auth/discord/login", params={"next": "/logs/admin", **login_params})
+        state = parse_qs(urlsplit(login.headers["location"]).query)["state"][0]
+        callback = await client.get("/auth/discord/callback", params={"code": "test_code", "state": state})
+        if login_params:
+            assert callback.status_code == 200
+            assert 'data-oauth-result="signed_in"' in callback.text
+        else:
+            assert callback.status_code == 302
+            assert callback.headers["location"] == "/logs/admin"
+        assert discord_auth.SESSION_COOKIE_NAME in client.cookies
+        assert (await client.get("/logs/admin")).status_code == 200
+
+        config.discord_superadmin_ids = []
+        assert (await client.get("/logs/admin")).status_code == 401
+        assert (await client.get("/api/v1/logs/rounds")).status_code == 401
 
 
 async def test_discord_session_without_mfa_requires_new_login(logs_env):
