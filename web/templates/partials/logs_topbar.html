@@ -20,13 +20,16 @@
   </div>
   <div class="logs-topbar-right">
     {% if logs_show_refresh %}
-    <form action="/logs/refresh" method="post" class="logs-inline-form">
-      <input type="hidden" name="csrf_token" value="{{ user.csrf_token }}">
-      <button type="submit" class="logs-btn logs-btn-sm" title="Проверить новые раунды на диске">
-        <svg class="logs-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
-        <span>Обновить</span>
-      </button>
-    </form>
+    <div class="logs-index-actions">
+      <span id="logs-index-status" class="logs-index-freshness" role="status" data-user-id="{{ user.discord_id }}" hidden></span>
+      <form action="/logs/refresh" method="post" class="logs-inline-form">
+        <input type="hidden" name="csrf_token" value="{{ user.csrf_token }}">
+        <button type="submit" class="logs-btn logs-btn-sm" title="Проверить новые раунды на диске">
+          <svg class="logs-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+          <span>Обновить</span>
+        </button>
+      </form>
+    </div>
     {% endif %}
     <span class="logs-user-meta">
       <span class="logs-user-name">{{ user.display_name }}</span>
@@ -39,8 +42,12 @@
   </div>
 </div>
 
+{% if logs_show_refresh %}
+<div id="logs-index-diagnostics" class="logs-alert logs-alert-info" role="status" hidden></div>
+{% else %}
 <div id="logs-index-status" class="logs-alert logs-alert-info" role="status"
      aria-live="polite" data-user-id="{{ user.discord_id }}" hidden></div>
+{% endif %}
 <div id="logs-job-status" class="logs-alert logs-alert-info" role="status" aria-live="polite" hidden></div>
 
 {% if logs_show_boot is not defined or logs_show_boot %}

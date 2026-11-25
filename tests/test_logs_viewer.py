@@ -588,14 +588,17 @@ async def test_celadon_catalog_import_and_file_cap(logs_env, monkeypatch):
         assert not upstream_requests
         await _login_via_discord(client, "111111111111111111", "admin")
         dashboard = await client.get("/logs")
-        assert "Показать Celadon" in dashboard.text
+        assert '<option value="celadon"' in dashboard.text
+        assert "Показать Celadon" not in dashboard.text
         assert 'href="/logs/celadon"' not in dashboard.text
         assert not upstream_requests
         root = await client.get("/logs/celadon", follow_redirects=True)
         assert root.status_code == 200
         assert root.url.path == "/logs"
         assert 'type="date"' in root.text and 'value="2026-11-08"' in root.text
-        assert "08.11.2026" in root.text and "#0fd7d409" in root.text and "#abcd1234" in root.text
+        assert "#0fd7d409" in root.text and "#abcd1234" in root.text
+        assert "08.11.2026" not in root.text
+        assert root.text.count("До 20 МБ на файл") == 1
         assert "example.org" not in root.text
         assert "Разное" not in root.text
         assert upstream_requests == ["", "2026/", "2026/11/", "2026/11/08/"]
@@ -1354,6 +1357,8 @@ async def test_logs_ux_overhaul_partials_and_csp(logs_env):
         dash = await client.get("/logs")
         assert dash.status_code == 200
         assert "data-quick-date" in dash.text
+        assert dash.text.count('href="/logs/search"') == 1
+        assert 'action="/logs/search"' not in dash.text
         assert 'id="logs-rounds-container"' in dash.text
         assert dash.text.count('id="logs-rounds-header-count"') == 1
 
@@ -1363,6 +1368,12 @@ async def test_logs_ux_overhaul_partials_and_csp(logs_env):
         assert "logs-rounds-table" in dash_htmx.text
         assert 'id="logs-rounds-header-count"' in dash_htmx.text
         assert 'hx-swap-oob="true"' in dash_htmx.text
+
+        history = await client.get(
+            "/logs?source=disk", headers={"HX-Request": "true", "HX-History-Restore-Request": "true"}
+        )
+        assert "<!DOCTYPE html>" in history.text
+        assert 'id="logs-rounds-filter-form"' in history.text
 
         # 2. Round viewer renders collapsible filter drawer & inline context URLs
         rnd_page = await client.get(f"/logs/round/{round_uid}")

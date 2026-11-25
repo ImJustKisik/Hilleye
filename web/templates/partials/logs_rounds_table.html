@@ -13,18 +13,17 @@
 <div class="logs-table-wrap" tabindex="0" role="region" aria-label="Раунды Celadon">
   <table class="logs-table logs-rounds-table logs-celadon-table">
     <thead>
-      <tr><th scope="col">Дата (UTC)</th><th scope="col">Раунд</th><th scope="col">Логи</th></tr>
+      <tr><th scope="col">Раунд</th><th scope="col">Файлы</th></tr>
     </thead>
     <tbody>
       {% for r in rounds %}
       <tr class="logs-round-row">
-        <td><time class="mono-val" datetime="{{ date_filter }}">{{ celadon_date_label }}</time></td>
-        <td class="mono-val">#{{ r.round_id }}</td>
+        <th scope="row" class="logs-celadon-round-id mono-val">#{{ r.round_id }}</th>
         <td><a href="{{ r.files_url }}" class="log-mini-btn" aria-label="Файлы раунда {{ r.round_id }}">Файлы</a></td>
       </tr>
       {% if r.files is defined %}
       <tr id="celadon-files">
-        <td colspan="3">
+        <td colspan="2">
           {% if r.files %}
           <div class="logs-row-quick-actions">
             <span class="cell-sub">Импортировать</span>

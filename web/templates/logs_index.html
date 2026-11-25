@@ -3,14 +3,14 @@
 {% block language %}ru{% endblock %}
 {% block extra_head %}
 <link rel="stylesheet" href="/static/css/logs.css">
-<link rel="stylesheet" href="/static/css/logs-index.css?v=celadon-rounds">
-<script src="/static/js/log-catalog.js" defer></script>
+<link rel="stylesheet" href="/static/css/logs-index.css?v=rounds-layout">
+<script src="/static/js/log-catalog.js?v=rounds-layout" defer></script>
 <script src="/static/js/logs.js?v=logs-modules" defer></script>
-<script src="/static/js/log-jobs.js" defer></script>
+<script src="/static/js/log-jobs.js?v=rounds-layout" defer></script>
 {% endblock %}
 
 {% block content %}
-<div class="logs-page-stack logs-index">
+<div class="logs-page-stack logs-index" hx-history="false">
   <header class="logs-index-heading">
     <h1>Логи SierraBay12</h1>
   </header>
@@ -20,108 +20,52 @@
   {% set logs_show_boot = false %}
   {% include "partials/logs_topbar.html" %}
 
+  {% set is_celadon = source_filter == 'celadon' %}
+  {% set quick_date = request.query_params.get('date', '') %}
   {% if notice %}
   <div class="logs-alert logs-alert-ok" role="status">{{ notice }}</div>
   {% endif %}
 
-  {% if not root_dir_exists and logs_root_dir %}
+  {% if not is_celadon and not root_dir_exists and logs_root_dir %}
   <div class="logs-alert logs-alert-warn" role="status">
     Папка серверных логов на диске не найдена{% if user.is_admin %} (<code>{{ logs_root_dir }}</code>){% endif %}. Можно импортировать файл с Celadon или загрузить его вручную.
   </div>
-  {% elif not root_dir_exists and not rounds %}
+  {% elif not is_celadon and not root_dir_exists and not rounds %}
   <div class="logs-alert" role="status">
     Локальная папка логов не задана. Можно импортировать файл с Celadon или загрузить его вручную.
   </div>
   {% endif %}
 
-  <section class="panel" aria-labelledby="logs-search-title">
-    <div class="panel-header">
-      <h2 class="panel-title" id="logs-search-title">Поиск по архиву</h2>
-      <a href="/logs/search" class="logs-index-search-link">Расширенный поиск <span aria-hidden="true">&rarr;</span></a>
-    </div>
-    <div class="logs-panel-body">
-      <form action="/logs/search" method="get" class="logs-form-grid logs-index-search-form">
-        <div class="logs-field">
-          <label for="quick-search-q" class="logs-label">Запрос</label>
-          <input type="text" id="quick-search-q" name="q" class="logs-input" placeholder="Текст события, предмет или сообщение">
-        </div>
-        <div class="logs-field logs-field-sm">
-          <label for="quick-search-ckey" class="logs-label">CKey</label>
-          <input type="text" id="quick-search-ckey" name="ckey" class="logs-input">
-        </div>
-        <div class="logs-field logs-field-md">
-          <label for="quick-search-preset" class="logs-label">Категория</label>
-          <select id="quick-search-preset" name="preset" class="logs-select">
-            <option value="gameplay">Игровые события</option>
-            <option value="admin_combat">Админ / Атаки</option>
-            <option value="chat">Чат</option>
-            <option value="all">Все категории</option>
-          </select>
-        </div>
-        <button type="submit" class="logs-btn logs-btn-primary">Найти</button>
-      </form>
-    </div>
-  </section>
-
-  <details class="panel logs-upload-details" aria-label="Загрузка лога вручную">
-    <summary class="panel-header logs-upload-summary">
-      <span class="panel-title">Загрузить лог или архив</span>
-      <span class="logs-upload-limit mono-val">до {{ max_upload_mb }} МБ</span>
-      <span class="logs-upload-chevron" aria-hidden="true"></span>
-    </summary>
-    <div class="logs-panel-body">
-      <form id="logs-upload-form" action="/logs/upload" method="post" enctype="multipart/form-data" data-max-upload-mb="{{ max_upload_mb }}">
-        <input type="hidden" name="csrf_token" value="{{ user.csrf_token }}">
-        <div class="logs-dropzone" id="logs-dropzone" tabindex="0" role="button" aria-label="Выбрать или перетащить файл лога">
-          <div class="logs-dropzone-title" id="logs-dropzone-title">Перетащите файл или нажмите для выбора</div>
-          <div class="logs-dropzone-sub" id="logs-dropzone-sub"><code>game.log</code>, <code>qdel.log</code>, <code>.txt</code>, <code>.zip</code>, <code>.tar.gz</code></div>
-          <input type="file" id="logs-upload-file" name="file" class="sr-only" accept=".log,.txt,.zip,.gz,.tgz,.tar">
-        </div>
-        <div class="logs-form-grid logs-upload-row">
-          <div class="logs-field">
-            <label for="upload-label" class="sr-only">Примечание к загрузке</label>
-            <input type="text" id="upload-label" name="label" class="logs-input" maxlength="100" placeholder="Примечание (необязательно)">
-          </div>
-          <button type="submit" class="logs-btn logs-btn-primary">Загрузить</button>
-        </div>
-      </form>
-      <div id="logs-upload-status" class="logs-alert" hidden></div>
-    </div>
-  </details>
-
   <section class="panel" aria-labelledby="logs-rounds-title">
     <div class="panel-header">
-      <h2 class="panel-title" id="logs-rounds-title">Раунды</h2>
-      {% if source_filter == 'celadon' %}
-      <span class="logs-archive-size">Celadon · до {{ max_upload_mb }} МБ на файл</span>
-      {% else %}
+      <div class="logs-rounds-heading">
+        <h2 class="panel-title" id="logs-rounds-title">Раунды</h2>
+        <span class="logs-rounds-count" role="status">Найдено <strong id="logs-rounds-header-count" class="logs-count-em mono-val">{{ total_rounds|comma }}</strong></span>
+      </div>
+      {% if not is_celadon %}
       <span class="logs-archive-size">{{ stats.total_size_label }} &middot; {{ stats.indexed_entries|comma }} строк в индексе</span>
-      <a class="logs-btn logs-btn-sm" href="/logs?source=celadon{% if date_filter %}&amp;date={{ date_filter|urlencode }}{% endif %}#logs-rounds-title">Показать Celadon</a>
       {% endif %}
     </div>
     <div class="logs-toolbar-compact">
-      <div class="logs-quick-chips" role="group" aria-label="Быстрый выбор даты (UTC)">
-        <button type="button" class="logs-quick-chip {% if not date_filter %}is-active{% endif %}" data-quick-date="" aria-pressed="{{ 'true' if not date_filter else 'false' }}">{{ 'Последняя дата' if source_filter == 'celadon' else 'Все даты' }}</button>
-        <button type="button" class="logs-quick-chip {% if date_filter == today_utc %}is-active{% endif %}" data-quick-date="{{ today_utc }}" aria-pressed="{{ 'true' if date_filter == today_utc else 'false' }}">Сегодня</button>
-        <button type="button" class="logs-quick-chip {% if date_filter == yesterday_utc %}is-active{% endif %}" data-quick-date="{{ yesterday_utc }}" aria-pressed="{{ 'true' if date_filter == yesterday_utc else 'false' }}">Вчера</button>
-        {% for d in stats.dates[:3] if source_filter != 'celadon' %}
-          {% if d.round_date != today_utc and d.round_date != yesterday_utc %}
-          <button type="button" class="logs-quick-chip {% if date_filter == d.round_date %}is-active{% endif %}" data-quick-date="{{ d.round_date }}" aria-pressed="{{ 'true' if date_filter == d.round_date else 'false' }}">{{ d.round_date }} ({{ d.cnt }})</button>
-          {% endif %}
-        {% endfor %}
-      </div>
-
       <form id="logs-rounds-filter-form"
             action="/logs"
             method="get"
             data-rounds-source="{{ source_filter }}"
+            data-applied-date="{{ quick_date }}"
+            hx-push-url="true"
             class="logs-form-grid">
         <div class="logs-field logs-field-md">
-          <label for="logs-rounds-date" class="logs-label">Дата (UTC)</label>
-          {% if source_filter == 'celadon' %}
-          <input type="date" id="logs-rounds-date" name="date" class="logs-input" value="{{ date_filter }}">
-          {% else %}
-          <select id="logs-rounds-date" name="date" class="logs-select">
+          <label for="logs-rounds-source" class="logs-label">Источник</label>
+          <select id="logs-rounds-source" name="source" class="logs-select">
+            <option value="">Все в индексе</option>
+            <option value="disk" {% if source_filter == 'disk' %}selected{% endif %}>Диск</option>
+            <option value="upload" {% if source_filter == 'upload' %}selected{% endif %}>Загруженные</option>
+            <option value="celadon" {% if is_celadon %}selected{% endif %}>Celadon</option>
+          </select>
+        </div>
+        <div class="logs-field logs-field-md" data-rounds-date-field {% if is_celadon %}hidden{% endif %}>
+          <label for="logs-rounds-index-date" class="logs-label">Дата (UTC)</label>
+          <select id="logs-rounds-index-date" name="date" class="logs-select" {% if is_celadon %}disabled{% endif %}>
             <option value="">Все даты</option>
             {% if date_filter and date_filter not in (stats.dates|map(attribute='round_date')|list) %}
             <option value="{{ date_filter }}" selected>{{ date_filter }}</option>
@@ -130,29 +74,55 @@
             <option value="{{ d.round_date }}" {% if date_filter == d.round_date %}selected{% endif %}>{{ d.round_date }} ({{ d.cnt }})</option>
             {% endfor %}
           </select>
-          {% endif %}
         </div>
-        <div class="logs-field logs-field-md">
-          <label for="logs-rounds-source" class="logs-label">Источник</label>
-          <select id="logs-rounds-source" name="source" class="logs-select">
-            <option value="">Все в индексе</option>
-            <option value="disk" {% if source_filter == 'disk' %}selected{% endif %}>Диск</option>
-            <option value="upload" {% if source_filter == 'upload' %}selected{% endif %}>Загруженные</option>
-            <option value="celadon" {% if source_filter == 'celadon' %}selected{% endif %}>Celadon</option>
-          </select>
+        <div class="logs-field logs-field-md" data-rounds-date-field {% if not is_celadon %}hidden{% endif %}>
+          <label for="logs-rounds-calendar-date" class="logs-label">Дата (UTC)</label>
+          <input type="date" id="logs-rounds-calendar-date" name="date" class="logs-input" value="{{ date_filter }}" {% if not is_celadon %}disabled{% endif %}>
         </div>
-        <div class="logs-field">
-          <label for="logs-rounds-q" class="logs-label">{{ 'ID раунда за выбранную дату' if source_filter == 'celadon' else 'ID раунда или примечание' }}</label>
+        <div class="logs-field logs-rounds-query">
+          <label for="logs-rounds-q" class="logs-label">ID раунда<span id="logs-rounds-query-note" {% if is_celadon %}hidden{% endif %}> или примечание</span></label>
           <input type="text" id="logs-rounds-q" name="q" value="{{ q_filter }}" class="logs-input">
         </div>
-        <button type="submit" class="logs-btn">Применить</button>
-        <a id="logs-rounds-reset" href="/logs" class="logs-btn" {% if not (date_filter or source_filter or q_filter) %}hidden{% endif %}>Сбросить</a>
+        <div class="logs-filter-actions">
+          <button type="submit" class="logs-btn logs-btn-primary">Применить</button>
+          <a id="logs-rounds-reset" href="/logs" class="logs-btn" {% if not (date_filter or source_filter or q_filter) %}hidden{% endif %}>Сбросить</a>
+        </div>
       </form>
+      <div class="logs-index-toolbar-row">
+        <div class="logs-quick-chips" role="group" aria-label="Быстрый выбор даты (UTC)">
+          <button type="button" class="logs-quick-chip {% if not quick_date %}is-active{% endif %}" data-quick-date="" aria-pressed="{{ 'true' if not quick_date else 'false' }}">{{ 'Последняя дата' if is_celadon else 'Все даты' }}</button>
+          <button type="button" class="logs-quick-chip {% if quick_date == today_utc %}is-active{% endif %}" data-quick-date="{{ today_utc }}" aria-pressed="{{ 'true' if quick_date == today_utc else 'false' }}">Сегодня</button>
+          <button type="button" class="logs-quick-chip {% if quick_date == yesterday_utc %}is-active{% endif %}" data-quick-date="{{ yesterday_utc }}" aria-pressed="{{ 'true' if quick_date == yesterday_utc else 'false' }}">Вчера</button>
+        </div>
+        <details class="logs-upload-details">
+          <summary class="logs-btn logs-upload-summary">
+            <span class="logs-upload-chevron" aria-hidden="true"></span>
+            Загрузить лог
+          </summary>
+          <div class="logs-upload-body">
+            <form id="logs-upload-form" action="/logs/upload" method="post" enctype="multipart/form-data" data-max-upload-mb="{{ max_upload_mb }}">
+              <input type="hidden" name="csrf_token" value="{{ user.csrf_token }}">
+              <input type="file" id="logs-upload-file" name="file" class="sr-only" accept=".log,.txt,.zip,.gz,.tgz,.tar"
+                     aria-label="Файл лога" aria-describedby="logs-dropzone-sub logs-upload-limit">
+              <label class="logs-dropzone" id="logs-dropzone" for="logs-upload-file">
+                <span class="logs-dropzone-title" id="logs-dropzone-title">Перетащите файл или нажмите для выбора</span>
+                <span class="logs-dropzone-sub" id="logs-dropzone-sub"><code>game.log</code>, <code>qdel.log</code>, <code>.txt</code>, <code>.zip</code>, <code>.tar.gz</code></span>
+              </label>
+              <p class="logs-upload-limit" id="logs-upload-limit">До {{ max_upload_mb }} МБ на файл</p>
+              <div class="logs-form-grid logs-upload-row">
+                <div class="logs-field">
+                  <label for="upload-label" class="logs-label">Примечание (необязательно)</label>
+                  <input type="text" id="upload-label" name="label" class="logs-input" maxlength="100">
+                </div>
+                <button type="submit" class="logs-btn logs-btn-primary">Загрузить</button>
+              </div>
+            </form>
+            <div id="logs-upload-status" class="logs-alert" role="status" hidden></div>
+          </div>
+        </details>
+      </div>
     </div>
 
-    <div class="logs-rounds-meta-bar" role="status">
-      <span>Найдено раундов <strong id="logs-rounds-header-count" class="logs-count-em mono-val">{{ total_rounds|comma }}</strong></span>
-    </div>
     <div id="logs-rounds-container">
       {% include "partials/logs_rounds_table.html" %}
     </div>

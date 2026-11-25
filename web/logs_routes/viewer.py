@@ -101,12 +101,14 @@ def register_viewer_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
         today_utc = now_utc.strftime("%Y-%m-%d")
         yesterday_utc = (now_utc - timedelta(days=1)).strftime("%Y-%m-%d")
 
-        is_rounds_fragment = request.headers.get("HX-Request") == "true"
+        is_rounds_fragment = (
+            request.headers.get("HX-Request") == "true"
+            and request.headers.get("HX-History-Restore-Request") != "true"
+        )
         stats = {}
         if not is_rounds_fragment:
             stats = await logs_db.get_logs_stats()
             stats["total_size_label"] = _fmt_bytes(stats["total_bytes"])
-            stats["last_indexed_str"] = _fmt_ts_utc(stats.get("last_indexed_at"))
         template_name = (
             "partials/logs_rounds_table.html"
             if is_rounds_fragment
@@ -132,7 +134,6 @@ def register_viewer_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
                 "yesterday_utc": yesterday_utc,
                 "notice": notice,
                 "celadon_error": celadon_error,
-                "celadon_date_label": ".".join(reversed(date.split("-"))) if source == "celadon" else "",
                 "import_error": import_error if source == "celadon" else "",
                 "logs_root_dir": str(root_dir) if root_dir else "",
                 "root_dir_exists": root_dir_exists,

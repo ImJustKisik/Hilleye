@@ -776,7 +776,7 @@
 
   function initAll() {
     initLogsBootOverlay();
-    if (window.HilleyeLogCatalog) window.HilleyeLogCatalog.init(buildCleanFilterParams);
+    if (window.HilleyeLogCatalog) window.HilleyeLogCatalog.init();
     if (window.HilleyeLogMap) {
       reloadLogMap = window.HilleyeLogMap.init(buildCleanFilterParams, submitFilterForm, openLogContextModal);
     }

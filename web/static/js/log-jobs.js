@@ -1,19 +1,20 @@
 /* Shared job polling and freshness hints. No inline script or HTML interpolation. */
 (function () {
   "use strict";
-  var indexBox = document.getElementById("logs-index-status");
-  var jobBox = document.getElementById("logs-job-status");
-  if (!indexBox || !jobBox) return;
-  var key = "hilleye-jobs:" + indexBox.dataset.userId;
+  var initialIndexBox = document.getElementById("logs-index-status");
+  if (!initialIndexBox || !document.getElementById("logs-job-status")) return;
+  var key = "hilleye-jobs:" + initialIndexBox.dataset.userId;
   var jobs = [];
   try { jobs = JSON.parse(sessionStorage.getItem(key) || "[]"); } catch (_) { jobs = []; }
   if (!Array.isArray(jobs)) jobs = [];
   var reloading = false;
   function save() { try { sessionStorage.setItem(key, JSON.stringify(jobs.slice(-10))); } catch (_) {} }
   function show(message, error) {
+    var jobBox = document.getElementById("logs-job-status");
+    if (!jobBox) return;
     jobBox.hidden = false;
     jobBox.className = "logs-alert " + (error ? "logs-alert-warn" : "logs-alert-info");
-    jobBox.textContent = message;
+    if (jobBox.textContent !== message) jobBox.textContent = message;
   }
   async function readJson(response) {
     var body = await response.json();
@@ -26,7 +27,6 @@
     if (!["/logs/refresh", "/logs/reindex", "/logs/admin/maps/rebuild"].includes(path)) return;
     event.preventDefault();
     var button = form.querySelector('button[type="submit"]');
-    var originalLabel = button ? button.textContent : "";
     var data = new FormData(form);
     data.set("background", "1");
     if (button) button.disabled = true;
@@ -43,7 +43,7 @@
       save();
       show("Задача поставлена в очередь. Можно продолжать работу.", false);
     } catch (error) { show(error.message, true); }
-    finally { if (button) { button.disabled = false; button.textContent = originalLabel; } }
+    finally { if (button) button.disabled = false; }
   }, true);
   async function pollJobs() {
     for (var id of jobs.slice()) {
@@ -60,6 +60,20 @@
       } catch (error) { show("Не удалось получить статус задачи. Повторим запрос.", true); }
     }
   }
+  function showIndex(freshness, details, warning) {
+    var indexBox = document.getElementById("logs-index-status");
+    var diagnostics = document.getElementById("logs-index-diagnostics");
+    if (!indexBox) return;
+    var alert = diagnostics || indexBox;
+    var message = diagnostics ? details : [freshness, details].filter(Boolean).join(". ");
+    if (diagnostics) {
+      indexBox.hidden = !freshness;
+      if (indexBox.textContent !== freshness) indexBox.textContent = freshness;
+    }
+    alert.hidden = !message;
+    alert.className = "logs-alert " + (warning ? "logs-alert-warn" : "logs-alert-info");
+    if (alert.textContent !== message) alert.textContent = message;
+  }
   async function pollIndex() {
     try {
       var status = await readJson(await fetch("/api/v1/logs/status", {credentials: "same-origin", cache: "no-store"}));
@@ -67,16 +81,16 @@
         .map(function (source) { return source.last_success_at || 0; });
       var last = dates.length && dates.every(Boolean)
         ? new Date(Math.min.apply(null, dates) * 1000).toLocaleString() : "первый проход ещё не завершён";
-      indexBox.hidden = false;
-      indexBox.className = "logs-alert " + (status.status === "degraded" ? "logs-alert-warn" : "logs-alert-info");
-      indexBox.textContent = "Индекс: " + last + ". " +
-        (status.status === "degraded" ? "Источник недоступен или обработан с ошибкой; результаты могут быть неполными. " : "") +
-        (status.pending_bytes ? "Есть ещё не проиндексированные данные. " : "") +
-        (status.pending_imports ? "Импортов ожидают индексации: " + status.pending_imports + ". " : "") +
-        (status.busy ? "Фоновые задачи выполняются или ожидают запуска." : "");
+      var degraded = status.status === "degraded";
+      var details = [
+        degraded ? "Результаты могут быть неполными из-за ошибки источника." : "",
+        status.pending_bytes ? "Есть ещё не проиндексированные данные." : "",
+        status.pending_imports ? "Импорты в очереди: " + status.pending_imports + "." : "",
+        status.busy ? "Фоновые задачи выполняются или ожидают запуска." : ""
+      ].filter(Boolean).join(" ");
+      showIndex("Индекс: " + last, details, degraded);
     } catch (_) {
-      indexBox.hidden = false;
-      indexBox.textContent = "Не удалось проверить свежесть индекса.";
+      showIndex("", "Не удалось проверить свежесть индекса.", true);
     }
   }
   document.addEventListener("htmx:beforeSwap", function (event) {
