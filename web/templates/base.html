@@ -14,14 +14,14 @@
   {% endblock %}
   <title>{% block title %}Hilleye — SS13 Server &amp; Player Tracker{% endblock %}</title>
   <link rel="icon" type="image/svg+xml" href="/static/img/logo.svg">
-  <link rel="stylesheet" href="/static/css/style.css?v=player-profile">
+  <link rel="stylesheet" href="/static/css/style.css?v=compact-footer">
   {% block extra_head %}{% endblock %}
   <script src="/static/js/htmx.min.js" defer></script>
   <script src="/static/js/app.js?v=round-history-privacy" defer></script>
 </head>
 <body>
   <div class="app-shell">
-    <header class="app-header">
+    <header class="app-header" lang="en">
       <a href="/" class="brand-lockup">
         <img src="/static/img/logo.svg" alt="Hilleye" class="brand-mark" width="28" height="28">
         <div class="brand-meta">
@@ -33,7 +33,7 @@
       <nav class="header-nav" aria-label="Primary navigation">
         <div class="header-links">
           <a href="/" class="header-link{{ ' is-active' if active_nav is defined and active_nav == 'servers' else '' }}">Servers</a>
-          <a href="/logs" class="header-link">Logs</a>
+          <a href="/logs" class="header-link{{ ' is-active' if active_nav == 'logs' else '' }}"{% if active_nav == 'logs' %} aria-current="location"{% endif %}>Logs</a>
         </div>
         {% block header_stats %}
         {% set srv_count = summary.total_servers if summary is defined and summary else (servers|length if servers is defined and servers else 0) %}
@@ -49,25 +49,13 @@
       </nav>
     </header>
 
-    <main class="app-main">
+    <main class="app-main{% block main_class %}{% endblock %}">
       {% block content %}{% endblock %}
     </main>
 
-    <footer class="app-footer">
-      <div class="footer-col">
-        <span class="footer-brand">Hilleye</span>
-        <span class="sep" aria-hidden="true">&middot;</span>
-        <span>Space Station 13 Tracker</span>
-        <span class="sep" aria-hidden="true">&middot;</span>
-        <span>All times UTC</span>
-      </div>
-      <div class="footer-col footer-right">
-        <a href="/api/v1/servers">JSON API</a>
-        <span class="sep" aria-hidden="true">&middot;</span>
-        <a href="/docs">API Docs</a>
-        <span class="sep" aria-hidden="true">&middot;</span>
-        <a href="/health">Health</a>
-      </div>
+    <footer class="app-footer" lang="en">
+      <a href="/docs">API Docs</a>
+      <a href="/health">Health</a>
     </footer>
   </div>
 </body>

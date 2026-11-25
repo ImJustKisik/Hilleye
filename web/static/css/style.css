@@ -1783,27 +1783,13 @@ code,
 
 .app-footer {
   margin-top: auto;
-  padding: 14px 0 20px;
+  padding: 8px 0 12px;
   border-top: 1px solid var(--border-subtle);
   display: flex;
-  justify-content: space-between;
-  align-items: center;
+  justify-content: flex-end;
   flex-wrap: wrap;
-  gap: 12px;
+  gap: 8px 16px;
   font-size: 0.82rem;
-  color: var(--text-muted);
-}
-
-.footer-col {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.footer-brand {
-  font-weight: 600;
-  color: var(--text-secondary);
 }
 
 .sep {
@@ -1811,6 +1797,9 @@ code,
 }
 
 .app-footer a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
   color: var(--text-secondary);
   text-decoration: none;
 }

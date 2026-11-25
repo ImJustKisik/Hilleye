@@ -586,7 +586,11 @@ async def test_logs_viewer_auth_whitelist_csrf_and_e2e(logs_env):
         await _login_via_discord(client, "999999999999999999", "stranger")
         denied = await client.get("/logs")
         assert denied.status_code == 403
-        assert "999999999999999999" in denied.text
+        assert "Нет доступа к логам" in denied.text
+        assert 'id="my-discord-id">999999999999999999</code>' in denied.text
+        assert 'data-copy-text="999999999999999999"' in denied.text
+        assert 'id="logs-denied-audio"' in denied.text
+        assert "Повторить со звуком" not in denied.text
         assert (await client.get("/api/v1/logs/rounds")).status_code == 403
 
         # 4. Open redirect attempt in OAuth state falls back to /logs
@@ -1318,11 +1322,16 @@ async def test_logs_ux_overhaul_partials_and_csp(logs_env):
         assert "admin-section-tabs" in admin_page.text
         assert "logs-ico" in admin_page.text
 
-        # 7. Unauthenticated auth gate renders access badge
+        # 7. The sign-in gate names the logs and returns users to the requested page.
         async with AsyncClient(transport=ASGITransport(app=web_app.app), base_url="http://test") as anon:
             auth_page = await anon.get("/logs")
             assert auth_page.status_code == 401
-            assert "logs-auth-badge" in auth_page.text
+            assert '<html lang="ru">' in auth_page.text
+            assert 'id="logs-auth-title">Логи SierraBay12</h1>' in auth_page.text
+            assert 'href="/auth/discord/login?next=/logs"' in auth_page.text
+            round_gate = await anon.get(f"/logs/round/{round_uid}")
+            assert round_gate.status_code == 401
+            assert f'href="/auth/discord/login?next=/logs/round/{round_uid}"' in round_gate.text
 
         # 8. CSP check: no inline <style> or <script> blocks or inline style="" in rendered /logs pages
         for html_text in (dash.text, rnd_page.text, qdel_page.text, map_page.text, search_page.text, admin_page.text, auth_page.text):

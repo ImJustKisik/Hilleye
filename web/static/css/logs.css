@@ -187,22 +187,123 @@
 }
 
 /* Auth Gate Card */
-.logs-auth-card {
+.logs-auth-gate {
+  display: grid;
+  place-items: center;
+  padding: 32px 0 80px;
+}
+
+.logs-auth-gate .logs-auth-card {
+  width: 100%;
   max-width: 520px;
-  margin: 48px auto;
-  padding: 24px 26px;
+  padding: 32px;
+  border-radius: 12px;
 }
 
-.logs-auth-title {
-  font-size: 1.35rem;
-  font-weight: 700;
-  margin-bottom: 10px;
-}
-
-.logs-auth-copy {
-  color: var(--text-secondary);
-  font-size: 0.94rem;
+.logs-auth-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   margin-bottom: 16px;
+}
+
+.logs-auth-symbol {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  color: var(--link-accent-hover);
+  background: var(--bg-recessed);
+}
+
+.logs-auth-gate .logs-auth-title {
+  margin-bottom: 8px;
+  font-size: clamp(1.6rem, 4vw, 2rem);
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.logs-auth-gate .logs-auth-copy {
+  color: var(--text-secondary);
+  font-size: 1rem;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.logs-auth-gate .logs-alert {
+  margin-top: 16px;
+  padding: 12px;
+  border-radius: 8px;
+}
+
+.logs-auth-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 20px;
+  margin-top: 24px;
+}
+
+.logs-auth-gate :is(.logs-btn, .logs-auth-back) {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  border-radius: 8px;
+  font-size: 0.94rem;
+}
+
+.logs-auth-gate .logs-btn-primary {
+  padding: 8px 16px;
+  background: var(--text-primary);
+  border-color: var(--text-primary);
+  color: var(--bg-canvas);
+  font-weight: 600;
+}
+
+.logs-auth-gate .logs-btn-primary:hover {
+  background: #fff;
+  border-color: #fff;
+}
+
+.logs-auth-back {
+  border: 0;
+  background: none;
+  color: var(--text-secondary);
+  font-family: inherit;
+  text-decoration: none;
+  text-underline-offset: 4px;
+  cursor: pointer;
+}
+
+.logs-auth-back:hover {
+  color: var(--text-primary);
+  text-decoration: underline;
+}
+
+.logs-auth-gate :is(.logs-btn, .logs-auth-back):focus-visible {
+  outline: 2px solid var(--link-accent-hover);
+  outline-offset: 4px;
+}
+
+@media (max-width: 420px) {
+  .logs-auth-gate {
+    padding: 24px 0 40px;
+  }
+
+  .logs-auth-gate .logs-auth-card {
+    padding: 24px;
+  }
+
+  .logs-auth-actions {
+    justify-content: center;
+  }
+
+  .logs-auth-actions .logs-btn-primary {
+    width: 100%;
+  }
 }
 
 .logs-code-block {
@@ -216,18 +317,6 @@
   color: var(--text-secondary);
   margin-bottom: 14px;
   white-space: pre-wrap;
-}
-
-.logs-id-box {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-  padding: 12px 14px;
-  background: var(--bg-recessed);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-  margin-bottom: 16px;
 }
 
 /* Grid & Panels */
@@ -2096,20 +2185,6 @@
 
 .logs-badge-count[hidden] {
   display: none;
-}
-
-.logs-auth-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 10px;
-  padding: 3px 8px;
-  border-radius: 2px;
-  background: var(--bg-recessed);
-  border: 1px solid var(--border-subtle);
-  color: var(--text-muted);
-  font-size: 0.72rem;
-  letter-spacing: 0.05em;
 }
 
 /* Dashboard Quick Date Chips & Rounds Table */
