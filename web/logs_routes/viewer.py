@@ -9,9 +9,12 @@ from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import RedirectResponse
 
 from core import celadon_logs, logs_db, map_renderer
 from core.log_operations import run_log_operation
+from core.logs_db.celadon import catalog_file_states, local_file_name
+from core.logs_db.connection import run_logs_transaction
 from core.logs_db.reader import read_log_context, read_log_page
 from core.byond_topic import normalize_ckey
 from core.log_parser import (
@@ -22,7 +25,7 @@ from core.log_parser import (
     parse_qdel_log_file,
 )
 from core.log_parser.map_events import search_raw_log_files
-from web.logs_routes.deps import LogsRouteContext, record_log_access, require_indexed_entry, validate_log_search
+from web.logs_routes.deps import LogsRouteContext, record_log_access, require_indexed_entry, round_alias_location, validate_log_search
 from web.logs_routes.viewmodels import (
     _coord_vm,
     _entry_to_vm,
@@ -73,10 +76,21 @@ def register_viewer_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
                         dict(source=source, date=date, q=q, page=page, round_folder=item["folder"])
                     ) + "#celadon-files"
                     if item["folder"] == round_folder:
-                        item["files"] = [
+                        files = [
                             (name, path) for name, path in await celadon_logs.list_directory(item["path"])
                             if not path.endswith("/")
                         ]
+                        states = await run_logs_transaction(
+                            catalog_file_states, [path for _, path in files], config.resolved_logs_root_dir(),
+                        )
+                        item["files"] = []
+                        for name, path in files:
+                            matches = states[path]
+                            disk = bool(matches and matches[0]["source_type"] == "disk")
+                            href = ""
+                            if disk and len(matches) == 1:
+                                href = f"/logs/round/{matches[0]['round_uid']}?" + urlencode(dict(file=local_file_name(path)))
+                            item["files"].append(dict(name=name, path=path, disk=disk, known=bool(matches), href=href))
             except ValueError:
                 celadon_error = "Укажите корректную дату."
             except HTTPException as exc:
@@ -167,6 +181,7 @@ def register_viewer_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
         qdel_view: str = "table",
         sort_by: str = "destroy_cost_ms",
         sort_dir: str = "desc",
+        celadon_status: str = "",
     ):
         user, err_resp = await ctx.require_html_user(request)
         if err_resp is not None:
@@ -176,6 +191,8 @@ def register_viewer_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
         shell = await ctx.get_shell_context_fn()
         rnd = await logs_db.get_round_by_uid(round_uid)
         if rnd is None:
+            if location := await round_alias_location(request, round_uid):
+                return RedirectResponse(location, status_code=307)
             raise HTTPException(status_code=404, detail="Раунд не найден в индексе логов.")
 
         available_files: List[str] = []
@@ -225,6 +242,7 @@ def register_viewer_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
                     "user": user,
                     "round": rnd,
                     "round_time": round_time,
+                    "celadon_unverified": celadon_status == "unverified",
                     "available_files": available_files,
                     "selected_file": selected_file,
                     "is_qdel": True,
@@ -328,6 +346,7 @@ def register_viewer_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
                 "user": user,
                 "round": rnd,
                 "round_time": round_time,
+                "celadon_unverified": celadon_status == "unverified",
                 "available_files": available_files,
                 "selected_file": selected_file,
                 "is_qdel": False,
@@ -374,7 +393,7 @@ def register_viewer_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
     ):
         user = await ctx.require_api_user(request)
         config = ctx.get_config_fn()
-        rnd, file_path = await ctx.resolve_round_and_file(round_uid, file)
+        rnd, file_path = await ctx.resolve_round_and_file(request, round_uid, file)
         await require_indexed_entry(round_uid, file, file_path, line, entry_id)
 
         mask_flag = _parse_bool_flag(mask_ips, default=False)
@@ -430,6 +449,8 @@ def register_viewer_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
         user, err_resp = await ctx.require_html_user(request)
         if err_resp is not None:
             return err_resp
+        if round_uid and (location := await round_alias_location(request, round_uid.strip(), in_query=True)):
+            return RedirectResponse(location, status_code=307)
 
         config = ctx.get_config_fn()
         shell = await ctx.get_shell_context_fn()

@@ -15,6 +15,8 @@ def _visible_rounds(table="log_rounds"):
     return (
         f"{table}.import_batch IS NULL AND NOT EXISTS "
         f"(SELECT 1 FROM log_sources s WHERE s.source={table}.source_type AND s.source='disk' AND s.status='disabled')"
+        f" AND NOT EXISTS (SELECT 1 FROM log_celadon_aliases a WHERE a.old_uid={table}.round_uid)"
+        f" AND NOT EXISTS (SELECT 1 FROM log_celadon_rounds c WHERE c.round_uid={table}.round_uid AND NOT c.present)"
     )
 
 
@@ -99,6 +101,19 @@ async def get_round_by_uid(round_uid: str) -> Optional[Dict[str, Any]]:
     return d
 
 
+async def get_round_alias(round_uid: str) -> Optional[str]:
+    from core import logs_db as _ldb
+
+    conn = await _ldb.get_logs_connection()
+    async with conn.execute(
+        f"""SELECT r.round_uid FROM log_celadon_aliases a JOIN log_rounds r ON r.round_uid=a.round_uid
+            WHERE a.old_uid=? AND {_visible_rounds("r")}""",
+        (round_uid,),
+    ) as cursor:
+        row = await cursor.fetchone()
+    return row[0] if row else None
+
+
 async def get_logs_stats() -> Dict[str, Any]:
     import core.logs_db as _ldb
 
@@ -147,10 +162,10 @@ async def get_index_error_rounds(limit: int = 50) -> List[Dict[str, Any]]:
 
     conn = await _ldb.get_logs_connection()
     cur = await conn.execute(
-        """
+        f"""
         SELECT round_uid, round_id, round_date, source_type, index_error
         FROM log_rounds
-        WHERE index_error IS NOT NULL AND index_error != ''
+        WHERE index_error IS NOT NULL AND index_error != '' AND {_visible_rounds()}
         ORDER BY round_date DESC, round_uid DESC
         LIMIT ?
         """,

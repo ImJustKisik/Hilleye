@@ -13,6 +13,9 @@
   {% set logs_nav_active = 'rounds' %}
   {% set logs_round_search_uid = round.round_uid %}
   {% include "partials/logs_topbar.html" %}
+  {% if celadon_unverified %}
+  <div class="logs-alert logs-alert-warn" role="status">Свежесть файла Celadon не подтверждена. Открыта сохранённая версия.</div>
+  {% endif %}
 
   <!-- Round Header & File Tabs -->
   <section class="panel">

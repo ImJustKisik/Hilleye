@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
+from urllib.parse import quote, urlencode
 
 from fastapi import HTTPException, Request
 from fastapi.responses import HTMLResponse
@@ -16,6 +17,22 @@ from core.byond_topic import normalize_ckey
 from core.config import AppConfig
 from core.log_parser import mask_sensitive_text
 from core.logs_db.reader import indexed_entry_matches
+from core.logs_db.queries import get_round_alias
+
+
+async def round_alias_location(request, round_uid, *, in_query=False):
+    canonical = await get_round_alias(round_uid)
+    if canonical is None:
+        return None
+    path = request.url.path
+    params = request.query_params.multi_items()
+    if in_query:
+        params = [(name, canonical if name == "round_uid" else value) for name, value in params]
+    else:
+        path = "/".join(quote(canonical if part == round_uid else part, safe="") for part in path.split("/"))
+        params = [(name, value) for name, value in params if name != "entry_id"]
+    query = urlencode(params)
+    return f"{path}?{query}" if query else path
 
 
 def validate_log_search(ckey: str, date_from: str, date_to: str) -> tuple[str, str, str]:
@@ -147,12 +164,15 @@ class LogsRouteContext:
 
     async def resolve_round_and_file(
         self,
+        request: Request,
         round_uid: str,
         file_name: str,
     ) -> Tuple[Dict[str, Any], Path]:
         config = self.get_config_fn()
         rnd = await logs_db.get_round_by_uid(round_uid)
         if rnd is None:
+            if location := await round_alias_location(request, round_uid):
+                raise HTTPException(307, headers={"Location": location})
             raise HTTPException(status_code=404, detail="Раунд не найден.")
         file_path = logs_db.resolve_round_file_path(
             rnd,

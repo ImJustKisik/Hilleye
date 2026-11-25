@@ -21,6 +21,7 @@ from core import celadon_logs, discord_auth, logs_db, map_renderer
 from core.log_operations import heavy_slot, finish_thread, staging_directory
 from core.log_jobs import map_job_status
 from core.logs_db.queries import get_index_debug_policy
+from core.logs_db.celadon import import_round, local_file_name
 from core.logs_db.uploads import UploadPendingError, UploadQuotaError
 import asyncio
 from web.logs_routes.deps import LogsRouteContext
@@ -38,7 +39,7 @@ from web.logs_routes.viewmodels import (
 logger = logging.getLogger(__name__)
 
 
-async def _ingest_log(request, config, user, filename, source, *, label, celadon_path=None):
+async def _ingest_log(request, config, user, filename, source, *, label):
     try:
         created = await logs_db.ingest_uploaded_log(
             filename, source,
@@ -47,7 +48,6 @@ async def _ingest_log(request, config, user, filename, source, *, label, celadon
             max_extracted_bytes=config.logs_max_extracted_mb * 1024 * 1024,
             max_archive_files=config.logs_max_archive_files,
             include_debug=config.logs_index_include_debug,
-            origin_path=celadon_path,
             quota_bytes=config.logs_upload_quota_mb * 1024 * 1024,
         )
     except UploadPendingError as exc:
@@ -61,32 +61,54 @@ async def _ingest_log(request, config, user, filename, source, *, label, celadon
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 
-    origin = f", celadon_path={celadon_path}" if celadon_path else ""
     await logs_db.record_audit_event(
         "upload_round",
         discord_id=user.discord_id,
         discord_username=user.username,
         target=",".join(r["round_uid"] for r in created)[:180],
         ip_address=discord_auth.get_client_ip(request),
-        details=f"filename={filename}, count={len(created)}{origin}",
+        details=f"filename={filename}, count={len(created)}",
     )
+    return _upload_response(request, created)
+
+
+def _upload_response(request, created, *, status=None, file=None, index_url="/logs"):
+    def round_url(round_record):
+        url = f"/logs/round/{quote(round_record['round_uid'], safe='')}"
+        if file or status == "unverified":
+            params = {}
+            if file:
+                params["file"] = file
+            if status == "unverified":
+                params["celadon_status"] = status
+            url += "?" + urlencode(params)
+        return url
+
     if _prefers_json(request) or request.headers.get("x-requested-with") == "fetch":
         return {
             "ok": True,
+            **({"status": status} if status else {}),
             "rounds": [
                 {
                     "round_uid": r["round_uid"],
                     "round_id": r["round_id"],
                     "round_date": r["round_date"],
-                    "url": f"/logs/round/{r['round_uid']}",
+                    "url": round_url(r),
                 }
                 for r in created
             ],
         }
     if len(created) == 1:
-        return RedirectResponse(f"/logs/round/{created[0]['round_uid']}", status_code=303)
-    msg = quote(f"Загружено раундов: {len(created)}")
-    return RedirectResponse(f"/logs?notice={msg}", status_code=303)
+        return RedirectResponse(round_url(created[0]), status_code=303)
+    messages = {
+        "ambiguous": "Для этого файла найдено несколько локальных раундов. Выберите нужный.",
+        "unverified": "Свежесть файла Celadon не подтверждена. Доступны сохранённые раунды.",
+        "cached": "Открыты сохранённые раунды Celadon.",
+        "updated": f"Раундов в обновлённом архиве: {len(created)}",
+    }
+    notice = quote(messages.get(status, f"Загружено раундов: {len(created)}"))
+    separator = "&" if "?" in index_url else "?"
+    return RedirectResponse(f"{index_url}{separator}notice={notice}", status_code=303)
 
 
 async def _index_job(request, config, user, kind, payload, background):
@@ -577,15 +599,36 @@ def register_admin_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
         discord_auth.verify_csrf(user, csrf_token or request.headers.get("x-csrf-token"))
         config = ctx.get_config_fn()
         try:
-            async with heavy_slot(config), staging_directory(prefix="hilleye-celadon-") as staging:
-                source = staging / "input"
-                filename = await celadon_logs.download(path, source, max_mb=config.logs_max_upload_mb)
-                return await _ingest_log(request, config, user, filename, source, label=path, celadon_path=path)
+            result = await import_round(path, config, user.discord_id)
+            if result.status in ("imported", "updated"):
+                await logs_db.record_audit_event(
+                    "upload_round" if result.status == "imported" else "update_celadon",
+                    discord_id=user.discord_id, discord_username=user.username,
+                    target=",".join(row["round_uid"] for row in result.rounds)[:180],
+                    ip_address=discord_auth.get_client_ip(request),
+                    details=f"celadon_path={path}, count={len(result.rounds)}",
+                )
+            if result.status == "ambiguous":
+                date, folder = celadon_logs.round_location(path)
+                index_url = "/logs?" + urlencode(dict(source="disk", date=date, q=folder[6:]))
+            else:
+                index_url = "/logs?" + urlencode(dict(source="upload", q=path[:100]))
+            return _upload_response(
+                request, result.rounds, status=result.status, file=local_file_name(path), index_url=index_url,
+            )
         except ValueError as exc:
             error = HTTPException(400, str(exc))
+        except (UploadPendingError, TimeoutError) as exc:
+            error = HTTPException(503, str(exc), headers={"Retry-After": "60"})
+        except UploadQuotaError as exc:
+            error = HTTPException(507, str(exc))
+        except OSError as exc:
+            if exc.errno != ENOSPC:
+                raise
+            error = HTTPException(507, "На диске хранилища закончился свободный объём.")
         except HTTPException as exc:
             error = exc
-        if _prefers_json(request):
+        if _prefers_json(request) or request.headers.get("x-requested-with") == "fetch":
             raise error
         date, folder = celadon_logs.round_location(path)
         params = urlencode(dict(source="celadon", date=date, round_folder=folder, import_error=str(error.detail)[:1000]))

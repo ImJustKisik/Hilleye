@@ -25,6 +25,7 @@ _AUDIT_ACTION_LABELS: Dict[str, str] = {
     "search_global": "Глобальный поиск",
     "download_log": "Скачивание лога",
     "upload_round": "Загрузка лога",
+    "update_celadon": "Обновление лога Celadon",
     "delete_upload": "Удаление загруженного лога",
     "whitelist_add": "Выдача доступа",
     "whitelist_remove": "Отзыв доступа",
@@ -41,6 +42,7 @@ _AUDIT_ACTION_CSS: Dict[str, str] = {
     "search_global": "audit-info",
     "download_log": "audit-warn",
     "upload_round": "audit-ok",
+    "update_celadon": "audit-ok",
     "delete_upload": "audit-danger",
     "whitelist_add": "audit-warn",
     "whitelist_remove": "audit-danger",
@@ -53,7 +55,7 @@ _AUDIT_ACTION_GROUPS: Dict[str, Tuple[str, List[str]]] = {
     "security": ("Безопасность и доступ", ["login_denied", "whitelist_add", "whitelist_remove", "delete_upload"]),
     "auth": ("Входы и сессии", ["login", "login_denied", "logout"]),
     "reads": ("Просмотр и поиск", ["view_round", "search_global", "download_log"]),
-    "ops": ("Система и архивы", ["refresh", "reindex", "rebuild_maps", "upload_round"]),
+    "ops": ("Система и архивы", ["refresh", "reindex", "rebuild_maps", "upload_round", "update_celadon"]),
 }
 
 
@@ -129,7 +131,7 @@ def _build_audit_target_links(action: str, target: str) -> List[Dict[str, str]]:
             ruid, fname = t.split(":", 1)
             return [{"label": t, "href": f"/logs/round/{quote(ruid)}?{urlencode({'file': fname})}"}]
         return [{"label": t, "href": f"/logs/round/{quote(t)}"}]
-    if action == "upload_round":
+    if action in ("upload_round", "update_celadon"):
         links = []
         for uid in [u.strip() for u in t.split(",") if u.strip()]:
             links.append({"label": uid, "href": f"/logs/round/{quote(uid)}"})

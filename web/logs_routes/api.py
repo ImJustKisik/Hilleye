@@ -8,7 +8,7 @@ import tempfile
 from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 
 from core import logs_db, map_renderer
 from core.log_operations import run_log_operation, finish_thread
@@ -21,7 +21,7 @@ from core.log_parser import (
     mask_sensitive_text,
     parse_qdel_log_file,
 )
-from web.logs_routes.deps import LogsRouteContext, record_log_access, require_indexed_entry, validate_log_search
+from web.logs_routes.deps import LogsRouteContext, record_log_access, require_indexed_entry, round_alias_location, validate_log_search
 
 _ROUND_FIELDS = (
     "round_uid", "source_type", "round_id", "round_date", "label", "uploaded_at",
@@ -120,7 +120,7 @@ def register_api_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
         mask_ips: bool = False,
     ):
         user = await ctx.require_api_user(request)
-        _rnd, file_path = await ctx.resolve_round_and_file(round_uid, file)
+        _rnd, file_path = await ctx.resolve_round_and_file(request, round_uid, file)
 
         res = await read_log_page(
             request, ctx.get_config_fn(), round_uid, file_path,
@@ -175,7 +175,7 @@ def register_api_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
         mask_ips: bool = False,
     ):
         user = await ctx.require_api_user(request)
-        _rnd, file_path = await ctx.resolve_round_and_file(round_uid, "qdel.log")
+        _rnd, file_path = await ctx.resolve_round_and_file(request, round_uid, "qdel.log")
         report = await run_log_operation(
             request, ctx.get_config_fn(), parse_qdel_log_file, file_path,
             q=q, sort_by=sort_by, sort_dir=sort_dir, include_raw=False,
@@ -215,7 +215,7 @@ def register_api_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
         mask_ips: bool = False,
     ):
         user = await ctx.require_api_user(request)
-        _rnd, file_path = await ctx.resolve_round_and_file(round_uid, file)
+        _rnd, file_path = await ctx.resolve_round_and_file(request, round_uid, file)
         entries = await read_log_context(
             round_uid, file_path, line, radius=radius, mask_ips=mask_ips, render_html=False,
             request=request, config=ctx.get_config_fn(),
@@ -264,7 +264,7 @@ def register_api_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
 
         await audit("requested")
         try:
-            rnd, file_path = await ctx.resolve_round_and_file(round_uid, file)
+            rnd, file_path = await ctx.resolve_round_and_file(request, round_uid, file)
         except HTTPException as exc:
             await audit(f"http_{exc.status_code}")
             raise
@@ -360,7 +360,7 @@ def register_api_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
     ):
         user = await ctx.require_api_user(request)
         config = ctx.get_config_fn()
-        rnd, file_path = await ctx.resolve_round_and_file(round_uid, file)
+        rnd, file_path = await ctx.resolve_round_and_file(request, round_uid, file)
         await require_indexed_entry(round_uid, file, file_path, line, entry_id)
         if file == "qdel.log":
             raise HTTPException(
@@ -425,6 +425,8 @@ def register_api_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
         offset: int = Query(default=0, ge=0, le=1_000_000),
     ):
         user = await ctx.require_api_user(request)
+        if round_uid and (location := await round_alias_location(request, round_uid.strip(), in_query=True)):
+            return RedirectResponse(location, status_code=307)
         ckey, date_from, date_to = validate_log_search(ckey, date_from, date_to)
         config = ctx.get_config_fn()
         cache_dir = config.resolved_maps_cache_dir()

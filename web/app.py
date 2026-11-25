@@ -35,6 +35,7 @@ from core.tracker import get_tracker
 from core.config import get_config
 from core.log_jobs import JobRunner
 from core.log_operations import finish_thread
+from core.logs_db.celadon import migrate_celadon
 from core.storage import validate_storage
 from core.telemetry import telemetry, monitor_loop
 from web.logs_routes import create_logs_router
@@ -122,6 +123,7 @@ async def lifespan(app: FastAPI):
     try:
         await core_db.init_db(config.resolved_db_path())
         await core_logs_db.init_logs_db(config.resolved_logs_db_path())
+        await migrate_celadon(config)
     except BaseException:
         await core_logs_db.close_logs_db()
         await core_db.close_db()

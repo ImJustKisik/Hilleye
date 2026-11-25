@@ -93,7 +93,7 @@ def _upload_fingerprint(folder, identity):
 
 
 def _prepare_upload(filename, source, staging, *, label, uploaded_by, max_extracted_bytes, max_archive_files,
-                    origin_path=None):
+                    origin_path=None, preserve_groups=False):
     """Extract into private staging directories using bounded chunks, never archive bytes."""
     groups = {}
     total = count = 0
@@ -201,12 +201,14 @@ def _prepare_upload(filename, source, staging, *, label, uploaded_by, max_extrac
         uid = f"u-{uuid.uuid4().hex[:10]}-{_slug(hint.removeprefix('round-'))[:16]}"
         meta = dict(label=(label.strip() or Path(filename).name)[:100], uploaded_by=uploaded_by,
                     uploaded_at=time.time(), original_filename=Path(filename).name, **origin_meta)
+        if preserve_groups:
+            meta["origin_group"] = group
         with (folder / ".hilleye_meta.json").open("w", encoding="utf-8") as metadata:
             json.dump(meta, metadata, ensure_ascii=False)
             metadata.flush()
             os.fsync(metadata.fileno())
         sync_directory(folder)
-        identity = [origin_path or "", group if len(groups) > 1 else ""]
+        identity = [origin_path or "", group if preserve_groups or len(groups) > 1 else ""]
         prepared.append((uid, folder, _upload_fingerprint(folder, identity), identity))
     return prepared
 
@@ -270,7 +272,9 @@ def _publish_upload(conn, root, staging, prepared, include_debug, quota_bytes):
         previous = conn.execute(
             """SELECT r.round_uid,r.dir_path FROM log_upload_receipts p
                JOIN log_rounds r ON r.round_uid=p.round_uid
-               WHERE p.fingerprint=? AND r.import_batch IS NULL AND r.missing_since IS NULL""",
+               WHERE p.fingerprint=? AND r.import_batch IS NULL AND r.missing_since IS NULL
+               AND NOT EXISTS(SELECT 1 FROM log_celadon_aliases a WHERE a.old_uid=r.round_uid)
+               AND NOT EXISTS(SELECT 1 FROM log_celadon_rounds c WHERE c.round_uid=r.round_uid AND NOT c.present)""",
             (fingerprint,),
         ).fetchone()
         if previous:
@@ -317,6 +321,8 @@ def _find_legacy_duplicate(conn, root, incoming, fingerprint, identity):
              AND has_game_log=? AND has_qdel_log=? AND has_initialize_log=?
              AND game_log_size=? AND qdel_log_size=?
              AND NOT EXISTS(SELECT 1 FROM log_upload_receipts p WHERE p.round_uid=r.round_uid)
+             AND NOT EXISTS(SELECT 1 FROM log_celadon_aliases a WHERE a.old_uid=r.round_uid)
+             AND NOT EXISTS(SELECT 1 FROM log_celadon_rounds c WHERE c.round_uid=r.round_uid AND NOT c.present)
            ORDER BY uploaded_at, r.round_uid""",
         (*flags, sizes.get("game.log", 0), sizes.get("qdel.log", 0)),
     )
@@ -477,6 +483,8 @@ def _clean_deleted_round(root, uid, relative_path):
 
 
 def _delete_upload(conn, round_uid, root):
+    if conn.execute("SELECT 1 FROM log_celadon_aliases WHERE old_uid=?", (round_uid,)).fetchone():
+        return False
     row = conn.execute("SELECT source_type,dir_path FROM log_rounds WHERE round_uid=?", (round_uid,)).fetchone()
     if row is None:
         return False

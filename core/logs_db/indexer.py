@@ -280,8 +280,9 @@ def _record_job_round(conn, job_id, uid, generation, indexed_lines):
     )
 
 
-def _index_file(conn, item, old, *, include_debug, force_reindex, job_id=None):
+def _index_file(conn, item, old, *, include_debug, force_reindex, job_id=None, atomic=False):
     from core.log_parser.filters import _decode_log_line, parse_raw_line
+    write = nullcontext if atomic else lambda: conn
     uid = item["round_uid"]
     path = Path(item["dir_path"]) / "game.log"
     if not item["has_game_log"]:
@@ -293,10 +294,10 @@ def _index_file(conn, item, old, *, include_debug, force_reindex, job_id=None):
         )
         if unchanged:
             if force_reindex and job_id is not None:
-                with conn:
+                with write():
                     _record_job_round(conn, job_id, uid, 0, 0)
             return 0, True
-        with conn:
+        with write():
             conn.execute("DELETE FROM log_entries WHERE round_uid=?", (uid,))
             conn.execute("DELETE FROM log_index_checkpoints WHERE round_uid=?", (uid,))
             conn.execute(
@@ -325,7 +326,7 @@ def _index_file(conn, item, old, *, include_debug, force_reindex, job_id=None):
 
     if (pending is None and not force_reindex and discovered_stat is not None
             and _checkpoint_is_current(cp, discovered_stat, include_debug, accepts_partial(discovered_stat))):
-        _finish_unchanged_file(conn, old, uid, active, checkpoints)
+        _finish_unchanged_file(conn, old, uid, active, checkpoints, atomic=atomic)
         return 0, True
     with path.open("rb") as stream:
         stat = os.fstat(stream.fileno())
@@ -336,7 +337,7 @@ def _index_file(conn, item, old, *, include_debug, force_reindex, job_id=None):
             generation, cp = pending, checkpoints[pending]
         elif not force_reindex and _checkpoint_matches_file(cp, stat, include_debug):
             if _checkpoint_is_current(cp, stat, include_debug, allow_partial):
-                _finish_unchanged_file(conn, old, uid, active, checkpoints)
+                _finish_unchanged_file(conn, old, uid, active, checkpoints, atomic=atomic)
                 return 0, True
             digest = _read_checkpoint_digest(stream, cp, stat, include_debug)
             if digest is not None:
@@ -367,7 +368,7 @@ def _index_file(conn, item, old, *, include_debug, force_reindex, job_id=None):
             nonlocal rows, lines_in_batch
             cp["prefix_sha256"] = digest.hexdigest()
             cp["meta"] = asdict(accumulator)
-            with conn if rebuilding else nullcontext():
+            with write() if rebuilding else nullcontext():
                 if rows:
                     conn.executemany(
                         """INSERT INTO log_entries (round_uid,file_name,line_no,timestamp,category,
@@ -410,55 +411,61 @@ def _index_file(conn, item, old, *, include_debug, force_reindex, job_id=None):
             return True
 
         # Keep unverified append rows invisible. A rebuild can commit batches in its pending generation.
-        with nullcontext() if rebuilding else conn:
+        with nullcontext() if rebuilding else write():
             while stream.tell() < limit and index_next_line():
                 pass
             flush()
             _confirm_file_prefix(path, stream, stat, cp["offset"], digest, cp.get("last_line_terminated", True))
-            with conn if rebuilding else nullcontext():
+            with write() if rebuilding else nullcontext():
                 _publish_meta(conn, item, generation, cp)
                 _record_job_round(
                     conn, job_id, uid, generation,
                     accumulator.total_lines - (0 if include_debug else accumulator.category_counts.get("DEBUG", 0)),
                 )
-        _collect_other_generations(conn, uid, generation)
+        _collect_other_generations(conn, uid, generation, atomic=atomic)
         return added, False
 
 
-def _finish_unchanged_file(conn, old, uid, generation, checkpoints):
+def _finish_unchanged_file(conn, old, uid, generation, checkpoints, *, atomic):
     if old.get("index_error"):
-        with conn:
+        with nullcontext() if atomic else conn:
             conn.execute("UPDATE log_rounds SET index_error=NULL WHERE round_uid=?", (uid,))
     if any(gen != generation for gen in checkpoints):
-        _collect_other_generations(conn, uid, generation)
+        _collect_other_generations(conn, uid, generation, atomic=atomic)
 
 
-def _collect_other_generations(conn, uid, generation):
+def _collect_other_generations(conn, uid, generation, *, atomic):
+    write = nullcontext if atomic else lambda: conn
     while True:
-        with conn:
+        with write():
             count = conn.execute(
                 "DELETE FROM log_entries WHERE id IN (SELECT id FROM log_entries WHERE round_uid=? AND generation!=? LIMIT 1000)",
                 (uid, generation),
             ).rowcount
         if not count:
             break
-    with conn:
+    with write():
         conn.execute("DELETE FROM log_index_checkpoints WHERE round_uid=? AND generation!=?", (uid, generation))
 
 
 def _sync_rounds_conn(
     conn, root_dir, uploads_dir, *, include_debug=False, force_reindex=False, upload_dirs=None,
-    use_saved_debug=False, persist_debug=False, import_batch=None, job_id=None, source_scope=None,
+    use_saved_debug=False, persist_debug=False, import_batch=None, job_id=None, source_scope=None, atomic=False,
 ):
     from core.logs_db.uploads import (
         _collect_abandoned_staging, _recover_upload_batches, reconcile_deleted_uploads, remove_rediscovered_uploads,
     )
+    from core.logs_db.celadon import excluded_celadon_directories, recover_celadon
+
+    if atomic and (upload_dirs is None or not conn.in_transaction):
+        raise ValueError("Atomic indexing requires selected uploads and an open transaction")
 
     started = time.monotonic()
     now = time.time()
+    write = nullcontext if atomic else lambda: conn
     conn.row_factory = sqlite3.Row
     if persist_debug:
-        with conn:
+        with write():
             conn.execute(
                 """INSERT INTO log_maintenance_state VALUES ('index_include_debug',?)
                    ON CONFLICT(name) DO UPDATE SET value_json=excluded.value_json""",
@@ -479,17 +486,27 @@ def _sync_rounds_conn(
             cleanup_errors.extend(reconcile_deleted_uploads(conn, uploads_dir))
             cleanup_errors.extend(_collect_abandoned_staging(uploads_dir))
             cleanup_errors.extend(_recover_upload_batches(conn, uploads_dir, include_debug))
+            cleanup_errors.extend(recover_celadon(conn, uploads_dir))
             state = _discover_dirs_with_logs(uploads_dir, "upload")
             sources["upload"] = state
             if uploads_dir is not None:
                 cleanup_errors.extend(remove_rediscovered_uploads(conn, uploads_dir, state))
             unpublished = {row[0] for row in conn.execute("SELECT id FROM log_upload_batches")}
-            state[:] = [item for item in state if Path(item["dir_path"]).parent.name not in unpublished]
+            excluded = excluded_celadon_directories(conn, uploads_dir)
+            state[:] = [
+                item for item in state
+                if item["dir_path"] not in excluded and Path(item["dir_path"]).parent.name not in unpublished
+            ]
         params = () if source_scope is None else (source_scope,)
         source_filter = " AND source_type=?" if params else ""
         existing = {
             row["round_uid"]: dict(row)
-            for row in conn.execute(f"SELECT * FROM log_rounds WHERE import_batch IS NULL{source_filter}", params)
+            for row in conn.execute(
+                f"SELECT * FROM log_rounds WHERE import_batch IS NULL{source_filter} "
+                "AND NOT EXISTS (SELECT 1 FROM log_celadon_aliases WHERE old_uid=log_rounds.round_uid) "
+                "AND NOT EXISTS (SELECT 1 FROM log_celadon_rounds WHERE round_uid=log_rounds.round_uid AND NOT present)",
+                params,
+            )
         }
     else:
         cleanup_errors = []
@@ -519,7 +536,7 @@ def _sync_rounds_conn(
         errors = [*getattr(found, "errors", []), *(cleanup_errors if source == "upload" else [])]
         summary["errors"] += int(not complete) + (len(cleanup_errors) if source == "upload" else 0)
         found_uids = {item["round_uid"] for item in found}
-        with conn:
+        with write():
             if upload_dirs is None:
                 backlog = sum(
                     max(0, item["game_log_size"] - (existing.get(item["round_uid"], {}).get("indexed_size") or 0))
@@ -577,7 +594,7 @@ def _sync_rounds_conn(
                     logger.warning("Invalid log metadata for %s: %s", uid, exc)
                     source_failed = True
                     summary["errors"] += 1
-            with conn:
+            with write():
                 base_fields = dict(dir_path=item["dir_path"], label=label, uploaded_by=uploaded_by,
                                    uploaded_at=uploaded_at, **{key: item[key] for key in _FILE_FIELDS})
                 if item.get("map_revision"):
@@ -600,21 +617,23 @@ def _sync_rounds_conn(
                 resumed = uid in completed and completed[uid] == old.get("active_generation")
                 added, unchanged = _index_file(
                     conn, item, old, include_debug=include_debug,
-                    force_reindex=force_reindex and not resumed, job_id=job_id,
+                    force_reindex=force_reindex and not resumed, job_id=job_id, atomic=atomic,
                 )
                 summary["skipped_unchanged"] += int(unchanged)
                 summary["indexed_rounds"] += int(not unchanged)
                 summary["indexed_lines"] += added
             except Exception as exc:
+                if atomic:
+                    raise
                 logger.exception("Failed indexing round %s", uid)
                 summary["errors"] += 1
                 source_failed = True
-                with conn:
+                with write():
                     conn.execute("UPDATE log_rounds SET index_error=? WHERE round_uid=?", (str(exc)[:300], uid))
             indexed = conn.execute("SELECT indexed_size FROM log_rounds WHERE round_uid=?", (uid,)).fetchone()[0] or 0
             pending_bytes += max(0, item["game_log_size"] - indexed)
         if upload_dirs is None:
-            with conn:
+            with write():
                 conn.execute("""UPDATE log_sources SET pending_bytes=?,status=?,
                              last_success_at=CASE WHEN ? THEN ? ELSE last_success_at END WHERE source=?""",
                              (pending_bytes, "disabled" if root is None else ("degraded" if source_failed else "ok"),

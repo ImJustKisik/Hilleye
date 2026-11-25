@@ -416,6 +416,214 @@ async def test_celadon_import_uses_remote_identity_and_only_indexes_new_uploads(
     assert await logs_db.get_round_by_uid("u-other") is not None
 
 
+class CeladonSource:
+    def __init__(self, body):
+        self.body = body
+        self.etag = '"one"'
+        self.modified = None
+        self.available = True
+        self.change_on_get = None
+        self.requests = []
+        self.downloaded = 0
+
+    def __call__(self, request):
+        self.requests.append((request.method, request.headers.get("If-Match") or request.headers.get("If-Unmodified-Since")))
+        if not self.available:
+            return httpx.Response(403)
+        if request.method == "GET" and self.change_on_get:
+            self.etag, self.body = self.change_on_get
+            self.change_on_get = None
+            return httpx.Response(412)
+        headers = {"Content-Length": str(len(self.body))}
+        if self.etag:
+            headers["ETag"] = self.etag
+        if self.modified:
+            headers["Last-Modified"] = self.modified
+        if request.method == "HEAD":
+            return httpx.Response(200, headers=headers)
+        self.downloaded += len(self.body)
+        return httpx.Response(200, headers=headers, content=self.body)
+
+
+@pytest.fixture
+def celadon_client(hardening_env, monkeypatch):
+    from core import celadon_logs
+
+    config = hardening_env[0]
+
+    def connect(source):
+        monkeypatch.setattr(celadon_logs.httpx, "AsyncHTTPTransport", lambda **_: httpx.MockTransport(source))
+        session = _cookie(config)
+        csrf = discord_auth.verify_payload(session, config)["csrf"]
+        client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=web.app), base_url="http://test",
+            cookies={discord_auth.SESSION_COOKIE_NAME: session}, headers={"Accept": "application/json", "X-CSRF-Token": csrf},
+        )
+        return client
+
+    return connect
+
+
+async def _submit_celadon(client, path):
+    response = await client.post("/logs/celadon", data={"path": path})
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+async def test_celadon_validates_before_download_and_updates_same_uid(hardening_env, celadon_client):
+    path = "2026/11/16/round-42/game.log"
+    source = CeladonSource(LINE.encode())
+    async with celadon_client(source) as client:
+        first, second = await asyncio.gather(*(_submit_celadon(client, path) for _ in range(2)))
+        uid = first["rounds"][0]["round_uid"]
+        assert {first["status"], second["status"]} == {"imported", "cached"}
+        assert second["rounds"][0]["round_uid"] == uid
+        assert source.requests == [("GET", None), ("HEAD", None)]
+        assert source.downloaded == len(LINE)
+
+        source.etag = '"two"'
+        source.body = LINE.replace("markerfirst", "markerlater").encode()
+        source.change_on_get = ('"three"', LINE.replace("markerfirst", "markerfinal").encode())
+        updated = await _submit_celadon(client, path)
+        assert updated["status"] == "updated" and updated["rounds"][0]["round_uid"] == uid
+        assert source.requests[-4:] == [("HEAD", None), ("GET", '"two"'), ("HEAD", None), ("GET", '"three"')]
+        assert source.downloaded == 2 * len(LINE)
+        assert (await logs_db.list_rounds(source_filter="upload"))[1] == 1
+        assert (await logs_db.search_logs_fts(query="markerfinal"))[1] == 1
+        assert (await logs_db.search_logs_fts(query="markerfirst"))[1] == 0
+        assert (await logs_db.get_audit_events(action_filter="update_celadon"))[1] == 1
+
+        source.available = False
+        fallback = await _submit_celadon(client, path)
+        assert fallback["status"] == "unverified" and fallback["rounds"][0]["round_uid"] == uid
+        opened = await client.get(fallback["rounds"][0]["url"])
+        assert opened.status_code == 200 and "Свежесть файла Celadon не подтверждена" in opened.text
+        assert "markerfinal" in opened.text
+        assert source.requests[-1] == ("HEAD", None) and len(source.requests) == 7
+
+
+async def test_celadon_opens_indexed_local_file_without_upstream_requests(hardening_env, celadon_client):
+    await _sync(hardening_env)
+    uid = (await logs_db.list_rounds())[0][0]["round_uid"]
+    source = CeladonSource(LINE.encode())
+    source.available = False
+    async with celadon_client(source) as client:
+        opened = await _submit_celadon(client, "2026/11/16/round-123/game.log")
+        assert opened["status"] == "disk"
+        assert opened["rounds"][0]["round_uid"] == uid
+        assert "?file=game.log" in opened["rounds"][0]["url"]
+        assert not source.requests
+        assert (await logs_db.list_rounds(source_filter="upload"))[1] == 0
+
+
+async def test_celadon_migrates_legacy_duplicates_and_preserves_aliases(hardening_env, celadon_client, tmp_path):
+    from core.logs_db.celadon import migrate_celadon
+
+    config, _, _, uploads = hardening_env
+    path = "2026/11/16/round-42/game.log"
+    old, = await logs_db.ingest_uploaded_log("game.log", LINE.encode(), uploads_dir=uploads, label=path, origin_path=path)
+    newest_body = LINE.replace("markerfirst", "markerlater").encode()
+    newest, = await logs_db.ingest_uploaded_log("game.log", newest_body, uploads_dir=uploads, label=path, origin_path=path)
+    await migrate_celadon(config)
+    await migrate_celadon(config)
+    assert (await logs_db.list_rounds(source_filter="upload"))[1] == 1
+    assert (await logs_db.search_logs_fts(query="markerfirst"))[1] == 0
+    old_uid = old["round_uid"]
+    uid = newest["round_uid"]
+    source = CeladonSource(newest_body)
+    async with celadon_client(source) as client:
+        alias = await client.get(f"/logs/round/{old_uid}?file=game.log&entry_id=4", follow_redirects=False)
+        assert alias.status_code == 307
+        assert alias.headers["location"] == f"/logs/round/{uid}?file=game.log"
+        raw = await client.get(f"/api/v1/logs/rounds/{old_uid}/download?mode=raw", follow_redirects=True)
+        assert raw.content == newest_body
+        search = await client.get(f"/api/v1/logs/search?round_uid={old_uid}&q=markerlater", follow_redirects=True)
+        assert search.json()["hits"][0]["round_uid"] == uid
+        first = await _submit_celadon(client, path)
+        assert first["status"] == "unverified" and source.downloaded == 0
+        assert (await _submit_celadon(client, path))["status"] == "unverified"
+
+        source.etag = '"two"'
+        source.body = LINE.encode()
+        assert (await _submit_celadon(client, path))["rounds"][0]["round_uid"] == uid
+        assert (await logs_db.search_logs_fts(query="markerfirst"))[1] == 1
+        assert (await logs_db.list_rounds(source_filter="upload"))[1] == 1
+        backup = await asyncio.to_thread(create_backup, config, tmp_path / "celadon-backup")
+        restored = await asyncio.to_thread(restore_backup, backup, tmp_path / "celadon-restored")
+        with closing(sqlite3.connect(restored["HILLEYE_LOGS_DB_PATH"])) as conn:
+            assert conn.execute("SELECT round_uid FROM log_celadon_aliases WHERE old_uid=?", (old_uid,)).fetchone()[0] == uid
+            old_file = conn.execute("SELECT dir_path FROM log_rounds WHERE round_uid=?", (old_uid,)).fetchone()[0]
+            assert (Path(old_file) / "game.log").read_bytes() == LINE.encode()
+            assert conn.execute("SELECT etag FROM log_celadon_versions WHERE path=?", (path,)).fetchone()[0] == '"two"'
+
+
+async def test_celadon_failed_archive_revision_rolls_back_and_recovery_reuses_group_uids(
+    hardening_env, celadon_client, monkeypatch,
+):
+    from core.logs_db import celadon, indexer
+
+    def archive(groups):
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as writer:
+            for group, marker in groups.items():
+                writer.writestr(f"{group}/game.log", LINE.replace("markerfirst", marker))
+        return buffer.getvalue()
+
+    path = "2026/11/16/round-42/rounds.zip"
+    source = CeladonSource(archive({"first": "oldfirst", "second": "oldsecond"}))
+    async with celadon_client(source) as client:
+        initial = await _submit_celadon(client, path)
+        first_uid, second_uid = [row["round_uid"] for row in initial["rounds"]]
+        first_dir = Path((await logs_db.get_round_by_uid(first_uid))["dir_path"])
+        source.etag = '"two"'
+        source.body = archive({"first": "newfirst", "third": "newthird"})
+        original = indexer._publish_meta
+
+        def fail_last(conn, item, generation, checkpoint):
+            if item["round_uid"].endswith("-third"):
+                raise OSError("interrupted archive publication")
+            return original(conn, item, generation, checkpoint)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(indexer, "_publish_meta", fail_last)
+            assert (await _submit_celadon(client, path))["status"] == "unverified"
+            assert (await logs_db.search_logs_fts(query="oldfirst"))[1] == 1
+            assert (await logs_db.search_logs_fts(query="newfirst"))[1] == 0
+        assert not (await _sync(hardening_env))["errors"]
+        monkeypatch.setattr(celadon, "_READ_GRACE", 0)
+        updated = await _submit_celadon(client, path)
+        assert updated["status"] == "updated" and updated["rounds"][0]["round_uid"] == first_uid
+        assert await logs_db.get_round_by_uid(second_uid) is None
+        assert (await logs_db.search_logs_fts(query="oldsecond"))[1] == 0
+        assert (await logs_db.search_logs_fts(query="newfirst"))[1] == 1
+        assert not (await _sync(hardening_env))["errors"]
+        assert not first_dir.exists()
+
+        source.etag = '"three"'
+        source.body = archive({"first": "newfirst", "second": "newsecond"})
+        restored = await _submit_celadon(client, path)
+        assert {row["round_uid"] for row in restored["rounds"]} == {first_uid, second_uid}
+        assert not (await _sync(hardening_env))["errors"]
+        assert (await logs_db.list_rounds(source_filter="upload"))[1] == 2
+
+
+async def test_celadon_uses_last_modified_and_opens_saved_copy_without_a_validator(celadon_client):
+    path = "2026/11/16/round-42/game.log"
+    source = CeladonSource(LINE.encode())
+    source.etag = None
+    source.modified = "Mon, 16 Nov 2026 12:00:00 GMT"
+    async with celadon_client(source) as client:
+        assert (await _submit_celadon(client, path))["status"] == "imported"
+        assert (await _submit_celadon(client, path))["status"] == "cached"
+        source.modified = None
+        assert (await _submit_celadon(client, path))["status"] == "unverified"
+        assert source.downloaded == len(LINE)
+        source.modified = "Mon, 16 Nov 2026 12:01:00 GMT"
+        source.body = LINE.replace("markerfirst", "markerlater").encode()
+        assert (await _submit_celadon(client, path))["status"] == "updated"
+        assert source.requests[-1] == ("GET", source.modified)
+
+
 async def test_masked_links_export_and_log_cache_policy(hardening_env):
     config, _, game, _ = hardening_env
     game.write_text(

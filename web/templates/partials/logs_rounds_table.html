@@ -26,13 +26,17 @@
         <td colspan="2">
           {% if r.files %}
           <div class="logs-row-quick-actions">
-            <span class="cell-sub">Импортировать</span>
-            {% for filename, path in r.files %}
+            {% for file in r.files %}
+            {% if file.href %}
+            <a href="{{ file.href }}" class="log-mini-btn">Открыть <span class="mono-val">{{ file.name }}</span></a>
+            {% else %}
             <form action="/logs/celadon" method="post" class="logs-inline-form">
               <input type="hidden" name="csrf_token" value="{{ user.csrf_token }}">
-              <input type="hidden" name="path" value="{{ path }}">
-              <button class="log-mini-btn mono-val" type="submit" aria-label="Импортировать {{ filename }}">{{ filename }}</button>
+              <input type="hidden" name="path" value="{{ file.path }}">
+              {% set action = 'Выбрать' if file.disk else 'Открыть и проверить' if file.known else 'Импортировать' %}
+              <button class="log-mini-btn" type="submit">{{ action }} <span class="mono-val">{{ file.name }}</span></button>
             </form>
+            {% endif %}
             {% endfor %}
           </div>
           {% else %}

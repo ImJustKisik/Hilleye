@@ -287,7 +287,9 @@ def prune_logs(config, *, apply=False, optimize_index=False):
     map_root = config.resolved_maps_cache_dir().resolve()
     cutoffs = (
         ("uploads", config.logs_upload_retention_days, "log_rounds", "round_uid",
-         "source_type='upload' AND import_batch IS NULL AND uploaded_at < ?"),
+         "source_type='upload' AND import_batch IS NULL AND uploaded_at < ? "
+         "AND NOT EXISTS (SELECT 1 FROM log_celadon_aliases WHERE old_uid=log_rounds.round_uid) "
+         "AND NOT EXISTS (SELECT 1 FROM log_celadon_rounds WHERE round_uid=log_rounds.round_uid AND NOT present)"),
         ("audit_events", config.logs_audit_retention_days, "log_audit_events", "id", "created_at < ?"),
         ("jobs", config.logs_job_retention_days, "log_jobs", "id",
          "state IN ('succeeded','partial','failed') AND finished_at < ?"),

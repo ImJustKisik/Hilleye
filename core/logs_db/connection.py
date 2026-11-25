@@ -14,7 +14,7 @@ import aiosqlite
 ALLOWED_LOG_FILES: Set[str] = {"game.log", "qdel.log", "initialize.log"}
 _SAFE_SLUG_RE = re.compile(r"[^a-zA-Z0-9_-]+")
 _DATE_PATH_RE = re.compile(r"(20\d{2})[/\\](0[1-9]|1[0-2])[/\\](0[1-9]|[12]\d|3[01])")
-_SCHEMA_VERSION = 2
+_SCHEMA_VERSION = 3
 
 LOGS_SCHEMA_SQL = """
 PRAGMA journal_mode = WAL;
@@ -167,6 +167,30 @@ CREATE TABLE IF NOT EXISTS log_upload_receipts (
     round_uid TEXT NOT NULL REFERENCES log_rounds(round_uid) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_log_upload_receipts_round ON log_upload_receipts(round_uid);
+CREATE TABLE IF NOT EXISTS log_celadon_versions (
+    path TEXT PRIMARY KEY,
+    etag TEXT,
+    modified TEXT,
+    size INTEGER,
+    confirmed INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS log_celadon_rounds (
+    round_uid TEXT PRIMARY KEY REFERENCES log_rounds(round_uid) ON DELETE CASCADE,
+    path TEXT NOT NULL,
+    group_path TEXT,
+    legacy_single INTEGER NOT NULL DEFAULT 0,
+    present INTEGER NOT NULL DEFAULT 1,
+    UNIQUE(path, group_path)
+);
+CREATE INDEX IF NOT EXISTS idx_log_celadon_rounds_path ON log_celadon_rounds(path);
+CREATE TABLE IF NOT EXISTS log_celadon_aliases (
+    old_uid TEXT PRIMARY KEY REFERENCES log_rounds(round_uid) ON DELETE CASCADE,
+    round_uid TEXT REFERENCES log_rounds(round_uid) ON DELETE SET NULL
+);
+CREATE TABLE IF NOT EXISTS log_celadon_cleanup (
+    relative_path TEXT PRIMARY KEY,
+    remove_after REAL NOT NULL
+);
 CREATE TABLE IF NOT EXISTS log_upload_deletions (
     round_uid TEXT PRIMARY KEY,
     relative_path TEXT NOT NULL,
