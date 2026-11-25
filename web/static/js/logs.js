@@ -210,13 +210,16 @@
         field.value = params.get(name) || (name === "radius" ? "0" : "");
       }
     });
-    document.getElementById("logs-raw-html-cb").checked = params.get("html") === "0";
-    var invalidTimeFields = results.dataset.invalidTimeFields.split(" ");
+    var rawHtmlCb = document.getElementById("logs-raw-html-cb");
+    if (rawHtmlCb) rawHtmlCb.checked = params.get("html") === "0";
+    var invalidTimeFields = (results.dataset.invalidTimeFields || "").split(" ").filter(Boolean);
     ["time_from", "time_to"].forEach(function (name) {
       var field = form.elements.namedItem(name);
+      if (!field) return;
       var invalid = invalidTimeFields.includes(name);
       field.setAttribute("aria-invalid", String(invalid));
-      document.getElementById(field.getAttribute("aria-errormessage")).hidden = !invalid;
+      var errEl = document.getElementById(field.getAttribute("aria-errormessage"));
+      if (errEl) errEl.hidden = !invalid;
     });
     if (results.dataset.invalidTimeFields && document.getElementById("logs-filter-drawer").hidden) {
       document.getElementById("logs-filter-drawer-toggle").click();
@@ -226,10 +229,12 @@
 
     var streamLink = document.getElementById("logs-link-stream");
     var mapLink = document.getElementById("logs-link-map");
-    streamLink.dataset.focusLine = "";
-    ["focusLine", "targetX", "targetY", "targetZ"].forEach(function (key) {
-      mapLink.dataset[key] = "";
-    });
+    if (streamLink) streamLink.dataset.focusLine = "";
+    if (mapLink) {
+      ["focusLine", "targetX", "targetY", "targetZ"].forEach(function (key) {
+        mapLink.dataset[key] = "";
+      });
+    }
     syncHeaderActionLinks(form, results.dataset.query);
   }
 
@@ -514,7 +519,7 @@
     loadingBar.className = "logs-context-bar";
     var loadingText = document.createElement("span");
     loadingText.className = "mono-val cell-sub";
-    loadingText.textContent = "Загрузка контекста" + (lineNo ? " #L" + lineNo : "") + "...";
+    loadingText.textContent = "Загрузка контекста" + (lineNo ? " #L" + lineNo : "") + "…";
     var loadingClose = document.createElement("button");
     loadingClose.type = "button";
     loadingClose.className = "log-mini-btn";
@@ -589,7 +594,7 @@
     if (modalTitle) {
       modalTitle.textContent = "Контекст строки #L" + (lineNo || "");
     }
-    modalBody.innerHTML = '<div class="logs-panel-body cell-sub">Загрузка контекста...</div>';
+    modalBody.innerHTML = '<div class="logs-panel-body cell-sub">Загрузка контекста…</div>';
     modal.hidden = false;
     if (contextRequest) contextRequest.abort();
     var controller = new AbortController();
@@ -611,6 +616,7 @@
 
   function initContextModal(root) {
     var modal = document.getElementById("log-context-modal");
+    var modalBody = document.getElementById("log-context-modal-body");
     var closeBtn = document.getElementById("log-context-modal-close");
 
     if (modal && modalBody) {

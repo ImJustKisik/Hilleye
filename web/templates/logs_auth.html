@@ -6,9 +6,9 @@
 {% block language %}ru{% endblock %}
 {% block main_class %} logs-auth-gate{% endblock %}
 {% block extra_head %}
-<link rel="stylesheet" href="/static/css/logs.css?v=auth-gate-403">
+<link rel="stylesheet" href="/static/css/logs.css?v=a11y-fix">
 {% if status_kind == 'forbidden' %}
-<script src="/static/js/logs.js?v=logs-modules" defer></script>
+<script src="/static/js/logs.js?v=modal-body-fix" defer></script>
 <link rel="stylesheet" href="/static/css/access-denied.css?v=access-gate">
 {% endif %}
 {% if play_denied_sound %}

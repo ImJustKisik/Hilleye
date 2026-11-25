@@ -2,9 +2,9 @@
 {% block title %}Раунд {{ round.round_id }} ({{ selected_file }}) — Логи — Hilleye{% endblock %}
 {% block language %}ru{% endblock %}
 {% block extra_head %}
-<link rel="stylesheet" href="/static/css/logs.css?v=round-stream">
-{% if view_mode == "map" %}<script src="/static/js/log-map.js" defer></script>{% endif %}
-<script src="/static/js/logs.js?v=logs-modules" defer></script>
+<link rel="stylesheet" href="/static/css/logs.css?v=a11y-fix">
+{% if view_mode == "map" %}<script src="/static/js/log-map.js?v=a11y-fix" defer></script>{% endif %}
+<script src="/static/js/logs.js?v=modal-body-fix" defer></script>
 <script src="/static/js/log-jobs.js" defer></script>
 {% endblock %}
 

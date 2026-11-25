@@ -77,7 +77,7 @@
       if (csrfInput && csrfInput.value) {
         headers["X-CSRF-Token"] = csrfInput.value;
       }
-      showStatus("Загрузка и индексация файла...", false);
+      showStatus("Загрузка и индексация файла…", false);
       fetch(form.action, {
         method: "POST",
         body: data,
