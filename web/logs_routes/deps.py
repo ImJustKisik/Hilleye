@@ -72,6 +72,7 @@ class LogsRouteContext:
         error_message: str = "",
         next_path: str = "/logs",
         http_status: Optional[int] = None,
+        popup_attempt: str = "",
     ) -> HTMLResponse:
         shell = await self.get_shell_context_fn()
         config = self.get_config_fn()
@@ -91,6 +92,7 @@ class LogsRouteContext:
                 "status_kind": status_kind,
                 "session_user": session,
                 "error_message": error_message,
+                "popup_attempt": popup_attempt,
                 "next_path": discord_auth.sanitize_next_path(next_path),
                 "oauth_configured": config.discord_oauth_configured(),
                 "redirect_uri_hint": config.discord_redirect_uri or "https://your-domain.example/auth/discord/callback",

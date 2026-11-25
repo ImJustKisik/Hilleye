@@ -36,6 +36,12 @@ _EPHEMERAL_WARNED = False
 _http_transport_factory: Optional[Callable[[], httpx.AsyncBaseTransport]] = None
 
 
+@dataclass(frozen=True)
+class OAuthState:
+    next_path: str
+    popup_attempt: str
+
+
 @dataclass
 class AuthUser:
     discord_id: str
@@ -128,7 +134,9 @@ def build_discord_authorize_url(config: AppConfig, state_token: str) -> str:
     return f"{DISCORD_AUTHORIZE_URL}?{urlencode(params)}"
 
 
-def create_oauth_state_cookie(config: AppConfig, next_path: str = "/logs") -> Tuple[str, str]:
+def create_oauth_state_cookie(
+    config: AppConfig, next_path: str = "/logs", *, popup_attempt: str = ""
+) -> Tuple[str, str]:
     """Return (raw_state_param, signed_state_cookie_value)."""
     nonce = secrets.token_urlsafe(24)
     now = time.time()
@@ -136,6 +144,7 @@ def create_oauth_state_cookie(config: AppConfig, next_path: str = "/logs") -> Tu
         {
             "state": nonce,
             "next": sanitize_next_path(next_path),
+            "popup_attempt": popup_attempt,
             "exp": now + 600,
         },
         config,
@@ -147,8 +156,8 @@ def verify_oauth_state(
     state_param: Optional[str],
     state_cookie: Optional[str],
     config: AppConfig,
-) -> Optional[str]:
-    """Verify OAuth2 state token against signed cookie and return sanitized next_path if valid."""
+) -> Optional[OAuthState]:
+    """Return the signed OAuth attempt after verifying Discord's state parameter."""
     if not state_param:
         return None
     payload = verify_payload(state_cookie, config)
@@ -157,7 +166,10 @@ def verify_oauth_state(
     expected = str(payload.get("state") or "")
     if not expected or not hmac.compare_digest(expected, state_param):
         return None
-    return sanitize_next_path(payload.get("next"))
+    return OAuthState(
+        next_path=sanitize_next_path(payload.get("next")),
+        popup_attempt=str(payload.get("popup_attempt") or ""),
+    )
 
 
 async def exchange_discord_code(code: str, config: AppConfig) -> Dict[str, Any]:

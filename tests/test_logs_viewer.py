@@ -453,6 +453,48 @@ async def test_discord_login_requires_confirmed_mfa(logs_env, callback_path, mfa
     assert events[0]["target"] == "mfa_required"
 
 
+@pytest.mark.parametrize(
+    ("mfa_enabled", "expected_status", "popup_result"),
+    [(True, 200, "signed_in"), (False, 403, "mfa_required")],
+)
+async def test_discord_popup_result_requires_matching_oauth_state(
+    logs_env, mfa_enabled, expected_status, popup_result
+):
+    attempt = "1a10763d-a82c-4309-a445-98ee47e29217"
+    discord_auth.set_discord_http_transport(
+        lambda: _mock_discord_transport("111111111111111111", "headadmin", mfa_enabled=mfa_enabled)
+    )
+    async with AsyncClient(transport=ASGITransport(app=web_app.app), base_url="http://test") as client:
+        login = await client.get(
+            "/auth/discord/login", params={"next": "/logs/admin", "popup_attempt": attempt}
+        )
+        discord_query = parse_qs(urlsplit(login.headers["location"]).query)
+        assert "popup_attempt" not in discord_query
+
+        stale = await client.get(
+            "/auth/discord/callback",
+            params={"code": "test_code", "state": "stale", "popup_attempt": attempt},
+        )
+        assert stale.status_code == 400
+        assert "data-oauth-popup=" not in stale.text
+        assert discord_auth.OAUTH_STATE_COOKIE_NAME in client.cookies
+
+        callback = await client.get(
+            "/auth/discord/callback", params={"code": "test_code", "state": discord_query["state"][0]}
+        )
+        assert callback.status_code == expected_status
+        assert f'data-oauth-popup="{attempt}" data-oauth-result="{popup_result}"' in callback.text
+        assert 'src="/static/js/discord-login.js"' in callback.text
+        assert discord_auth.OAUTH_STATE_COOKIE_NAME not in client.cookies
+        assert (discord_auth.SESSION_COOKIE_NAME in client.cookies) is mfa_enabled
+        if mfa_enabled:
+            assert 'href="/logs/admin"' in callback.text
+            assert (await client.get("/logs/admin")).status_code == 200
+        else:
+            assert "Воспроизвести звук" in callback.text
+            assert (await client.get("/logs/admin")).status_code == 401
+
+
 async def test_discord_session_without_mfa_requires_new_login(logs_env):
     config = logs_env["cfg"]
     legacy_session = discord_auth.sign_payload(

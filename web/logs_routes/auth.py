@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import logging
 from typing import Optional
+from uuid import UUID
 
 from fastapi import APIRouter, Form, HTTPException, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, Response
 
 from core import discord_auth, logs_db
 from web.logs_routes.deps import LogsRouteContext
@@ -14,14 +15,26 @@ from web.logs_routes.deps import LogsRouteContext
 logger = logging.getLogger(__name__)
 
 
+def _clear_oauth_state(response: Response, *, secure: bool) -> None:
+    response.delete_cookie(
+        discord_auth.OAUTH_STATE_COOKIE_NAME,
+        path="/",
+        secure=secure,
+        httponly=True,
+        samesite="lax",
+    )
+
+
 def register_auth_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
     @router.get("/auth/discord/login")
-    async def discord_login(request: Request, next: str = "/logs"):
+    async def discord_login(request: Request, next: str = "/logs", popup_attempt: UUID | None = None):
         config = ctx.get_config_fn()
         if not config.discord_oauth_configured():
             return await ctx.render_auth_gate(request, status_kind="unconfigured", next_path=next)
 
-        state_token, state_cookie = discord_auth.create_oauth_state_cookie(config, next_path=next)
+        state_token, state_cookie = discord_auth.create_oauth_state_cookie(
+            config, next_path=next, popup_attempt=str(popup_attempt) if popup_attempt else ""
+        )
         authorize_url = discord_auth.build_discord_authorize_url(config, state_token)
         response = RedirectResponse(authorize_url, status_code=302)
         response.set_cookie(
@@ -49,57 +62,33 @@ def register_auth_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
 
         state_cookie = request.cookies.get(discord_auth.OAUTH_STATE_COOKIE_NAME)
         cookie_secure = bool(config.discord_secure_cookies)
-        if error:
+        oauth_state = discord_auth.verify_oauth_state(state, state_cookie, config)
+
+        async def render_failure(message: str, http_status: int, status_kind: str = "unauthenticated"):
             resp = await ctx.render_auth_gate(
                 request,
-                status_kind="unauthenticated",
-                error_message="Авторизация через Discord отменена.",
-                http_status=400,
+                status_kind=status_kind,
+                error_message=message,
+                next_path=oauth_state.next_path if oauth_state else "/logs",
+                popup_attempt=oauth_state.popup_attempt if oauth_state else "",
+                http_status=http_status,
             )
-            resp.delete_cookie(
-                discord_auth.OAUTH_STATE_COOKIE_NAME,
-                path="/",
-                secure=cookie_secure,
-                httponly=True,
-                samesite="lax",
-            )
+            if oauth_state:
+                _clear_oauth_state(resp, secure=cookie_secure)
             return resp
 
-        next_path = discord_auth.verify_oauth_state(state, state_cookie, config)
-        if not code or not next_path:
-            resp = await ctx.render_auth_gate(
-                request,
-                status_kind="unauthenticated",
-                error_message="Некорректный или устаревший OAuth state. Попробуйте войти снова.",
-                http_status=400,
-            )
-            resp.delete_cookie(
-                discord_auth.OAUTH_STATE_COOKIE_NAME,
-                path="/",
-                secure=cookie_secure,
-                httponly=True,
-                samesite="lax",
-            )
-            return resp
+        if error:
+            return await render_failure("Авторизация через Discord отменена.", 400)
+        if not code or not oauth_state:
+            return await render_failure("Некорректный или устаревший OAuth state. Попробуйте войти снова.", 400)
 
         try:
             profile = await discord_auth.exchange_discord_code(code, config)
         except Exception as exc:
             logger.warning("Discord OAuth callback error: %s", exc)
-            resp = await ctx.render_auth_gate(
-                request,
-                status_kind="unauthenticated",
-                error_message="Не удалось подтвердить профиль в Discord API. Попробуйте снова.",
-                http_status=502,
+            return await render_failure(
+                "Не удалось подтвердить профиль в Discord API. Попробуйте снова.", 502
             )
-            resp.delete_cookie(
-                discord_auth.OAUTH_STATE_COOKIE_NAME,
-                path="/",
-                secure=cookie_secure,
-                httponly=True,
-                samesite="lax",
-            )
-            return resp
 
         ip = discord_auth.get_client_ip(request)
         if profile["mfa_enabled"] is not True:
@@ -110,21 +99,11 @@ def register_auth_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
                 target="mfa_required",
                 ip_address=ip,
             )
-            resp = await ctx.render_auth_gate(
-                request,
+            return await render_failure(
+                "Для входа включите двухфакторную аутентификацию (2FA) в настройках Discord и войдите снова.",
+                403,
                 status_kind="mfa_required",
-                error_message="Для входа включите двухфакторную аутентификацию (2FA) в настройках Discord и войдите снова.",
-                next_path=next_path,
-                http_status=403,
             )
-            resp.delete_cookie(
-                discord_auth.OAUTH_STATE_COOKIE_NAME,
-                path="/",
-                secure=cookie_secure,
-                httponly=True,
-                samesite="lax",
-            )
-            return resp
 
         session_cookie = discord_auth.create_session_cookie(profile, config)
         allowed, role, _ = await logs_db.check_whitelist_access(
@@ -139,15 +118,18 @@ def register_auth_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
             details=f"display_name={profile['display_name']}",
         )
 
-        redirect = RedirectResponse(next_path, status_code=302)
-        redirect.delete_cookie(
-            discord_auth.OAUTH_STATE_COOKIE_NAME,
-            path="/",
-            secure=cookie_secure,
-            httponly=True,
-            samesite="lax",
-        )
-        redirect.set_cookie(
+        if oauth_state.popup_attempt:
+            response = await ctx.render_auth_gate(
+                request,
+                status_kind="signed_in",
+                next_path=oauth_state.next_path,
+                popup_attempt=oauth_state.popup_attempt,
+                http_status=200,
+            )
+        else:
+            response = RedirectResponse(oauth_state.next_path, status_code=302)
+        _clear_oauth_state(response, secure=cookie_secure)
+        response.set_cookie(
             key=discord_auth.SESSION_COOKIE_NAME,
             value=session_cookie,
             max_age=int(config.discord_session_ttl_seconds),
@@ -156,7 +138,7 @@ def register_auth_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
             secure=cookie_secure,
             path="/",
         )
-        return redirect
+        return response
 
     @router.post("/auth/logout")
     async def discord_logout(request: Request, csrf_token: str = Form(default="")):
