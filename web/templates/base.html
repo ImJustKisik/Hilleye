@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0b0e12">
   <meta name="htmx-config" content='{"includeIndicatorStyles": false, "allowEval": false}'>
   <meta name="description" content="Hilleye — Space Station 13 server browser, live round status, and player playtime tracker.">
   {% block head_meta %}
@@ -20,6 +21,7 @@
   <script src="/static/js/app.js?v=round-history-privacy" defer></script>
 </head>
 <body>
+  <a href="#main-content" class="sr-only skip-link">Skip to main content</a>
   <div class="app-shell">
     <header class="app-header" lang="en">
       <a href="/" class="brand-lockup">
@@ -49,7 +51,7 @@
       </nav>
     </header>
 
-    <main class="app-main{% block main_class %}{% endblock %}">
+    <main id="main-content" class="app-main{% block main_class %}{% endblock %}">
       {% block content %}{% endblock %}
     </main>
 

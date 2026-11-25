@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Раунд {{ round.round_id }} ({{ selected_file }}) — Логи — Hilleye{% endblock %}
+{% block language %}ru{% endblock %}
 {% block extra_head %}
 <link rel="stylesheet" href="/static/css/logs.css?v=round-stream">
 {% if view_mode == "map" %}<script src="/static/js/log-map.js" defer></script>{% endif %}
@@ -103,7 +104,7 @@
         <input type="hidden" name="per_page" value="{{ qdel_report.per_page }}">
         <div class="logs-field">
           <label for="qdel-q" class="logs-label">Фильтр по пути</label>
-          <input type="text" id="qdel-q" name="q" value="{{ q }}" class="logs-input" placeholder="/obj/item/...">
+          <input type="text" id="qdel-q" name="q" value="{{ q }}" class="logs-input" placeholder="/obj/item/…" autocomplete="off" spellcheck="false">
         </div>
         <div class="logs-field logs-field-sm">
           <label for="qdel-sort" class="logs-label">Сортировка</label>
@@ -226,11 +227,11 @@
           <div class="logs-primary-inputs">
             <div class="logs-field logs-field-search">
               <label for="logs-q-input" class="sr-only">Поиск</label>
-              <input type="text" id="logs-q-input" name="q" value="{{ q }}" class="logs-input" placeholder="Поиск по строке... (/)">
+              <input type="text" id="logs-q-input" name="q" value="{{ q }}" class="logs-input" placeholder="Поиск по строке… (/)" autocomplete="off">
             </div>
             <div class="logs-field logs-field-ckey">
               <label for="logs-ckey-input" class="sr-only">Игрок (ckey)</label>
-              <input type="text" id="logs-ckey-input" name="ckey" value="{{ ckey }}" class="logs-input" placeholder="ckey...">
+              <input type="text" id="logs-ckey-input" name="ckey" value="{{ ckey }}" class="logs-input" placeholder="ckey…" autocomplete="off" spellcheck="false">
             </div>
             <button type="submit" class="logs-btn logs-btn-primary">Найти</button>
             <button type="button"
@@ -268,13 +269,13 @@
             </div>
             <div class="logs-field logs-field-xs">
               <label for="logs-time-from" class="logs-label" title="Начало интервала (ЧЧ:ММ)">Время с</label>
-              <input type="text" id="logs-time-from" name="time_from" value="{{ time_from }}" class="logs-input" placeholder="ЧЧ:ММ"
+              <input type="text" id="logs-time-from" name="time_from" value="{{ time_from }}" class="logs-input" placeholder="ЧЧ:ММ" autocomplete="off" inputmode="numeric"
                      aria-errormessage="logs-time-from-error" aria-invalid="{{ 'true' if 'time_from' in invalid_time_fields else 'false' }}">
               <span id="logs-time-from-error" class="logs-field-error" role="alert" {% if 'time_from' not in invalid_time_fields %}hidden{% endif %}>Укажите время в формате ЧЧ:ММ или ЧЧ:ММ:СС.</span>
             </div>
             <div class="logs-field logs-field-xs">
               <label for="logs-time-to" class="logs-label" title="Конец интервала (ЧЧ:ММ)">Время по</label>
-              <input type="text" id="logs-time-to" name="time_to" value="{{ time_to }}" class="logs-input" placeholder="ЧЧ:ММ"
+              <input type="text" id="logs-time-to" name="time_to" value="{{ time_to }}" class="logs-input" placeholder="ЧЧ:ММ" autocomplete="off" inputmode="numeric"
                      aria-errormessage="logs-time-to-error" aria-invalid="{{ 'true' if 'time_to' in invalid_time_fields else 'false' }}">
               <span id="logs-time-to-error" class="logs-field-error" role="alert" {% if 'time_to' not in invalid_time_fields %}hidden{% endif %}>Укажите время в формате ЧЧ:ММ или ЧЧ:ММ:СС.</span>
             </div>
@@ -347,8 +348,8 @@
           <select id="logs-map-sector-select" class="logs-select logs-map-sector-select" aria-label="Удалённые сектора" hidden></select>
         </div>
         <div class="logs-map-controls">
-          <button type="button" id="logs-map-mode-pins" class="logs-btn logs-btn-sm is-active">Точки</button>
-          <button type="button" id="logs-map-mode-heat" class="logs-btn logs-btn-sm">Плотность</button>
+          <button type="button" id="logs-map-mode-pins" class="logs-btn logs-btn-sm is-active" aria-pressed="true">Точки</button>
+          <button type="button" id="logs-map-mode-heat" class="logs-btn logs-btn-sm" aria-pressed="false">Плотность</button>
           <button type="button" id="logs-map-dim-btn" class="logs-btn logs-btn-sm is-active" aria-pressed="true" title="Приглушить фон карты для читаемости событий">Подложка: Тише</button>
           <label class="logs-check-label">
             <input type="checkbox" id="logs-map-cluster-cb" checked>
@@ -358,9 +359,9 @@
             <input type="checkbox" id="logs-map-traj-cb" {% if ckey %}checked{% endif %}>
             <span>Траектория</span>
           </label>
-          <button type="button" id="logs-map-zoom-out" class="logs-btn logs-btn-sm" title="Отдалить">&minus;</button>
+          <button type="button" id="logs-map-zoom-out" class="logs-btn logs-btn-sm" title="Отдалить" aria-label="Отдалить">&minus;</button>
           <span id="logs-map-zoom-label" class="mono-val logs-map-zoom-label">100%</span>
-          <button type="button" id="logs-map-zoom-in" class="logs-btn logs-btn-sm" title="Приблизить">+</button>
+          <button type="button" id="logs-map-zoom-in" class="logs-btn logs-btn-sm" title="Приблизить" aria-label="Приблизить">+</button>
           <button type="button" id="logs-map-fit" class="logs-btn logs-btn-sm" title="Вписать карту в область">Вписать</button>
           <button type="button" id="logs-map-center-target" class="logs-btn logs-btn-sm logs-btn-primary" {% if not target_x %}hidden{% endif %}>К точке</button>
         </div>
@@ -385,7 +386,7 @@
       </div>
       {% endif %}
 
-      <div id="logs-map-status" class="logs-map-status mono-val cell-sub">Загрузка событий...</div>
+      <div id="logs-map-status" class="logs-map-status mono-val cell-sub">Загрузка событий…</div>
       <nav id="logs-map-pages" class="logs-pagination" aria-label="Страницы событий карты" hidden>
         <button type="button" class="logs-btn logs-btn-sm" id="logs-map-page-prev">Предыдущие события</button>
         <button type="button" class="logs-btn logs-btn-sm" id="logs-map-page-next">Следующие события</button>
@@ -413,7 +414,7 @@
       <div class="logs-map-workspace">
         <div class="logs-map-stage">
           <div class="logs-map-canvas-wrap">
-            <canvas id="logs-map-canvas" width="900" height="720" aria-label="Карта событий раунда"></canvas>
+            <canvas id="logs-map-canvas" width="900" height="720" tabindex="0" aria-label="Карта событий раунда (стрелки для перемещения, +/- для масштаба)"></canvas>
           </div>
           <div class="logs-map-hud">
             <span id="logs-map-hud-coords" class="mono-val">X: &mdash;, Y: &mdash;, Z: &mdash;</span>

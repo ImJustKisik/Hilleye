@@ -4,7 +4,7 @@
     <span class="admin-count-pill">
       Событий: <strong class="mono-val">{{ total_events|comma }}</strong>{% if audit_has_filters %} из {{ audit_summary.total_all|comma }}{% endif %}
     </span>
-    <span id="admin-audit-refresh-indicator" class="htmx-indicator mono-val cell-sub">обновление...</span>
+    <span id="admin-audit-refresh-indicator" class="htmx-indicator mono-val cell-sub">обновление…</span>
   </div>
   <div class="admin-header-actions">
     <label class="logs-check-label admin-live-toggle" title="Автоматически обновлять журнал аудита каждые 10 секунд">
@@ -66,7 +66,7 @@
     {% endif %}
     <div class="logs-field">
       <label for="admin-audit-q" class="logs-label">Поиск по журналу</label>
-      <input type="text" id="admin-audit-q" name="audit_q" value="{{ audit_q }}" class="logs-input" placeholder="ID, имя, IP, объект или детали">
+      <input type="text" id="admin-audit-q" name="audit_q" value="{{ audit_q }}" class="logs-input" placeholder="ID, имя, IP, объект или детали" autocomplete="off">
     </div>
     <div class="logs-field logs-field-sm">
       <label for="admin-audit-action" class="logs-label">Действие</label>
@@ -118,7 +118,8 @@
          hx-target="#admin-audit-container"
          hx-push-url="true"
          class="logs-pill-clear"
-         title="Убрать фильтр по пользователю">&times;</a>
+         title="Убрать фильтр по пользователю"
+         aria-label="Убрать фильтр по пользователю">&times;</a>
     </span>
     {% endif %}
     {% if audit_ip %}
@@ -129,7 +130,8 @@
          hx-target="#admin-audit-container"
          hx-push-url="true"
          class="logs-pill-clear"
-         title="Убрать фильтр по IP">&times;</a>
+         title="Убрать фильтр по IP"
+         aria-label="Убрать фильтр по IP">&times;</a>
     </span>
     {% endif %}
   </div>

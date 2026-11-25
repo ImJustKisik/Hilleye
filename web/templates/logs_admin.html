@@ -85,11 +85,11 @@
         <input type="hidden" name="csrf_token" value="{{ user.csrf_token }}">
         <div class="logs-field logs-field-sm">
           <label for="wl-id" class="logs-label">Discord ID</label>
-          <input type="text" id="wl-id" name="discord_id" required pattern="[0-9]{15,22}" class="logs-input" placeholder="123456789012345678">
+          <input type="text" id="wl-id" name="discord_id" required pattern="[0-9]{15,22}" class="logs-input" placeholder="123456789012345678" autocomplete="off" spellcheck="false" inputmode="numeric">
         </div>
         <div class="logs-field">
           <label for="wl-note" class="logs-label">Имя / заметка</label>
-          <input type="text" id="wl-note" name="display_name" maxlength="80" class="logs-input" placeholder="Ник или комментарий">
+          <input type="text" id="wl-note" name="display_name" maxlength="80" class="logs-input" placeholder="Ник или комментарий" autocomplete="off">
         </div>
         {% if user.is_superadmin %}
         <div class="logs-field logs-field-sm">
@@ -104,12 +104,12 @@
       </form>
 
       <div class="admin-wl-filter-bar">
-        <input type="text" id="admin-wl-search" class="logs-input admin-wl-search" placeholder="Discord ID, имя или заметка" aria-label="Фильтр списка доступа">
+        <input type="text" id="admin-wl-search" name="wl_search" class="logs-input admin-wl-search" placeholder="Discord ID, имя или заметка" aria-label="Фильтр списка доступа" autocomplete="off">
         <div class="admin-wl-role-pills" role="group" aria-label="Фильтр по роли">
-          <button type="button" class="logs-nav-pill admin-pill-sm is-active" data-wl-role-filter="">Все</button>
-          <button type="button" class="logs-nav-pill admin-pill-sm" data-wl-role-filter="superadmin">superadmin</button>
-          <button type="button" class="logs-nav-pill admin-pill-sm" data-wl-role-filter="admin">admin</button>
-          <button type="button" class="logs-nav-pill admin-pill-sm" data-wl-role-filter="viewer">viewer</button>
+          <button type="button" class="logs-nav-pill admin-pill-sm is-active" data-wl-role-filter="" aria-pressed="true">Все</button>
+          <button type="button" class="logs-nav-pill admin-pill-sm" data-wl-role-filter="superadmin" aria-pressed="false">superadmin</button>
+          <button type="button" class="logs-nav-pill admin-pill-sm" data-wl-role-filter="admin" aria-pressed="false">admin</button>
+          <button type="button" class="logs-nav-pill admin-pill-sm" data-wl-role-filter="viewer" aria-pressed="false">viewer</button>
         </div>
       </div>
     </div>
@@ -234,7 +234,7 @@
         <form action="/logs/refresh#tab=indexing" method="post" data-loading-form="1">
           <input type="hidden" name="csrf_token" value="{{ user.csrf_token }}">
           <input type="hidden" name="next_url" value="/logs/admin">
-          <button type="submit" class="logs-btn" data-loading-label="Сканирование...">Найти новые раунды</button>
+          <button type="submit" class="logs-btn" data-loading-label="Сканирование…">Найти новые раунды</button>
         </form>
 
         <form action="/logs/reindex#tab=indexing" method="post" class="logs-form-grid admin-reindex-form" data-loading-form="1">
@@ -246,7 +246,7 @@
           <button type="submit"
                   class="logs-btn logs-btn-primary"
                   data-confirm-text="Переиндексировать всё?"
-                  data-loading-label="Переиндексация...">
+                  data-loading-label="Переиндексация…">
             Переиндексировать всё
           </button>
         </form>
@@ -327,7 +327,7 @@
       {% if map_build_status and map_build_status.state == 'running' %}
       <div id="logs-map-build-status" class="logs-alert logs-alert-info admin-map-progress" data-map-building="1" role="status">
         <span class="admin-spinner" aria-hidden="true"></span>
-        <span>Сборка карты: <span id="logs-map-build-detail">{{ map_build_status.detail or 'выполняется...' }}</span></span>
+        <span>Сборка карты: <span id="logs-map-build-detail">{{ map_build_status.detail or 'выполняется…' }}</span></span>
       </div>
       {% elif map_build_status and map_build_status.state == 'error' %}
       <div id="logs-map-build-status" class="logs-alert logs-alert-error" role="alert">
@@ -373,13 +373,13 @@
           <input type="hidden" name="csrf_token" value="{{ user.csrf_token }}">
           <input type="hidden" name="source" value="auto">
           <input type="hidden" name="background" value="1">
-          <button type="submit" class="logs-btn logs-btn-primary" data-loading-label="Запуск...">Пересобрать</button>
+          <button type="submit" class="logs-btn logs-btn-primary" data-loading-label="Запуск…">Пересобрать</button>
         </form>
         <form action="/logs/admin/maps/rebuild" method="post" data-loading-form="1">
           <input type="hidden" name="csrf_token" value="{{ user.csrf_token }}">
           <input type="hidden" name="source" value="github">
           <input type="hidden" name="background" value="1">
-          <button type="submit" class="logs-btn" data-loading-label="Загрузка...">Пересобрать из GitHub</button>
+          <button type="submit" class="logs-btn" data-loading-label="Загрузка…">Пересобрать из GitHub</button>
         </form>
       </div>
     </div>

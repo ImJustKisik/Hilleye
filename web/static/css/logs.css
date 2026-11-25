@@ -415,8 +415,18 @@
 
 .logs-input:focus,
 .logs-select:focus {
-  outline: none;
   border-color: var(--border-input-focus);
+}
+
+.logs-input:focus:not(:focus-visible),
+.logs-select:focus:not(:focus-visible) {
+  outline: none;
+}
+
+.logs-input:focus-visible,
+.logs-select:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
 }
 
 .logs-check-row {
@@ -463,7 +473,11 @@
 .logs-dropzone:hover,
 .logs-dropzone:focus-visible {
   border-color: var(--border-input-focus);
-  outline: none;
+}
+
+.logs-dropzone:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
 }
 
 .logs-dropzone.is-dragover {
@@ -745,6 +759,9 @@
   border-bottom: 1px solid rgba(32, 39, 51, 0.55);
   border-left: 2px solid transparent;
   font-variant-numeric: tabular-nums;
+  scroll-margin-top: 84px;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 28px;
 }
 
 .log-row.is-search-hit {
@@ -1039,6 +1056,7 @@
 
 .logs-modal-body {
   overflow-y: auto;
+  overscroll-behavior: contain;
   flex: 1;
 }
 

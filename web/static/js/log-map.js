@@ -553,9 +553,10 @@
     function buildEventCard(ev) {
       var card = document.createElement("div");
       card.className = "logs-map-event-card is-clickable" + (focusLine && ev.line_no === focusLine ? " is-focused" : "");
+      card.tabIndex = 0;
+      card.setAttribute("role", "button");
 
-      card.addEventListener("click", function (clickEv) {
-        if (clickEv.target && clickEv.target.closest("a, button")) return;
+      function selectEventCard() {
         state.selectedLineNos = {};
         state.selectedLineNos[String(ev.line_no)] = true;
         state.selectedTile = { x: ev.x, y: ev.y, z: ev.z };
@@ -567,6 +568,19 @@
           selectDeck(ev.z, false, true);
         }
         centerOnTile(ev.x, ev.y, Math.max(state.scale, 1.35), false);
+      }
+
+      card.addEventListener("click", function (clickEv) {
+        if (clickEv.target && clickEv.target.closest("a, button")) return;
+        selectEventCard();
+      });
+
+      card.addEventListener("keydown", function (keyEv) {
+        if (keyEv.target !== card) return;
+        if (keyEv.key === "Enter" || keyEv.key === " ") {
+          keyEv.preventDefault();
+          selectEventCard();
+        }
       });
 
       var metaRow = document.createElement("div");
@@ -1470,13 +1484,17 @@
       modePinsBtn.addEventListener("click", function () {
         state.mode = "pins";
         modePinsBtn.classList.add("is-active");
+        modePinsBtn.setAttribute("aria-pressed", "true");
         modeHeatBtn.classList.remove("is-active");
+        modeHeatBtn.setAttribute("aria-pressed", "false");
         requestDraw();
       });
       modeHeatBtn.addEventListener("click", function () {
         state.mode = "heat";
         modeHeatBtn.classList.add("is-active");
+        modeHeatBtn.setAttribute("aria-pressed", "true");
         modePinsBtn.classList.remove("is-active");
+        modePinsBtn.setAttribute("aria-pressed", "false");
         requestDraw();
       });
     }
@@ -1539,6 +1557,37 @@
         requestDraw();
       });
     }
+
+    canvas.addEventListener("keydown", function (ev) {
+      var step = ev.shiftKey ? 120 : 48;
+      if (ev.key === "ArrowLeft") {
+        ev.preventDefault();
+        state.offsetX += step;
+        state.userMovedView = true;
+        requestDraw();
+      } else if (ev.key === "ArrowRight") {
+        ev.preventDefault();
+        state.offsetX -= step;
+        state.userMovedView = true;
+        requestDraw();
+      } else if (ev.key === "ArrowUp") {
+        ev.preventDefault();
+        state.offsetY += step;
+        state.userMovedView = true;
+        requestDraw();
+      } else if (ev.key === "ArrowDown") {
+        ev.preventDefault();
+        state.offsetY -= step;
+        state.userMovedView = true;
+        requestDraw();
+      } else if (ev.key === "+" || ev.key === "=") {
+        ev.preventDefault();
+        zoomAt(1.18, canvas.clientWidth / 2, canvas.clientHeight / 2);
+      } else if (ev.key === "-") {
+        ev.preventDefault();
+        zoomAt(1 / 1.18, canvas.clientWidth / 2, canvas.clientHeight / 2);
+      }
+    });
 
     canvas.addEventListener("wheel", function (ev) {
       ev.preventDefault();

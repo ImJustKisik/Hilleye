@@ -288,7 +288,9 @@
       pill.addEventListener("click", function () {
         activeWlRole = pill.dataset.wlRoleFilter || "";
         wlRolePills.forEach(function (p) {
-          p.classList.toggle("is-active", p === pill);
+          var isSelected = p === pill;
+          p.classList.toggle("is-active", isSelected);
+          p.setAttribute("aria-pressed", isSelected ? "true" : "false");
         });
         applyWlFilter();
       });

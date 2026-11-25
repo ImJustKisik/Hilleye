@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Глобальный поиск по логам SierraBay12 — Hilleye{% endblock %}
+{% block language %}ru{% endblock %}
 {% block extra_head %}
 <link rel="stylesheet" href="/static/css/logs.css">
 <script src="/static/js/logs.js?v=logs-modules" defer></script>
@@ -23,11 +24,11 @@
         <div class="logs-form-grid">
           <div class="logs-field">
             <label for="gsearch-q" class="logs-label">Запрос</label>
-            <input type="text" id="gsearch-q" name="q" value="{{ q }}" class="logs-input" placeholder="Текст, команда, объект... (нажмите /)">
+            <input type="text" id="gsearch-q" name="q" value="{{ q }}" class="logs-input" placeholder="Текст, команда, объект… (нажмите /)" autocomplete="off">
           </div>
           <div class="logs-field logs-field-sm">
             <label for="gsearch-ckey" class="logs-label">Игрок (ckey)</label>
-            <input type="text" id="gsearch-ckey" name="ckey" value="{{ ckey }}" class="logs-input" placeholder="ckey...">
+            <input type="text" id="gsearch-ckey" name="ckey" value="{{ ckey }}" class="logs-input" placeholder="ckey…" autocomplete="off" spellcheck="false">
           </div>
           <div class="logs-field logs-field-sm">
             <label for="gsearch-preset" class="logs-label">Пресет</label>
@@ -62,7 +63,7 @@
               </div>
               <div class="logs-field logs-field-sm">
                 <label for="gsearch-round" class="logs-label">UID раунда</label>
-                <input type="text" id="gsearch-round" name="round_uid" value="{{ round_uid }}" class="logs-input" placeholder="Опционально">
+                <input type="text" id="gsearch-round" name="round_uid" value="{{ round_uid }}" class="logs-input" placeholder="Опционально" autocomplete="off" spellcheck="false">
               </div>
               <div class="logs-field logs-field-sm">
                 <label for="gsearch-z" class="logs-label">Палуба (Z)</label>

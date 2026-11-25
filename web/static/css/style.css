@@ -96,6 +96,27 @@ code,
   border: 0;
 }
 
+.skip-link:focus {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  z-index: 1500;
+  width: auto;
+  height: auto;
+  margin: 0;
+  padding: 8px 14px;
+  overflow: visible;
+  clip: auto;
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  border: 1px solid var(--border-focus);
+  border-radius: var(--radius-sm);
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+  text-decoration: none;
+  font-weight: 600;
+}
+
 /* ==========================================================================
    Application Shell & Header
    ========================================================================== */

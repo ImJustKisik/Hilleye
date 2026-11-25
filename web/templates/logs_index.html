@@ -81,7 +81,7 @@
         </div>
         <div class="logs-field logs-rounds-query">
           <label for="logs-rounds-q" class="logs-label">ID раунда<span id="logs-rounds-query-note" {% if is_celadon %}hidden{% endif %}> или примечание</span></label>
-          <input type="text" id="logs-rounds-q" name="q" value="{{ q_filter }}" class="logs-input">
+          <input type="text" id="logs-rounds-q" name="q" value="{{ q_filter }}" class="logs-input" autocomplete="off" spellcheck="false">
         </div>
         <div class="logs-filter-actions">
           <button type="submit" class="logs-btn logs-btn-primary">Применить</button>
@@ -112,7 +112,7 @@
               <div class="logs-form-grid logs-upload-row">
                 <div class="logs-field">
                   <label for="upload-label" class="logs-label">Примечание (необязательно)</label>
-                  <input type="text" id="upload-label" name="label" class="logs-input" maxlength="100">
+                  <input type="text" id="upload-label" name="label" class="logs-input" maxlength="100" autocomplete="off">
                 </div>
                 <button type="submit" class="logs-btn logs-btn-primary">Загрузить</button>
               </div>
