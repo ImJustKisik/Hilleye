@@ -1,12 +1,13 @@
 {% extends "base.html" %}
-{% set active_nav = 'logs' %}
+{% set active_nav = 'logs' if status_kind == 'admin_required' else 'login' %}
+{% set show_login = status_kind in ('unauthenticated', 'mfa_required') %}
 {% set play_denied_sound = status_kind in ('forbidden', 'mfa_required') %}
 {% set denied_sound_url = '/static/audio/half-life-access-denied.wav' %}
-{% block title %}Доступ к логам SierraBay12 — Hilleye{% endblock %}
+{% block title %}Login — Hilleye{% endblock %}
 {% block language %}ru{% endblock %}
-{% block main_class %} logs-auth-gate{% endblock %}
+{% block main_class %} logs-auth-gate{% if show_login %} login-gate{% endif %}{% endblock %}
 {% block extra_head %}
-<link rel="stylesheet" href="/static/css/logs.css?v=a11y-fix">
+<link rel="stylesheet" href="/static/css/logs.css?v=login">
 {% if status_kind == 'forbidden' %}
 <script src="/static/js/logs.js?v=modal-body-fix" defer></script>
 <link rel="stylesheet" href="/static/css/access-denied.css?v=access-gate">
@@ -14,14 +15,15 @@
 {% if play_denied_sound %}
 <script src="/static/js/access-denied.js?v=manual-play" defer></script>
 {% endif %}
-{% if popup_attempt or status_kind in ('unauthenticated', 'mfa_required') %}
+{% if popup_attempt or show_login %}
 <script src="/static/js/discord-login.js" defer></script>
 {% endif %}
 {% endblock %}
 
 {% block content %}
-<article class="panel logs-auth-card{% if status_kind == 'forbidden' %} logs-access-denied{% endif %}" aria-labelledby="logs-auth-title"
+<article class="panel logs-auth-card{% if show_login %} login-card{% elif status_kind == 'forbidden' %} logs-access-denied{% endif %}" aria-labelledby="logs-auth-title"
   {% if popup_attempt %}data-oauth-popup="{{ popup_attempt }}" data-oauth-result="{{ status_kind }}"{% endif %}>
+  {% if not show_login %}
   <header class="logs-auth-header">
     <div class="logs-auth-symbol" aria-hidden="true">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
@@ -34,11 +36,10 @@
     <span class="logs-denied-code mono-val">403</span>
     {% endif %}
   </header>
+  {% endif %}
   {% if status_kind == 'unconfigured' %}
-    <h1 class="logs-auth-title" id="logs-auth-title">Discord OAuth2 не настроен</h1>
-    <p class="logs-auth-copy">
-      Авторизация для раздела логов не задана. Заполните секцию <code>discord</code> в <code>config.json</code> (callback: <code>{{ redirect_uri_hint }}</code>) или переменные окружения <code>HILLEYE_DISCORD_*</code> и <code>HILLEYE_SESSION_SECRET</code>.
-    </p>
+    <h1 class="logs-auth-title" id="logs-auth-title">Вход недоступен</h1>
+    <p class="logs-auth-copy">Попробуйте позже или обратитесь к администратору.</p>
     <div class="logs-auth-actions">
       <a href="/" class="logs-auth-back">На главную</a>
     </div>
@@ -46,11 +47,11 @@
   {% elif status_kind == 'signed_in' %}
     <h1 class="logs-auth-title" id="logs-auth-title">Вход через Discord выполнен</h1>
     <div class="logs-auth-actions">
-      <a href="{{ next_path }}" class="logs-btn logs-btn-primary">Продолжить к логам</a>
+      <a href="{{ next_path }}" class="logs-btn logs-btn-primary">Продолжить</a>
     </div>
 
   {% elif status_kind == 'forbidden' %}
-    <h1 class="logs-auth-title" id="logs-auth-title">Нет доступа к логам</h1>
+    <h1 class="logs-auth-title" id="logs-auth-title">Нет доступа</h1>
     <p class="logs-auth-copy">
       Вашего аккаунта нет в списке доступа. Передайте свой Discord ID администратору.
     </p>
@@ -76,15 +77,14 @@
     </div>
 
   {% else %}
-    <h1 class="logs-auth-title" id="logs-auth-title">Логи SierraBay12</h1>
-    <p class="logs-auth-copy">
-      Для просмотра логов нужен доступ по списку. Для входа через Discord требуется 2FA, кроме аккаунтов суперадминов.
-    </p>
+    <h1 class="logs-auth-title" id="logs-auth-title" lang="en">Login</h1>
     <div id="logs-login-error" class="logs-alert logs-alert-error" role="alert"{% if not error_message %} hidden{% endif %}>{{ error_message }}</div>
     <div class="logs-auth-actions">
       <a id="logs-discord-login" href="/auth/discord/login?next={{ next_path|urlencode }}" class="logs-btn logs-btn-primary"
-         data-oauth-callback="{{ redirect_uri_hint }}" data-denied-sound="{{ denied_sound_url }}">Войти через Discord</a>
-      <a href="/" class="logs-auth-back">На главную</a>
+         data-oauth-callback="{{ redirect_uri_hint }}" data-denied-sound="{{ denied_sound_url }}">
+        Войти через Discord <span aria-hidden="true">↗</span>
+      </a>
+      <a href="/" class="logs-auth-back"><span aria-hidden="true">←</span> На главную</a>
       <span id="logs-denied-play" hidden><button type="button" class="logs-auth-back">Воспроизвести звук</button></span>
     </div>
   {% endif %}

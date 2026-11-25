@@ -656,7 +656,7 @@ async def test_logs_viewer_auth_whitelist_csrf_and_e2e(logs_env):
         # 1. Public Hilleye still works and links to /logs
         home = await client.get("/")
         assert home.status_code == 200
-        assert 'href="/logs"' in home.text
+        assert 'href="/logs" class="header-link">Login</a>' in home.text
 
         # 2. Unauthenticated access blocked
         login_page = await client.get("/logs")
@@ -669,7 +669,7 @@ async def test_logs_viewer_auth_whitelist_csrf_and_e2e(logs_env):
         await _login_via_discord(client, "999999999999999999", "stranger")
         denied = await client.get("/logs")
         assert denied.status_code == 403
-        assert "Нет доступа к логам" in denied.text
+        assert 'id="logs-auth-title">Нет доступа</h1>' in denied.text
         assert 'id="my-discord-id">999999999999999999</code>' in denied.text
         assert 'data-copy-text="999999999999999999"' in denied.text
         assert 'id="logs-denied-audio"' in denied.text
@@ -829,7 +829,8 @@ async def test_unconfigured_oauth_fails_closed(tmp_path, monkeypatch):
         async with AsyncClient(transport=ASGITransport(app=web_app.app), base_url="http://test") as client:
             resp = await client.get("/logs")
             assert resp.status_code == 503
-            assert "Discord OAuth2 не настроен" in resp.text
+            assert "Вход недоступен" in resp.text
+            assert "config.json" not in resp.text
             assert (await client.get("/api/v1/logs/rounds")).status_code == 503
     finally:
         await logs_db.close_logs_db()
@@ -1356,6 +1357,7 @@ async def test_logs_ux_overhaul_partials_and_csp(logs_env):
         # 1. Dashboard renders quick date chips and HTMX returns partial table without full HTML shell
         dash = await client.get("/logs")
         assert dash.status_code == 200
+        assert 'aria-current="location">Logs</a>' in dash.text
         assert "data-quick-date" in dash.text
         assert dash.text.count('href="/logs/search"') == 1
         assert 'action="/logs/search"' not in dash.text
@@ -1413,12 +1415,15 @@ async def test_logs_ux_overhaul_partials_and_csp(logs_env):
         assert "admin-section-tabs" in admin_page.text
         assert "logs-ico" in admin_page.text
 
-        # 7. The sign-in gate names the logs and returns users to the requested page.
+        # 7. The generic sign-in gate returns users to the requested page.
         async with AsyncClient(transport=ASGITransport(app=web_app.app), base_url="http://test") as anon:
             auth_page = await anon.get("/logs")
             assert auth_page.status_code == 401
             assert '<html lang="ru">' in auth_page.text
-            assert 'id="logs-auth-title">Логи SierraBay12</h1>' in auth_page.text
+            assert "<title>Login — Hilleye</title>" in auth_page.text
+            assert 'id="logs-auth-title" lang="en">Login</h1>' in auth_page.text
+            assert 'aria-current="location">Login</a>' in auth_page.text
+            assert "SierraBay12" not in auth_page.text
             assert 'href="/auth/discord/login?next=/logs"' in auth_page.text
             round_gate = await anon.get(f"/logs/round/{round_uid}")
             assert round_gate.status_code == 401

@@ -306,6 +306,45 @@
   }
 }
 
+.login-gate {
+  padding-block: 24px 40px;
+}
+
+.login-gate .login-card {
+  max-width: 384px;
+  padding: clamp(24px, 6vw, 32px);
+}
+
+.login-card::before {
+  content: "";
+  display: block;
+  width: 24px;
+  height: 2px;
+  margin-bottom: 16px;
+  background: var(--accent-red);
+}
+
+.login-gate .logs-auth-title {
+  margin: 0;
+  font-size: 2.13rem;
+}
+
+.login-card .logs-auth-actions {
+  display: grid;
+  justify-content: stretch;
+  gap: 8px;
+}
+
+.login-card .logs-btn-primary {
+  justify-content: space-between;
+  min-height: 48px;
+}
+
+.login-card .logs-auth-back {
+  justify-self: start;
+  gap: 8px;
+}
+
 .logs-code-block {
   font-family: var(--font-mono);
   font-size: 0.8rem;

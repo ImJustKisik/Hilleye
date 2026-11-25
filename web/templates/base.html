@@ -35,7 +35,7 @@
       <nav class="header-nav" aria-label="Primary navigation">
         <div class="header-links">
           <a href="/" class="header-link{{ ' is-active' if active_nav is defined and active_nav == 'servers' else '' }}">Servers</a>
-          <a href="/logs" class="header-link{{ ' is-active' if active_nav == 'logs' else '' }}"{% if active_nav == 'logs' %} aria-current="location"{% endif %}>Logs</a>
+          <a href="/logs" class="header-link{{ ' is-active' if active_nav in ('login', 'logs') else '' }}"{% if active_nav in ('login', 'logs') %} aria-current="location"{% endif %}>{{ 'Logs' if active_nav == 'logs' else 'Login' }}</a>
         </div>
         {% block header_stats %}
         {% set srv_count = summary.total_servers if summary is defined and summary else (servers|length if servers is defined and servers else 0) %}
