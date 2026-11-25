@@ -38,6 +38,7 @@ from core.log_operations import finish_thread
 from core.logs_db.celadon import migrate_celadon
 from core.storage import validate_storage
 from core.telemetry import telemetry, monitor_loop
+from web.dashboard_cache import close_dashboard_cache
 from web.logs_routes import create_logs_router
 from web.routes import (
     api_router,
@@ -157,6 +158,7 @@ async def lifespan(app: FastAPI):
             _manifest_tasks.clear()
             _manifest_results.clear()
         finally:
+            await close_dashboard_cache(app.state)
             await core_logs_db.close_logs_db()
             await core_db.close_db()
 

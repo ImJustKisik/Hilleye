@@ -10,6 +10,8 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Form, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
+from web.dashboard_cache import get_dashboard_cache, read_dashboard_inputs
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
@@ -125,21 +127,20 @@ async def dashboard_page(request: Request):
     """
     import web.app as _app
 
-    servers = await _app.core_db.get_active_servers()
-    overview = await _app.core_db.get_network_overview()
-    collector_state = await _app.core_db.get_collector_state()
-    sparklines = await _app.core_db.get_servers_sparklines_24h([s["id"] for s in servers])
+    cache = get_dashboard_cache(request.app.state)
+    inputs = await read_dashboard_inputs()
+    data = await cache.get(inputs.key)
     tracker = _app.get_tracker()
     tracker_stats = tracker.get_stats() if tracker else {}
-    summary = build_network_summary(servers, collector_state, tracker_stats)
+    summary = build_network_summary(inputs.servers, inputs.collector_state, tracker_stats)
     return _app.templates.TemplateResponse(
         request=request,
         name="index.html",
         context={
             "request": request,
-            "servers": servers,
-            "overview": overview,
-            "sparklines": sparklines,
+            "servers": inputs.servers,
+            "overview": data.overview,
+            "sparklines": data.sparklines,
             "summary": summary,
             "tracker_stats": tracker_stats,
             "active_nav": "servers",
