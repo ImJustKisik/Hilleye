@@ -59,7 +59,9 @@ async def hardening_env(tmp_path, monkeypatch):
 
 
 def _cookie(config, uid="111111111111111111"):
-    return discord_auth.create_session_cookie({"discord_id": uid, "username": "tester", "display_name": "Tester"}, config)
+    return discord_auth.create_session_cookie(
+        {"discord_id": uid, "username": "tester", "display_name": "Tester", "mfa_enabled": True}, config
+    )
 
 
 def _lock_probe(path, queue):

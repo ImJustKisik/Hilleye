@@ -391,15 +391,19 @@ async def test_sync_fts5_search_and_archive_security(logs_env):
 # Tier 3: Discord OAuth2, Whitelist, CSRF, & Full Web E2E
 # ---------------------------------------------------------------------------
 
-def _mock_discord_transport(discord_id: str, username: str) -> httpx.MockTransport:
+def _mock_discord_transport(
+    discord_id: str, username: str, *, mfa_enabled: bool | str | None = True
+) -> httpx.MockTransport:
     def handler(request: httpx.Request) -> httpx.Response:
         if str(request.url) == discord_auth.DISCORD_TOKEN_URL:
             return httpx.Response(200, json={"access_token": "tok_xyz", "token_type": "Bearer"})
         if str(request.url) == discord_auth.DISCORD_ME_URL:
-            return httpx.Response(
-                200,
-                json={"id": discord_id, "username": username, "global_name": username},
-            )
+            profile: dict[str, str | bool] = {
+                "id": discord_id, "username": username, "global_name": username,
+            }
+            if mfa_enabled is not None:
+                profile["mfa_enabled"] = mfa_enabled
+            return httpx.Response(200, json=profile)
         return httpx.Response(404)
 
     return httpx.MockTransport(handler)
@@ -416,6 +420,49 @@ async def _login_via_discord(client: AsyncClient, discord_id: str, username: str
     cb_resp = await client.get(f"/auth/discord/callback?code=fake_code&state={state}", follow_redirects=False)
     assert cb_resp.status_code == 302
     assert cb_resp.headers["location"] == "/logs"
+
+
+@pytest.mark.parametrize(
+    ("callback_path", "mfa_enabled"),
+    [
+        ("/auth/discord/callback", False),
+        ("/api/auth/callback", None),
+        ("/auth/discord/callback", "true"),
+    ],
+)
+async def test_discord_login_requires_confirmed_mfa(logs_env, callback_path, mfa_enabled):
+    uid = "111111111111111111"  # Superadmins must also enable MFA.
+    discord_auth.set_discord_http_transport(
+        lambda: _mock_discord_transport(uid, "headadmin", mfa_enabled=mfa_enabled)
+    )
+    async with AsyncClient(transport=ASGITransport(app=web_app.app), base_url="http://test") as client:
+        login = await client.get("/auth/discord/login", params={"next": "/logs/admin"})
+        state = parse_qs(urlsplit(login.headers["location"]).query)["state"][0]
+        callback = await client.get(callback_path, params={"code": "test_code", "state": state})
+        assert callback.status_code == 403
+        assert "двухфакторную аутентификацию (2FA)" in callback.text
+        assert 'href="/auth/discord/login?next=/logs/admin"' in callback.text
+        assert discord_auth.SESSION_COOKIE_NAME not in client.cookies
+        assert discord_auth.OAUTH_STATE_COOKIE_NAME not in client.cookies
+        assert (await client.get("/api/v1/logs/rounds")).status_code == 401
+
+    events, _ = await logs_db.get_audit_events(action_filter="login_denied")
+    assert events[0]["discord_id"] == uid
+    assert events[0]["target"] == "mfa_required"
+
+
+async def test_discord_session_without_mfa_requires_new_login(logs_env):
+    config = logs_env["cfg"]
+    legacy_session = discord_auth.sign_payload(
+        {"uid": "111111111111111111", "exp": time.time() + 60}, config
+    )
+    async with AsyncClient(
+        transport=ASGITransport(app=web_app.app),
+        base_url="http://test",
+        cookies={discord_auth.SESSION_COOKIE_NAME: legacy_session},
+    ) as client:
+        assert (await client.get("/logs")).status_code == 401
+        assert (await client.get("/api/v1/logs/rounds")).status_code == 401
 
 
 async def test_celadon_catalog_import_and_file_cap(logs_env, monkeypatch):

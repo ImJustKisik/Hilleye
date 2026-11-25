@@ -101,11 +101,35 @@ def register_auth_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
             )
             return resp
 
+        ip = discord_auth.get_client_ip(request)
+        if profile["mfa_enabled"] is not True:
+            await logs_db.record_audit_event(
+                "login_denied",
+                discord_id=profile["discord_id"],
+                discord_username=profile["username"],
+                target="mfa_required",
+                ip_address=ip,
+            )
+            resp = await ctx.render_auth_gate(
+                request,
+                status_kind="unauthenticated",
+                error_message="Для входа включите двухфакторную аутентификацию (2FA) в настройках Discord и войдите снова.",
+                next_path=next_path,
+                http_status=403,
+            )
+            resp.delete_cookie(
+                discord_auth.OAUTH_STATE_COOKIE_NAME,
+                path="/",
+                secure=cookie_secure,
+                httponly=True,
+                samesite="lax",
+            )
+            return resp
+
         session_cookie = discord_auth.create_session_cookie(profile, config)
         allowed, role, _ = await logs_db.check_whitelist_access(
             profile["discord_id"], config.discord_superadmin_ids
         )
-        ip = discord_auth.get_client_ip(request)
         await logs_db.record_audit_event(
             "login" if allowed else "login_denied",
             discord_id=profile["discord_id"],
