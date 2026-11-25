@@ -112,7 +112,7 @@ def register_auth_routes(router: APIRouter, ctx: LogsRouteContext) -> None:
             )
             resp = await ctx.render_auth_gate(
                 request,
-                status_kind="unauthenticated",
+                status_kind="mfa_required",
                 error_message="Для входа включите двухфакторную аутентификацию (2FA) в настройках Discord и войдите снова.",
                 next_path=next_path,
                 http_status=403,

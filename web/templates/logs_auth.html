@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% set active_nav = 'logs' %}
+{% set play_denied_sound = status_kind in ('forbidden', 'mfa_required') %}
 {% block title %}Доступ к логам SierraBay12 — Hilleye{% endblock %}
 {% block language %}ru{% endblock %}
 {% block main_class %} logs-auth-gate{% endblock %}
@@ -8,6 +9,8 @@
 {% if status_kind == 'forbidden' %}
 <script src="/static/js/logs.js?v=logs-modules" defer></script>
 <link rel="stylesheet" href="/static/css/access-denied.css?v=access-gate">
+{% endif %}
+{% if play_denied_sound %}
 <script src="/static/js/access-denied.js?v=access-gate" defer></script>
 {% endif %}
 {% endblock %}
@@ -54,8 +57,6 @@
       <button type="submit" class="logs-auth-back">Выйти</button>
     </form>
     {% endif %}
-    <audio id="logs-denied-audio" src="/static/audio/half-life-access-denied.wav" preload="auto" aria-hidden="true"></audio>
-
   {% elif status_kind == 'admin_required' %}
     <h1 class="logs-auth-title" id="logs-auth-title">Недостаточно прав</h1>
     <p class="logs-auth-copy">{{ error_message or 'Для открытия этой страницы нужны права администратора.' }}</p>
@@ -75,6 +76,9 @@
       <a href="/auth/discord/login?next={{ next_path|urlencode }}" class="logs-btn logs-btn-primary">Войти через Discord</a>
       <a href="/" class="logs-auth-back">На главную</a>
     </div>
+  {% endif %}
+  {% if play_denied_sound %}
+  <audio id="logs-denied-audio" src="/static/audio/half-life-access-denied.wav" preload="auto" aria-hidden="true"></audio>
   {% endif %}
 </article>
 {% endblock %}

@@ -442,6 +442,8 @@ async def test_discord_login_requires_confirmed_mfa(logs_env, callback_path, mfa
         assert callback.status_code == 403
         assert "двухфакторную аутентификацию (2FA)" in callback.text
         assert 'href="/auth/discord/login?next=/logs/admin"' in callback.text
+        assert 'id="logs-denied-audio" src="/static/audio/half-life-access-denied.wav"' in callback.text
+        assert 'src="/static/js/access-denied.js' in callback.text
         assert discord_auth.SESSION_COOKIE_NAME not in client.cookies
         assert discord_auth.OAUTH_STATE_COOKIE_NAME not in client.cookies
         assert (await client.get("/api/v1/logs/rounds")).status_code == 401
@@ -579,7 +581,10 @@ async def test_logs_viewer_auth_whitelist_csrf_and_e2e(logs_env):
         assert 'href="/logs"' in home.text
 
         # 2. Unauthenticated access blocked
-        assert (await client.get("/logs")).status_code == 401
+        login_page = await client.get("/logs")
+        assert login_page.status_code == 401
+        assert 'id="logs-denied-audio"' not in login_page.text
+        assert 'src="/static/js/access-denied.js' not in login_page.text
         assert (await client.get("/api/v1/logs/rounds")).status_code == 401
 
         # 3. Non-whitelisted Discord user gets 403 + sees their ID
